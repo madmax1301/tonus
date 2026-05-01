@@ -86,3 +86,55 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-firm);
 }
+
+/* ─── Skeleton-Shimmer (gold tint) ─────────────────────────
+   Wird auf Container gelegt, die "in Verarbeitung" sind:
+   - .skeleton-card: Card-Shimmer als ::after-Overlay
+   - .skeleton-text: Text mit laufendem Gradient (background-clip)
+   ─────────────────────────────────────────────────────────── */
+.skeleton-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+.skeleton-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(200, 169, 106, 0.1) 50%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: tonus-shimmer 1.6s linear infinite;
+  pointer-events: none;
+  border-radius: inherit;
+}
+@keyframes tonus-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+.skeleton-text {
+  background: linear-gradient(
+    90deg,
+    var(--color-fg-tertiary) 0%,
+    var(--color-fg-primary) 50%,
+    var(--color-fg-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: tonus-text-shimmer 1.6s linear infinite;
+}
+@keyframes tonus-text-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

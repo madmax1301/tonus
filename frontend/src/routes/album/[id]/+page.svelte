@@ -12,6 +12,7 @@
   } from '$lib/api';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
+  import ProgressLine from '$lib/components/ProgressLine.svelte';
   import { ArrowLeft, Download, Loader2 } from 'lucide-svelte';
 
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
@@ -166,13 +167,13 @@
             {/each}
           </div>
         {/if}
-        <div class="pt-2">
+        <div class="pt-2 space-y-2 max-w-[280px]">
           <button
             onclick={queueAlbum}
             disabled={albumState?.kind === 'queued' ||
               albumState?.kind === 'done' ||
               albumState?.kind === 'exists'}
-            class="inline-flex items-center gap-2 px-5 py-2.5 rounded-md text-[13px] font-medium transition-opacity disabled:cursor-default"
+            class="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-md text-[13px] font-medium transition-opacity disabled:cursor-default"
             style="background: {albumState?.kind === 'done'
               ? 'var(--color-status-done)'
               : albumState?.kind === 'exists'
@@ -184,8 +185,7 @@
               : '#1a1410'};"
           >
             {#if albumState?.kind === 'queued'}
-              <Loader2 size={14} class="animate-spin" />
-              Album wird geladen …
+              <span class="skeleton-text">Album wird gequeued …</span>
             {:else if albumState?.kind === 'done'}
               ✓ {albumState.message}
             {:else if albumState?.kind === 'exists'}
@@ -197,6 +197,9 @@
               Komplettes Album laden
             {/if}
           </button>
+          {#if albumState?.kind === 'queued'}
+            <ProgressLine pareto thin />
+          {/if}
         </div>
       </div>
     </header>
@@ -280,50 +283,4 @@
   {/if}
 </section>
 
-<style>
-  .skeleton-card {
-    overflow: hidden;
-    border-radius: var(--radius-lg);
-  }
-  .skeleton-card::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      rgba(200, 169, 106, 0.08) 50%,
-      transparent 100%
-    );
-    transform: translateX(-100%);
-    animation: shimmer 1.6s linear infinite;
-    pointer-events: none;
-    border-radius: inherit;
-  }
-  @keyframes shimmer {
-    to {
-      transform: translateX(100%);
-    }
-  }
-  .skeleton-text {
-    background: linear-gradient(
-      90deg,
-      var(--color-fg-tertiary) 0%,
-      var(--color-fg-secondary) 50%,
-      var(--color-fg-tertiary) 100%
-    );
-    background-size: 200% 100%;
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    animation: text-shimmer 1.6s linear infinite;
-  }
-  @keyframes text-shimmer {
-    from {
-      background-position: 200% 0;
-    }
-    to {
-      background-position: -200% 0;
-    }
-  }
-</style>
+<!-- skeleton-card / skeleton-text leben global in app.css -->

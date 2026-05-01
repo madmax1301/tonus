@@ -282,28 +282,36 @@
     <div class="space-y-2">
       {#each filtered as job (job.job_id)}
         {@const t = job.payload?.track ?? {}}
-        <GlassCard padding="sm">
-          <div class="flex items-center gap-4">
-            <AlbumArt src={t.album_art} alt={t.album ?? ''} size="sm" />
-            <div class="flex-1 min-w-0 space-y-1">
-              <div class="font-medium text-[14px] truncate" style="color: var(--color-fg-primary);">
-                {t.name ?? job.job_id}
-              </div>
-              <div
-                class="text-[12px] truncate"
-                style="color: var(--color-fg-secondary);"
-              >
-                {t.artist ?? ''}
-                {#if job.message}
-                  <span style="color: var(--color-fg-tertiary);"> · {job.message}</span>
+        {@const isRunning = job.status === 'processing'}
+        <div class="relative" class:skeleton-card={isRunning}>
+          <GlassCard padding="sm">
+            <div class="flex items-center gap-4">
+              <AlbumArt src={t.album_art} alt={t.album ?? ''} size="sm" />
+              <div class="flex-1 min-w-0 space-y-1.5">
+                <div
+                  class="font-medium text-[14px] truncate"
+                  style="color: var(--color-fg-primary);"
+                >
+                  {t.name ?? job.job_id}
+                </div>
+                <div
+                  class="text-[12px] truncate"
+                  style="color: var(--color-fg-secondary);"
+                >
+                  {t.artist ?? ''}
+                  {#if job.message}
+                    <span style="color: var(--color-fg-tertiary);"> · {job.message}</span>
+                  {/if}
+                </div>
+                {#if isRunning}
+                  <ProgressLine
+                    value={job.progress && job.progress > 0 ? job.progress : undefined}
+                    pareto={!job.progress || job.progress === 0}
+                  />
                 {/if}
               </div>
-              {#if job.status === 'processing'}
-                <ProgressLine value={job.progress ?? 0} />
-              {/if}
-            </div>
-            <StatusPill status={job.status} />
-            <div class="flex items-center gap-1">
+              <StatusPill status={job.status} />
+              <div class="flex items-center gap-1">
               {#if job.status === 'error'}
                 <button
                   onclick={() => retryOne(job)}
@@ -333,9 +341,10 @@
               >
                 <X size={14} strokeWidth={1.5} />
               </button>
+              </div>
             </div>
-          </div>
-        </GlassCard>
+          </GlassCard>
+        </div>
       {/each}
     </div>
   {/if}
