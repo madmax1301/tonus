@@ -1,0 +1,31 @@
+# Backend — Python
+__pycache__/
+*.pyc
+*.pyo
+*.bak
+*.bak.*
+*.pid
+
+# Backend — Data + Secrets
+backend/.env
+backend/downloads/
+downloads/
+
+# Frontend — Build artefacts
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+
+# Local dev
+docker-compose.override.yml
+test-music/
+test-downloads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

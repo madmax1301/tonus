@@ -1,0 +1,20 @@
+# Frontend
+frontend/node_modules
+frontend/.svelte-kit
+frontend/build
+# Backend
+backend/__pycache__
+backend/**/__pycache__
+backend/.env
+backend/*.pyc
+backend/*.bak
+backend/*.bak.*
+backend/downloads
+# Misc
+.DS_Store
+.git
+.gitignore
+*.md
+docker-compose.override.yml
+test-music
+test-downloads

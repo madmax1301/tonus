@@ -1,0 +1,12 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+spotipy==2.23.0
+yt-dlp>=2024.12.20
+mutagen==1.47.0
+python-multipart==0.0.6
+requests==2.31.0
+aiofiles==23.2.1
+pydantic==2.5.0
+python-dotenv==1.0.0
+ytmusicapi==1.11.4
+yt-dlp-get-pot-rustypipe==0.2.0
