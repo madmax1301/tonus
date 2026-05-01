@@ -1,5 +1,5 @@
 import { base } from '$app/paths';
-import { getToken } from './auth';
+import { getToken, challengeAuth } from './auth';
 
 export class ApiError extends Error {
   constructor(
@@ -20,6 +20,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
   const resp = await fetch(url, { ...init, headers });
   if (!resp.ok) {
+    if (resp.status === 401 || resp.status === 403) {
+      challengeAuth();
+    }
     let body: unknown;
     try {
       body = await resp.json();
@@ -58,3 +61,57 @@ export interface QueueResponse {
   shown: number;
   status_counts: Partial<Record<QueueJob['status'], number>>;
 }
+
+export interface Track {
+  id: string;
+  name: string;
+  artist: string;
+  artists: string[];
+  album: string;
+  duration_ms: number;
+  external_url: string;
+  preview_url?: string;
+  album_art?: string;
+  release_date: string;
+}
+
+export interface MetadataProvider {
+  id: string;
+  label: string;
+  configured: boolean;
+}
+
+export interface MetadataProvidersResponse {
+  default: string;
+  providers: MetadataProvider[];
+}
+
+export const queueApi = {
+  list: (status?: string) => {
+    const q = status ? `?status=${encodeURIComponent(status)}` : '';
+    return api.get<QueueResponse>(`/api/queue${q}`);
+  },
+  retryAll: () => api.post<{ ok: boolean; retried: number }>('/api/queue/retry-all-errors'),
+  clear: (status: 'completed' | 'error' | 'queued' | 'all' = 'completed') =>
+    api.post<{ ok: boolean; deleted: number }>(`/api/queue/clear?status=${status}`),
+  cancel: (jobId: string) => api.post<{ ok: boolean }>(`/api/queue/${jobId}/cancel`),
+  retry: (jobId: string) => api.post<{ ok: boolean }>(`/api/queue/${jobId}/start`)
+};
+
+export const searchApi = {
+  tracks: (query: string, provider?: string, limit = 20) =>
+    api.post<Track[]>('/api/search', { query, provider, limit })
+};
+
+export const downloadApi = {
+  start: (trackId: string, opts: { location?: 'local' | 'navidrome'; provider?: string } = {}) =>
+    api.post<{ status: string; message: string }>('/api/download', {
+      track_id: trackId,
+      location: opts.location ?? 'navidrome',
+      metadata_provider: opts.provider
+    })
+};
+
+export const providersApi = {
+  list: () => api.get<MetadataProvidersResponse>('/api/metadata/providers')
+};

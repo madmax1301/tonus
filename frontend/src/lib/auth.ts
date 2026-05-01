@@ -17,6 +17,17 @@ if (browser) {
   });
 }
 
+/** True wenn ein API-Call gerade mit 401 fehlgeschlagen ist und Auth-UI geöffnet werden soll. */
+export const authChallengeOpen = writable<boolean>(false);
+
 export function getToken(): string {
   return get(apiToken);
+}
+
+export function challengeAuth(): void {
+  authChallengeOpen.set(true);
+}
+
+export function dismissChallenge(): void {
+  authChallengeOpen.set(false);
 }

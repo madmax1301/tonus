@@ -2,6 +2,9 @@
   import '../app.css';
   import { page } from '$app/stores';
   import { base } from '$app/paths';
+  import { apiToken, challengeAuth } from '$lib/auth';
+  import TokenSheet from '$lib/components/TokenSheet.svelte';
+  import { KeyRound } from 'lucide-svelte';
 
   type Tab = { href: string; label: string };
   const tabs: Tab[] = [
@@ -16,6 +19,10 @@
     if (href === '/') return path === '/';
     return path === href || path.startsWith(href + '/');
   }
+
+  let { children } = $props();
+
+  const hasToken = $derived(!!$apiToken);
 </script>
 
 <div class="min-h-screen flex flex-col">
@@ -37,7 +44,6 @@
           <a
             href="{base}{tab.href}"
             class="px-3 py-1.5 rounded-md transition-colors"
-            class:active={isActive(tab.href, $page.url.pathname)}
             style="color: {isActive(tab.href, $page.url.pathname)
               ? 'var(--color-fg-primary)'
               : 'var(--color-fg-secondary)'}; background: {isActive(tab.href, $page.url.pathname)
@@ -48,11 +54,26 @@
           </a>
         {/each}
       </nav>
-      <div class="ml-auto text-[12px]" style="color: var(--color-fg-tertiary);">v0.1</div>
+      <div class="ml-auto flex items-center gap-3">
+        <button
+          onclick={challengeAuth}
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] transition-colors"
+          style="color: {hasToken
+            ? 'var(--color-fg-secondary)'
+            : 'var(--color-status-error)'}; background: var(--color-surface-3);"
+          aria-label="API-Token verwalten"
+        >
+          <KeyRound size={13} strokeWidth={1.5} />
+          {hasToken ? 'Token' : 'Token fehlt'}
+        </button>
+        <span class="text-[12px]" style="color: var(--color-fg-tertiary);">v0.1</span>
+      </div>
     </div>
   </header>
 
   <main class="flex-1 mx-auto max-w-7xl w-full px-6 py-10">
-    <slot />
+    {@render children()}
   </main>
+
+  <TokenSheet />
 </div>
