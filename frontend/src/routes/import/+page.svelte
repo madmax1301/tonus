@@ -42,6 +42,10 @@
   let csvError = $state<string | null>(null);
   let csvQueueAllBusy = $state(false);
   let csvQueueAllResult = $state<string | null>(null);
+  let csvLoadMoreBusy = $state(false);
+  let csvExportBusy = $state(false);
+  let csvExportProgress = $state<{ loaded: number; total: number } | null>(null);
+  const PAGE_SIZE = 200;
 
   let csvPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -88,7 +92,7 @@
         csvStatus = s;
         if (s.status === 'completed') {
           stopCsvPoll();
-          csvResult = await importApi.result(csvJobId);
+          csvResult = await importApi.result(csvJobId, 0, PAGE_SIZE);
         } else if (s.status === 'error') {
           stopCsvPoll();
           csvError = s.message ?? 'CSV-Import-Fehler';
@@ -121,6 +125,68 @@
     }
   }
 
+  async function loadMoreUnmatched() {
+    if (!csvJobId || !csvResult) return;
+    csvLoadMoreBusy = true;
+    try {
+      const next = await importApi.result(csvJobId, csvResult.unmatched.length, PAGE_SIZE);
+      // matched ignorieren — der nutzer wählt "alle queuen", muss das nicht in der UI sehen
+      csvResult = {
+        ...csvResult,
+        unmatched: [...csvResult.unmatched, ...next.unmatched]
+      };
+    } catch {
+      /* noop — User kann erneut klicken */
+    } finally {
+      csvLoadMoreBusy = false;
+    }
+  }
+
+  function csvEscape(s: string): string {
+    if (s == null) return '';
+    const v = String(s);
+    if (/[",\n;\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+    return v;
+  }
+
+  async function exportUnmatched() {
+    if (!csvJobId || !csvResult) return;
+    csvExportBusy = true;
+    csvExportProgress = { loaded: csvResult.unmatched.length, total: csvResult.not_found };
+    try {
+      const collected = [...csvResult.unmatched];
+      const target = csvResult.not_found;
+      const PAGE = 500;
+      while (collected.length < target) {
+        const r = await importApi.result(csvJobId, collected.length, PAGE);
+        if (!r.unmatched.length) break;
+        collected.push(...r.unmatched);
+        csvExportProgress = { loaded: collected.length, total: target };
+      }
+
+      const header = 'artist;title;reason';
+      const lines = collected.map((u) =>
+        [csvEscape(u.artist || u.query || ''), csvEscape(u.title || ''), csvEscape(u.reason || '')]
+          .join(';')
+      );
+      const csv = '﻿' + [header, ...lines].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tonus-unmatched-${csvJobId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* User sieht busy=false und kann retry */
+    } finally {
+      csvExportBusy = false;
+      csvExportProgress = null;
+    }
+  }
+
   function resetCsv() {
     stopCsvPoll();
     csvJobId = null;
@@ -129,6 +195,7 @@
     csvError = null;
     csvText = '';
     csvQueueAllResult = null;
+    csvExportProgress = null;
   }
 
   async function onCsvFile(e: Event) {
@@ -401,13 +468,38 @@
         {/if}
       </GlassCard>
 
-      {#if csvResult.unmatched.length > 0}
-        <details class="space-y-2" open>
+      {#if csvResult.not_found > 0}
+        <details class="space-y-3" open>
           <summary
-            class="cursor-pointer text-[13px] font-medium select-none"
+            class="cursor-pointer text-[13px] font-medium select-none flex items-center gap-3 flex-wrap"
             style="color: var(--color-fg-primary);"
           >
-            {csvResult.unmatched.length.toLocaleString('de-DE')} nicht gefundene Zeilen
+            <span>
+              {csvResult.not_found.toLocaleString('de-DE')} nicht gefundene Zeilen
+            </span>
+            <span class="text-[11px] font-normal" style="color: var(--color-fg-tertiary);">
+              · zeige {csvResult.unmatched.length.toLocaleString('de-DE')}
+            </span>
+            <span class="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onclick={(e) => {
+                  e.preventDefault();
+                  exportUnmatched();
+                }}
+                disabled={csvExportBusy}
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors disabled:opacity-50"
+                style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+              >
+                {#if csvExportBusy && csvExportProgress}
+                  <Loader2 size={11} class="animate-spin" />
+                  CSV {csvExportProgress.loaded.toLocaleString('de-DE')} / {csvExportProgress.total.toLocaleString('de-DE')}
+                {:else}
+                  <Download size={11} strokeWidth={1.8} />
+                  Als CSV exportieren
+                {/if}
+              </button>
+            </span>
           </summary>
           <div class="space-y-1">
             {#each csvResult.unmatched as u}
@@ -431,6 +523,24 @@
               </GlassCard>
             {/each}
           </div>
+          {#if csvResult.unmatched.length < csvResult.not_found}
+            <button
+              onclick={loadMoreUnmatched}
+              disabled={csvLoadMoreBusy}
+              class="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-[12px] transition-colors disabled:opacity-50"
+              style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+            >
+              {#if csvLoadMoreBusy}
+                <Loader2 size={13} class="animate-spin" />
+                lade …
+              {:else}
+                Mehr laden
+                <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
+                  · noch {(csvResult.not_found - csvResult.unmatched.length).toLocaleString('de-DE')}
+                </span>
+              {/if}
+            </button>
+          {/if}
         </details>
       {/if}
     {/if}
