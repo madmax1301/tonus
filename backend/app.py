@@ -2849,9 +2849,26 @@ async def plugin_finished_tracks(
 # werden alle danach definierten Routes von der StaticFiles-Catch-All
 # verschluckt. html=True liefert index.html für unbekannte Pfade
 # (Client-Side-Routing-Fallback) — ergänzt durch fallback in svelte.config.js.
+class SpaStaticFiles(StaticFiles):
+    """SvelteKit-Build mit korrekten Cache-Headern.
+
+    - HTML (index.html, Fallback-Pfade): kein Cache → User sieht nach Build-Update
+      sofort die neue Version, weil die hashed JS/CSS-URLs neu darin stehen.
+    - Hashed Assets (/_app/immutable/*): aggressiv gecached (1 Jahr, immutable),
+      weil ihr Inhalt durch den Hash im Pfad eindeutig identifiziert ist.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if path.endswith('.html') or path == '' or path == '/':
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        elif '_app/immutable/' in path:
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        return response
+
 _FRONTEND_BUILD_DIR = os.path.join(os.path.dirname(__file__), "frontend", "build")
 if os.path.isdir(_FRONTEND_BUILD_DIR):
-    app.mount("/", StaticFiles(directory=_FRONTEND_BUILD_DIR, html=True), name="ui")
+    app.mount("/", SpaStaticFiles(directory=_FRONTEND_BUILD_DIR, html=True), name="ui")
 else:
     print(f"[ui] frontend build not found at {_FRONTEND_BUILD_DIR} — UI disabled")
 
