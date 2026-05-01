@@ -18,7 +18,8 @@
   let results = $state<Track[]>([]);
   let searching = $state(false);
   let searchError = $state<string | null>(null);
-  let queuedIds = $state<Record<string, 'queued' | 'done' | 'error'>>({});
+  type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
+  let queuedIds = $state<Record<string, DownloadState>>({});
 
   onMount(async () => {
     try {
@@ -59,12 +60,27 @@
   }
 
   async function queue(track: Track) {
-    queuedIds = { ...queuedIds, [track.id]: 'queued' };
+    queuedIds = { ...queuedIds, [track.id]: { kind: 'queued' } };
     try {
       await downloadApi.start(track.id, { location: 'navidrome', provider: provider || undefined });
-      queuedIds = { ...queuedIds, [track.id]: 'done' };
+      queuedIds = { ...queuedIds, [track.id]: { kind: 'done' } };
     } catch (err) {
-      queuedIds = { ...queuedIds, [track.id]: 'error' };
+      if (err instanceof ApiError && err.status === 409) {
+        // Backend signalisiert: schon in Bibliothek oder schon in Queue.
+        // Das ist kein Fehler, sondern erwartetes "no-op"-Verhalten.
+        const detail =
+          err.body && typeof err.body === 'object' && 'detail' in err.body
+            ? String((err.body as { detail: unknown }).detail)
+            : 'bereits vorhanden';
+        queuedIds = { ...queuedIds, [track.id]: { kind: 'exists', message: detail } };
+      } else if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        // Sheet öffnet sich automatisch via api.ts → reset state damit User retry kann
+        queuedIds = Object.fromEntries(
+          Object.entries(queuedIds).filter(([k]) => k !== track.id)
+        );
+      } else {
+        queuedIds = { ...queuedIds, [track.id]: { kind: 'error' } };
+      }
     }
   }
 
@@ -152,20 +168,29 @@
             </div>
             <button
               onclick={() => queue(track)}
-              disabled={state === 'queued' || state === 'done'}
-              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:opacity-60"
-              style="background: {state === 'done'
+              disabled={state?.kind === 'queued' || state?.kind === 'done' || state?.kind === 'exists'}
+              title={state?.message ?? ''}
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:opacity-70"
+              style="background: {state?.kind === 'done'
                 ? 'var(--color-status-done)'
-                : state === 'error'
-                  ? 'var(--color-status-error)'
-                  : 'var(--color-accent)'}; color: #1a1410;"
+                : state?.kind === 'exists'
+                  ? 'var(--color-surface-3)'
+                  : state?.kind === 'error'
+                    ? 'var(--color-status-error)'
+                    : 'var(--color-accent)'}; color: {state?.kind === 'exists'
+                ? 'var(--color-fg-secondary)'
+                : '#1a1410'}; border: {state?.kind === 'exists'
+                ? '1px solid var(--color-border-soft)'
+                : 'none'};"
             >
-              {#if state === 'queued'}
+              {#if state?.kind === 'queued'}
                 <Loader2 size={13} class="animate-spin" />
                 queue …
-              {:else if state === 'done'}
+              {:else if state?.kind === 'done'}
                 ✓ in Queue
-              {:else if state === 'error'}
+              {:else if state?.kind === 'exists'}
+                ✓ vorhanden
+              {:else if state?.kind === 'error'}
                 Fehler
               {:else}
                 <Download size={13} strokeWidth={1.8} />
