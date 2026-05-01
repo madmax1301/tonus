@@ -75,6 +75,17 @@ export interface Track {
   release_date: string;
 }
 
+export interface Album {
+  id: string;
+  name: string;
+  artist: string;
+  artists: string[];
+  release_date: string;
+  total_tracks: number;
+  album_art?: string;
+  external_url: string;
+}
+
 export interface MetadataProvider {
   id: string;
   label: string;
@@ -100,7 +111,9 @@ export const queueApi = {
 
 export const searchApi = {
   tracks: (query: string, provider?: string, limit = 20) =>
-    api.post<Track[]>('/api/search', { query, provider, limit })
+    api.post<Track[]>('/api/search', { query, provider, limit }),
+  albums: (query: string, provider?: string, limit = 20) =>
+    api.post<Album[]>('/api/search/albums', { query, provider, limit })
 };
 
 export const downloadApi = {
@@ -109,7 +122,19 @@ export const downloadApi = {
       track_id: trackId,
       location: opts.location ?? 'navidrome',
       metadata_provider: opts.provider
-    })
+    }),
+  album: (
+    albumId: string,
+    opts: { location?: 'local' | 'navidrome'; provider?: string } = {}
+  ) =>
+    api.post<{ message: string; total_tracks?: number; queued?: number; skipped?: number }>(
+      '/api/download/album',
+      {
+        album_id: albumId,
+        location: opts.location ?? 'navidrome',
+        provider: opts.provider
+      }
+    )
 };
 
 export const providersApi = {

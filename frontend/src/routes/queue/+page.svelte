@@ -183,6 +183,60 @@
     </div>
   </header>
 
+  <!-- Bulk-Actions (über der Liste) -->
+  <div class="flex items-center gap-3 flex-wrap">
+    <button
+      onclick={retryAll}
+      disabled={busy.retryAll || !counts.error}
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
+      style="background: var(--color-accent); color: #1a1410;"
+    >
+      {#if busy.retryAll}
+        <Loader2 size={14} class="animate-spin" />
+      {:else}
+        <RotateCw size={14} strokeWidth={1.8} />
+      {/if}
+      Alle Fehler retry
+      {#if counts.error}
+        <span class="text-[11px] opacity-70">·&nbsp;{counts.error.toLocaleString('de-DE')}</span>
+      {/if}
+    </button>
+
+    <button
+      onclick={cleanupCompleted}
+      disabled={busy.cleanup || !counts.completed}
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] transition-colors disabled:opacity-40"
+      style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+    >
+      {#if busy.cleanup}
+        <Loader2 size={14} class="animate-spin" />
+      {:else}
+        <Eraser size={14} strokeWidth={1.5} />
+      {/if}
+      Fertige aufräumen
+    </button>
+
+    <button
+      onclick={clearAll}
+      disabled={busy.clearAll || total === 0}
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] transition-colors disabled:opacity-40"
+      style="background: transparent; border: 1px solid var(--color-status-error); color: var(--color-status-error);"
+    >
+      {#if busy.clearAll}
+        <Loader2 size={14} class="animate-spin" />
+      {:else}
+        <Trash2 size={14} strokeWidth={1.5} />
+      {/if}
+      Queue leeren
+    </button>
+
+    {#if busy.feedback}
+      <span class="ml-auto text-[12px]" style="color: var(--color-fg-secondary);">
+        {busy.feedback}
+      </span>
+    {/if}
+  </div>
+
   <!-- Filter + Suche -->
   <div class="flex items-center gap-3 flex-wrap">
     <div class="flex items-center gap-1">
@@ -286,62 +340,4 @@
     </div>
   {/if}
 
-  <!-- Bulk-Actions -->
-  <footer
-    class="sticky bottom-0 -mx-6 px-6 py-4 backdrop-blur-[var(--blur-card)]"
-    style="background: var(--color-surface-1); border-top: 1px solid var(--color-border-soft);"
-  >
-    <div class="flex items-center gap-3 flex-wrap">
-      <button
-        onclick={retryAll}
-        disabled={busy.retryAll || !counts.error}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
-        style="background: var(--color-accent); color: #1a1410;"
-      >
-        {#if busy.retryAll}
-          <Loader2 size={14} class="animate-spin" />
-        {:else}
-          <RotateCw size={14} strokeWidth={1.8} />
-        {/if}
-        Alle Fehler retry
-        {#if counts.error}
-          <span class="text-[11px] opacity-70">·&nbsp;{counts.error.toLocaleString('de-DE')}</span>
-        {/if}
-      </button>
-
-      <button
-        onclick={cleanupCompleted}
-        disabled={busy.cleanup || !counts.completed}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] transition-colors disabled:opacity-40"
-        style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
-      >
-        {#if busy.cleanup}
-          <Loader2 size={14} class="animate-spin" />
-        {:else}
-          <Eraser size={14} strokeWidth={1.5} />
-        {/if}
-        Fertige aufräumen
-      </button>
-
-      <button
-        onclick={clearAll}
-        disabled={busy.clearAll || total === 0}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] transition-colors disabled:opacity-40"
-        style="background: transparent; border: 1px solid var(--color-status-error); color: var(--color-status-error);"
-      >
-        {#if busy.clearAll}
-          <Loader2 size={14} class="animate-spin" />
-        {:else}
-          <Trash2 size={14} strokeWidth={1.5} />
-        {/if}
-        Queue leeren
-      </button>
-
-      {#if busy.feedback}
-        <span class="ml-auto text-[12px]" style="color: var(--color-fg-secondary);">
-          {busy.feedback}
-        </span>
-      {/if}
-    </div>
-  </footer>
 </section>

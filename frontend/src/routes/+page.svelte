@@ -6,16 +6,21 @@
     providersApi,
     ApiError,
     type Track,
+    type Album,
     type MetadataProvidersResponse
   } from '$lib/api';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import { Search, Download, Loader2 } from 'lucide-svelte';
 
+  type Mode = 'tracks' | 'albums';
+
   let query = $state('');
+  let mode = $state<Mode>('tracks');
   let provider = $state<string>('');
   let providersData = $state<MetadataProvidersResponse | null>(null);
-  let results = $state<Track[]>([]);
+  let trackResults = $state<Track[]>([]);
+  let albumResults = $state<Album[]>([]);
   let searching = $state(false);
   let searchError = $state<string | null>(null);
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
@@ -34,7 +39,8 @@
   function onInput() {
     if (debounceTimer) clearTimeout(debounceTimer);
     if (!query.trim()) {
-      results = [];
+      trackResults = [];
+      albumResults = [];
       searchError = null;
       return;
     }
@@ -46,9 +52,16 @@
     searching = true;
     searchError = null;
     try {
-      results = await searchApi.tracks(query.trim(), provider || undefined, 20);
+      if (mode === 'tracks') {
+        trackResults = await searchApi.tracks(query.trim(), provider || undefined, 20);
+        albumResults = [];
+      } else {
+        albumResults = await searchApi.albums(query.trim(), provider || undefined, 20);
+        trackResults = [];
+      }
     } catch (err) {
-      results = [];
+      trackResults = [];
+      albumResults = [];
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         searchError = null; // sheet öffnet sich
       } else {
@@ -59,28 +72,60 @@
     }
   }
 
-  async function queue(track: Track) {
-    queuedIds = { ...queuedIds, [track.id]: { kind: 'queued' } };
+  function setMode(next: Mode) {
+    if (mode === next) return;
+    mode = next;
+    if (query.trim()) runSearch();
+  }
+
+  function setQueueState(id: string, state: DownloadState) {
+    queuedIds = { ...queuedIds, [id]: state };
+  }
+
+  function clearQueueState(id: string) {
+    queuedIds = Object.fromEntries(Object.entries(queuedIds).filter(([k]) => k !== id));
+  }
+
+  function handleDownloadError(id: string, err: unknown) {
+    if (err instanceof ApiError && err.status === 409) {
+      const detail =
+        err.body && typeof err.body === 'object' && 'detail' in err.body
+          ? String((err.body as { detail: unknown }).detail)
+          : 'bereits vorhanden';
+      setQueueState(id, { kind: 'exists', message: detail });
+    } else if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      // Sheet öffnet sich automatisch via api.ts
+      clearQueueState(id);
+    } else {
+      setQueueState(id, { kind: 'error' });
+    }
+  }
+
+  async function queueTrack(track: Track) {
+    setQueueState(track.id, { kind: 'queued' });
     try {
       await downloadApi.start(track.id, { location: 'navidrome', provider: provider || undefined });
-      queuedIds = { ...queuedIds, [track.id]: { kind: 'done' } };
+      setQueueState(track.id, { kind: 'done' });
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        // Backend signalisiert: schon in Bibliothek oder schon in Queue.
-        // Das ist kein Fehler, sondern erwartetes "no-op"-Verhalten.
-        const detail =
-          err.body && typeof err.body === 'object' && 'detail' in err.body
-            ? String((err.body as { detail: unknown }).detail)
-            : 'bereits vorhanden';
-        queuedIds = { ...queuedIds, [track.id]: { kind: 'exists', message: detail } };
-      } else if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-        // Sheet öffnet sich automatisch via api.ts → reset state damit User retry kann
-        queuedIds = Object.fromEntries(
-          Object.entries(queuedIds).filter(([k]) => k !== track.id)
-        );
-      } else {
-        queuedIds = { ...queuedIds, [track.id]: { kind: 'error' } };
-      }
+      handleDownloadError(track.id, err);
+    }
+  }
+
+  async function queueAlbum(album: Album) {
+    setQueueState(album.id, { kind: 'queued' });
+    try {
+      const r = await downloadApi.album(album.id, {
+        location: 'navidrome',
+        provider: provider || undefined
+      });
+      const queued = r.queued ?? album.total_tracks;
+      const skipped = r.skipped ?? 0;
+      setQueueState(album.id, {
+        kind: 'done',
+        message: skipped > 0 ? `${queued} queued, ${skipped} schon da` : `${queued} queued`
+      });
+    } catch (err) {
+      handleDownloadError(album.id, err);
     }
   }
 
@@ -109,7 +154,7 @@
         oninput={onInput}
         onkeydown={(e) => e.key === 'Enter' && runSearch()}
         type="text"
-        placeholder="Track, Artist oder Album …"
+        placeholder={mode === 'tracks' ? 'Track, Artist oder Album …' : 'Album oder Artist …'}
         class="flex-1 bg-transparent outline-none text-base"
         style="color: var(--color-fg-primary);"
         autocomplete="off"
@@ -132,73 +177,166 @@
     </div>
   </GlassCard>
 
+  <!-- Mode-Toggle: Tracks / Alben -->
+  <div class="flex items-center gap-1">
+    {#each [{ id: 'tracks', label: 'Tracks' }, { id: 'albums', label: 'Alben' }] as m}
+      <button
+        onclick={() => setMode(m.id as Mode)}
+        class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
+        style="background: {mode === m.id
+          ? 'var(--color-accent)'
+          : 'transparent'}; color: {mode === m.id
+          ? '#1a1410'
+          : 'var(--color-fg-secondary)'}; border: 1px solid {mode === m.id
+          ? 'transparent'
+          : 'var(--color-border-soft)'};"
+      >
+        {m.label}
+      </button>
+    {/each}
+  </div>
+
   {#if searchError}
     <div class="text-sm" style="color: var(--color-status-error);">{searchError}</div>
   {/if}
 
-  {#if results.length > 0}
+  {#if mode === 'tracks' && trackResults.length > 0}
     <div class="space-y-2">
-      {#each results as track (track.id)}
+      {#each trackResults as track (track.id)}
         {@const state = queuedIds[track.id]}
-        <GlassCard padding="sm" interactive>
-          <div class="flex items-center gap-4">
-            <AlbumArt src={track.album_art} alt={track.album} size="md" />
-            <div class="flex-1 min-w-0">
-              <div
-                class="font-medium text-[15px] truncate"
-                style="color: var(--color-fg-primary);"
-              >
-                {track.name}
+        {@const loading = state?.kind === 'queued'}
+        <div class="relative" class:skeleton-card={loading}>
+          <GlassCard padding="sm" interactive>
+            <div class="flex items-center gap-4" class:opacity-60={loading}>
+              <AlbumArt src={track.album_art} alt={track.album} size="md" />
+              <div class="flex-1 min-w-0">
+                <div
+                  class="font-medium text-[15px] truncate"
+                  style="color: var(--color-fg-primary);"
+                >
+                  {track.name}
+                </div>
+                <div
+                  class="text-[13px] truncate"
+                  style="color: var(--color-fg-secondary);"
+                >
+                  {track.artist}
+                  {#if track.album}
+                    <span style="color: var(--color-fg-tertiary);"> · {track.album}</span>
+                  {/if}
+                </div>
               </div>
               <div
-                class="text-[13px] truncate"
-                style="color: var(--color-fg-secondary);"
+                class="text-[12px] tabular-nums"
+                style="color: var(--color-fg-tertiary);"
               >
-                {track.artist}
-                {#if track.album}
-                  <span style="color: var(--color-fg-tertiary);"> · {track.album}</span>
+                {fmtDuration(track.duration_ms)}
+              </div>
+              <button
+                onclick={() => queueTrack(track)}
+                disabled={loading || state?.kind === 'done' || state?.kind === 'exists'}
+                title={state?.message ?? ''}
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:cursor-default"
+                style="background: {state?.kind === 'done'
+                  ? 'var(--color-status-done)'
+                  : state?.kind === 'exists'
+                    ? 'var(--color-surface-3)'
+                    : state?.kind === 'error'
+                      ? 'var(--color-status-error)'
+                      : loading
+                        ? 'var(--color-surface-3)'
+                        : 'var(--color-accent)'}; color: {state?.kind === 'exists' || loading
+                  ? 'var(--color-fg-secondary)'
+                  : '#1a1410'}; border: {state?.kind === 'exists' || loading
+                  ? '1px solid var(--color-border-soft)'
+                  : 'none'}; min-width: 110px; justify-content: center;"
+              >
+                {#if loading}
+                  <span class="skeleton-text">queue …</span>
+                {:else if state?.kind === 'done'}
+                  ✓ in Queue
+                {:else if state?.kind === 'exists'}
+                  ✓ vorhanden
+                {:else if state?.kind === 'error'}
+                  Fehler
+                {:else}
+                  <Download size={13} strokeWidth={1.8} />
+                  Download
                 {/if}
+              </button>
+            </div>
+          </GlassCard>
+        </div>
+      {/each}
+    </div>
+  {:else if mode === 'albums' && albumResults.length > 0}
+    <div class="space-y-2">
+      {#each albumResults as album (album.id)}
+        {@const state = queuedIds[album.id]}
+        {@const loading = state?.kind === 'queued'}
+        <div class="relative" class:skeleton-card={loading}>
+          <GlassCard padding="sm" interactive>
+            <div class="flex items-center gap-4" class:opacity-60={loading}>
+              <AlbumArt src={album.album_art} alt={album.name} size="md" />
+              <div class="flex-1 min-w-0">
+                <div
+                  class="font-medium text-[15px] truncate"
+                  style="color: var(--color-fg-primary);"
+                >
+                  {album.name}
+                </div>
+                <div
+                  class="text-[13px] truncate"
+                  style="color: var(--color-fg-secondary);"
+                >
+                  {album.artist}
+                  {#if album.release_date}
+                    <span style="color: var(--color-fg-tertiary);"
+                      > · {album.release_date.slice(0, 4)}</span
+                    >
+                  {/if}
+                  {#if album.total_tracks}
+                    <span style="color: var(--color-fg-tertiary);"
+                      > · {album.total_tracks} Tracks</span
+                    >
+                  {/if}
+                </div>
               </div>
+              <button
+                onclick={() => queueAlbum(album)}
+                disabled={loading || state?.kind === 'done' || state?.kind === 'exists'}
+                title={state?.message ?? ''}
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:cursor-default"
+                style="background: {state?.kind === 'done'
+                  ? 'var(--color-status-done)'
+                  : state?.kind === 'exists'
+                    ? 'var(--color-surface-3)'
+                    : state?.kind === 'error'
+                      ? 'var(--color-status-error)'
+                      : loading
+                        ? 'var(--color-surface-3)'
+                        : 'var(--color-accent)'}; color: {state?.kind === 'exists' || loading
+                  ? 'var(--color-fg-secondary)'
+                  : '#1a1410'}; border: {state?.kind === 'exists' || loading
+                  ? '1px solid var(--color-border-soft)'
+                  : 'none'}; min-width: 130px; justify-content: center;"
+              >
+                {#if loading}
+                  <span class="skeleton-text">queue …</span>
+                {:else if state?.kind === 'done'}
+                  ✓ {state.message ?? 'in Queue'}
+                {:else if state?.kind === 'exists'}
+                  ✓ vorhanden
+                {:else if state?.kind === 'error'}
+                  Fehler
+                {:else}
+                  <Download size={13} strokeWidth={1.8} />
+                  Album laden
+                {/if}
+              </button>
             </div>
-            <div
-              class="text-[12px] tabular-nums"
-              style="color: var(--color-fg-tertiary);"
-            >
-              {fmtDuration(track.duration_ms)}
-            </div>
-            <button
-              onclick={() => queue(track)}
-              disabled={state?.kind === 'queued' || state?.kind === 'done' || state?.kind === 'exists'}
-              title={state?.message ?? ''}
-              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:opacity-70"
-              style="background: {state?.kind === 'done'
-                ? 'var(--color-status-done)'
-                : state?.kind === 'exists'
-                  ? 'var(--color-surface-3)'
-                  : state?.kind === 'error'
-                    ? 'var(--color-status-error)'
-                    : 'var(--color-accent)'}; color: {state?.kind === 'exists'
-                ? 'var(--color-fg-secondary)'
-                : '#1a1410'}; border: {state?.kind === 'exists'
-                ? '1px solid var(--color-border-soft)'
-                : 'none'};"
-            >
-              {#if state?.kind === 'queued'}
-                <Loader2 size={13} class="animate-spin" />
-                queue …
-              {:else if state?.kind === 'done'}
-                ✓ in Queue
-              {:else if state?.kind === 'exists'}
-                ✓ vorhanden
-              {:else if state?.kind === 'error'}
-                Fehler
-              {:else}
-                <Download size={13} strokeWidth={1.8} />
-                Download
-              {/if}
-            </button>
-          </div>
-        </GlassCard>
+          </GlassCard>
+        </div>
       {/each}
     </div>
   {:else if query && !searching}
@@ -209,3 +347,51 @@
     </div>
   {/if}
 </section>
+
+<style>
+  .skeleton-card {
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+  }
+  .skeleton-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(200, 169, 106, 0.08) 50%,
+      transparent 100%
+    );
+    transform: translateX(-100%);
+    animation: shimmer 1.6s linear infinite;
+    pointer-events: none;
+    border-radius: inherit;
+  }
+  @keyframes shimmer {
+    to {
+      transform: translateX(100%);
+    }
+  }
+  .skeleton-text {
+    background: linear-gradient(
+      90deg,
+      var(--color-fg-tertiary) 0%,
+      var(--color-fg-secondary) 50%,
+      var(--color-fg-tertiary) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: text-shimmer 1.6s linear infinite;
+  }
+  @keyframes text-shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+</style>
