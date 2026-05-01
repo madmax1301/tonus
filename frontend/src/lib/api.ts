@@ -153,3 +153,107 @@ export const downloadApi = {
 export const providersApi = {
   list: () => api.get<MetadataProvidersResponse>('/api/metadata/providers')
 };
+
+// ─── Import / URL / Reverse ────────────────────────────────
+
+export interface CsvImportStartResponse {
+  job_id: string;
+  total: number;
+  message?: string;
+}
+
+export interface CsvImportStatus {
+  status: 'queued' | 'processing' | 'completed' | 'error';
+  total: number;
+  processed: number;
+  found: number;
+  not_found: number;
+  message?: string;
+}
+
+export interface CsvMatched {
+  query?: string;
+  raw_line?: string;
+  artist?: string;
+  title?: string;
+  matched_track: Track;
+}
+
+export interface CsvUnmatched {
+  query?: string;
+  raw_line?: string;
+  artist?: string;
+  title?: string;
+  reason?: string;
+}
+
+export interface CsvImportResult {
+  total: number;
+  found: number;
+  not_found: number;
+  matched: CsvMatched[];
+  unmatched: CsvUnmatched[];
+}
+
+export const importApi = {
+  startCsv: (csvText: string, provider?: string, limit?: number) =>
+    api.post<CsvImportStartResponse>('/api/import/csv', {
+      csv_text: csvText,
+      provider,
+      limit
+    }),
+  status: (jobId: string) => api.get<CsvImportStatus>(`/api/import/csv/status/${jobId}`),
+  result: (jobId: string, offset = 0, limit = 200) =>
+    api.get<CsvImportResult>(
+      `/api/import/csv/result/${jobId}?offset=${offset}&limit=${limit}`
+    ),
+  cancel: (jobId: string) => api.post<{ ok: boolean }>(`/api/import/csv/${jobId}/cancel`),
+  queueAll: (
+    jobId: string,
+    opts: { location?: 'local' | 'navidrome'; provider?: string } = {}
+  ) =>
+    api.post<{ queued?: number; skipped?: number; message?: string }>(
+      `/api/import/csv/queue-all/${jobId}`,
+      { location: opts.location ?? 'navidrome', provider: opts.provider }
+    )
+};
+
+export const urlApi = {
+  download: (url: string, opts: { location?: 'local' | 'navidrome' } = {}) =>
+    api.post<{ job_id: string; status: string; message?: string }>('/api/url/download', {
+      url,
+      location: opts.location ?? 'navidrome'
+    })
+};
+
+export interface ReverseLookupResult {
+  query: string;
+  provider: string;
+  youtube: { title?: string; channel?: string; duration?: number; thumbnail?: string };
+  spotify_candidates: Track[];
+}
+
+export const reverseApi = {
+  lookup: (url: string, provider?: string) =>
+    api.post<ReverseLookupResult>('/api/reverse/youtube', { url, provider }),
+  download: (
+    youtubeUrl: string,
+    candidate: Track | null,
+    opts: { location?: 'local' | 'navidrome'; provider?: string } = {}
+  ) =>
+    api.post<{ status: string; message: string }>('/api/reverse/download', {
+      youtube_url: youtubeUrl,
+      spotify_track_id: candidate?.id,
+      metadata: candidate
+        ? {
+            name: candidate.name,
+            artist: candidate.artist,
+            album: candidate.album,
+            album_art: candidate.album_art,
+            duration_ms: candidate.duration_ms
+          }
+        : undefined,
+      location: opts.location ?? 'navidrome',
+      provider: opts.provider
+    })
+};
