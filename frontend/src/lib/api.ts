@@ -116,6 +116,19 @@ export const searchApi = {
     api.post<Album[]>('/api/search/albums', { query, provider, limit })
 };
 
+export interface AlbumDetail extends Album {
+  cover?: string;
+  tracks: Track[];
+  genres?: string[];
+}
+
+export const albumApi = {
+  get: (albumId: string, provider?: string) => {
+    const q = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    return api.get<AlbumDetail>(`/api/album/${encodeURIComponent(albumId)}${q}`);
+  }
+};
+
 export const downloadApi = {
   start: (trackId: string, opts: { location?: 'local' | 'navidrome'; provider?: string } = {}) =>
     api.post<{ status: string; message: string }>('/api/download', {

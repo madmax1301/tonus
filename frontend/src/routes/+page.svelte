@@ -9,9 +9,10 @@
     type Album,
     type MetadataProvidersResponse
   } from '$lib/api';
+  import { base } from '$app/paths';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
-  import { Search, Download, Loader2 } from 'lucide-svelte';
+  import { Search, Download, Loader2, ChevronRight } from 'lucide-svelte';
 
   type Mode = 'tracks' | 'albums';
 
@@ -275,67 +276,81 @@
         {@const state = queuedIds[album.id]}
         {@const loading = state?.kind === 'queued'}
         <div class="relative" class:skeleton-card={loading}>
-          <GlassCard padding="sm" interactive>
-            <div class="flex items-center gap-4" class:opacity-60={loading}>
-              <AlbumArt src={album.album_art} alt={album.name} size="md" />
-              <div class="flex-1 min-w-0">
-                <div
-                  class="font-medium text-[15px] truncate"
-                  style="color: var(--color-fg-primary);"
-                >
-                  {album.name}
+          <a
+            href="{base}/album/{album.id}?provider={provider}"
+            class="block"
+            data-sveltekit-preload-data="hover"
+          >
+            <GlassCard padding="sm" interactive>
+              <div class="flex items-center gap-4" class:opacity-60={loading}>
+                <AlbumArt src={album.album_art} alt={album.name} size="md" />
+                <div class="flex-1 min-w-0">
+                  <div
+                    class="font-medium text-[15px] truncate"
+                    style="color: var(--color-fg-primary);"
+                  >
+                    {album.name}
+                  </div>
+                  <div
+                    class="text-[13px] truncate"
+                    style="color: var(--color-fg-secondary);"
+                  >
+                    {album.artist}
+                    {#if album.release_date}
+                      <span style="color: var(--color-fg-tertiary);"
+                        > · {album.release_date.slice(0, 4)}</span
+                      >
+                    {/if}
+                    {#if album.total_tracks}
+                      <span style="color: var(--color-fg-tertiary);"
+                        > · {album.total_tracks} Tracks</span
+                      >
+                    {/if}
+                  </div>
                 </div>
-                <div
-                  class="text-[13px] truncate"
-                  style="color: var(--color-fg-secondary);"
+                <button
+                  onclick={(e) => {
+                    e.preventDefault();
+                    queueAlbum(album);
+                  }}
+                  disabled={loading || state?.kind === 'done' || state?.kind === 'exists'}
+                  title={state?.message ?? ''}
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:cursor-default"
+                  style="background: {state?.kind === 'done'
+                    ? 'var(--color-status-done)'
+                    : state?.kind === 'exists'
+                      ? 'var(--color-surface-3)'
+                      : state?.kind === 'error'
+                        ? 'var(--color-status-error)'
+                        : loading
+                          ? 'var(--color-surface-3)'
+                          : 'var(--color-accent)'}; color: {state?.kind === 'exists' || loading
+                    ? 'var(--color-fg-secondary)'
+                    : '#1a1410'}; border: {state?.kind === 'exists' || loading
+                    ? '1px solid var(--color-border-soft)'
+                    : 'none'}; min-width: 130px; justify-content: center;"
                 >
-                  {album.artist}
-                  {#if album.release_date}
-                    <span style="color: var(--color-fg-tertiary);"
-                      > · {album.release_date.slice(0, 4)}</span
-                    >
+                  {#if loading}
+                    <span class="skeleton-text">queue …</span>
+                  {:else if state?.kind === 'done'}
+                    ✓ {state.message ?? 'in Queue'}
+                  {:else if state?.kind === 'exists'}
+                    ✓ vorhanden
+                  {:else if state?.kind === 'error'}
+                    Fehler
+                  {:else}
+                    <Download size={13} strokeWidth={1.8} />
+                    Album laden
                   {/if}
-                  {#if album.total_tracks}
-                    <span style="color: var(--color-fg-tertiary);"
-                      > · {album.total_tracks} Tracks</span
-                    >
-                  {/if}
-                </div>
+                </button>
+                <ChevronRight
+                  size={16}
+                  strokeWidth={1.5}
+                  style="color: var(--color-fg-tertiary); flex-shrink: 0;"
+                />
               </div>
-              <button
-                onclick={() => queueAlbum(album)}
-                disabled={loading || state?.kind === 'done' || state?.kind === 'exists'}
-                title={state?.message ?? ''}
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:cursor-default"
-                style="background: {state?.kind === 'done'
-                  ? 'var(--color-status-done)'
-                  : state?.kind === 'exists'
-                    ? 'var(--color-surface-3)'
-                    : state?.kind === 'error'
-                      ? 'var(--color-status-error)'
-                      : loading
-                        ? 'var(--color-surface-3)'
-                        : 'var(--color-accent)'}; color: {state?.kind === 'exists' || loading
-                  ? 'var(--color-fg-secondary)'
-                  : '#1a1410'}; border: {state?.kind === 'exists' || loading
-                  ? '1px solid var(--color-border-soft)'
-                  : 'none'}; min-width: 130px; justify-content: center;"
-              >
-                {#if loading}
-                  <span class="skeleton-text">queue …</span>
-                {:else if state?.kind === 'done'}
-                  ✓ {state.message ?? 'in Queue'}
-                {:else if state?.kind === 'exists'}
-                  ✓ vorhanden
-                {:else if state?.kind === 'error'}
-                  Fehler
-                {:else}
-                  <Download size={13} strokeWidth={1.8} />
-                  Album laden
-                {/if}
-              </button>
-            </div>
-          </GlassCard>
+            </GlassCard>
+          </a>
         </div>
       {/each}
     </div>

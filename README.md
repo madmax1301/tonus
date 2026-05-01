@@ -28,11 +28,23 @@ uvicorn app:app --reload --port 8088
 ## Build & run via Docker
 
 ```bash
+# First time: bind-mount target must exist before compose up
+mkdir -p downloads
+
 docker compose up --build -d
 # → http://<host>:8088
 ```
 
 The base `docker-compose.yml` uses `network_mode: host` for dual-VPN source-IP binding (NAS production). On macOS Docker Desktop, `docker-compose.override.yml` swaps that to bridge mode with port mapping.
+
+### Hosts without dual-VPN (dev VMs, generic Linux)
+
+If `VPN_SOURCE_A`/`VPN_SOURCE_B` aren't bindable on the current host, the boot-time check in `app.py:_verify_vpn_source_bindings` aborts with `errno 99: Cannot assign requested address`. Disable splitting in those environments:
+
+```yaml
+environment:
+  - VPN_SPLIT_ENABLED=false
+```
 
 ## Configuration
 
