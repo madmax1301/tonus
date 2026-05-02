@@ -423,6 +423,31 @@ class PluginSyncRequest(BaseModel):
     playlist_name: Optional[str] = None
     navidrome_user: Optional[str] = None
 
+
+class PluginMixDiscoveryRequest(BaseModel):
+    """Trigger-Body für /api/plugin/mix/discovery — vom Navidrome-Plugin
+    (Mix-Discovery-Job) gepostet, einmal pro Genre-Mix.
+
+    Anders als `/api/plugin/sync` (klassischer LB-Top-Artist-Pfad) holt dieser
+    Endpoint Tracks per Genre-Tag aus den ListenBrainz-Charts. Workflow:
+      1. LB-Top-Recordings pro Genre fetchen (über `count` × Faktor 2 als
+         Pool, damit nach Library-Dedup genug übrig bleiben)
+      2. Pro Track: in-Library-Check via Navidrome-Subsonic-search3
+      3. Existierende Tracks → Liste zurück (für Plugin-Build-Phase)
+      4. Fehlende Tracks → in download_jobs queuen mit Mix-Marker im Payload
+         (damit `/api/plugin/finished-tracks` sie später dem Mix zuordnen kann)
+
+    `mix_name` + `navidrome_user` werden als Marker im Payload jedes gequeuten
+    Tracks gespeichert, damit beim späteren Build-Job nur die richtigen Tracks
+    in die Mix-Playlist gehen.
+    """
+    navidrome_user: str
+    mix_name: str
+    genre: str
+    count: int = 25
+    discovery_ratio: float = 0.4   # 0.0 = nur familiars, 1.0 = nur new
+
+
 # Response models
 class TrackResponse(BaseModel):
     id: str
@@ -2529,6 +2554,174 @@ def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
     return {"playlists": len(by_playlist), "tracks_added": total_added}
 
 
+def _check_mix_tracks_in_library(req: PluginMixDiscoveryRequest) -> List[Dict[str, str]]:
+    """Synchroner Library-Lookup für die existing-Liste eines Mix-Discovery-Calls.
+
+    Holt LB-Top-Recordings für das Genre, fragt pro Track navidrome_service
+    ab, returnt nur die in-Library-vorhandenen Tracks mit ihrer Subsonic-ID.
+    Diese Liste kommt direkt im Endpoint-Response zurück und wird vom Plugin
+    im KVStore persistiert für die Build-Phase.
+
+    Performance: ~25 Tracks × ~50 ms Subsonic-search3 = ~1.5 s. Bleibt damit
+    klar im 30 s-Plugin-Hostlimit.
+    """
+    from services.discovery import lb_genre_top_recordings
+
+    # Pool 2× count, weil viele Tracks NICHT in Library sind und wir trotzdem
+    # genug existing für die Mix-Build-Phase brauchen wollen.
+    pool_size = max(req.count * 2, 50)
+    items = lb_genre_top_recordings(req.genre, count=pool_size)
+    if not items:
+        return []
+
+    existing: List[Dict[str, str]] = []
+    target_existing = int(req.count * (1.0 - req.discovery_ratio))
+    for it in items:
+        if len(existing) >= target_existing:
+            break
+        try:
+            sid = navidrome_service.find_track_id_by_artist_title(
+                it.get("artist", ""), it.get("title", "")
+            )
+            if sid:
+                existing.append({
+                    "subsonic_id": sid,
+                    "artist": it.get("artist", ""),
+                    "title": it.get("title", ""),
+                })
+        except Exception:
+            continue
+    return existing
+
+
+def _run_plugin_mix_discovery(req: PluginMixDiscoveryRequest) -> None:
+    """Background-Task hinter POST /api/plugin/mix/discovery.
+
+    Holt LB-Top-Recordings pro Genre, dedupliziert gegen Library, queued
+    fehlende Tracks (= discovery_ratio-Anteil) als download_jobs mit
+    Mix-Markern (mix_name + navidrome_user) im Payload, sodass
+    /api/plugin/finished-tracks sie später dem Mix zuordnen kann.
+
+    Schreibt sich nicht in _plugin_sync_state, weil Mix-Runs unabhängig
+    vom Default-Discovery-Pfad laufen — ein Mix-Run hat seinen eigenen
+    Lebenszyklus (Wed-Discovery → Fr-Build).
+    """
+    from services.discovery import lb_genre_top_recordings, deezer_search_track
+
+    started = _now_ms()
+    pool_size = max(req.count * 2, 50)
+    target_missing = int(req.count * req.discovery_ratio)
+
+    try:
+        items = lb_genre_top_recordings(req.genre, count=pool_size)
+    except Exception as e:
+        print(f"[plugin-mix-discovery] LB fetch failed: {e}")
+        return
+
+    if not items:
+        print(f"[plugin-mix-discovery] no LB results for genre={req.genre!r}")
+        return
+
+    location = "navidrome"
+    output_format = config.OUTPUT_FORMAT
+    provider = "deezer"
+    navidrome_path = resolve_navidrome_library_path_optional(None)
+    run_id = f"plugin-mix-{req.navidrome_user}-{req.mix_name}-{started}"
+
+    queued = 0
+    skipped_existing = 0
+    failed = 0
+
+    for it in items:
+        if queued >= target_missing:
+            break
+        artist = it.get("artist", "")
+        title = it.get("title", "")
+        if not artist or not title:
+            continue
+
+        # In-Library? Dann skip — der Track gehört zur "existing"-Liste, die der
+        # Endpoint synchron zurückgegeben hat.
+        try:
+            if navidrome_service.find_track_id_by_artist_title(artist, title):
+                skipped_existing += 1
+                continue
+        except Exception:
+            pass
+
+        # Deezer-Track auflösen, sodass wir eine ID für den Download-Worker haben.
+        deezer_track = deezer_search_track(artist, title)
+        if not deezer_track:
+            failed += 1
+            continue
+        track_id = str(deezer_track.get("id", ""))
+        if not track_id:
+            failed += 1
+            continue
+
+        artist_obj = deezer_track.get("artist") or {}
+        album_obj = deezer_track.get("album") or {}
+        track_hint = {
+            "id": track_id,
+            "name": deezer_track.get("title", ""),
+            "artist": artist_obj.get("name", ""),
+            "album": album_obj.get("title", ""),
+            "album_art": (
+                album_obj.get("cover_xl")
+                or album_obj.get("cover_big")
+                or album_obj.get("cover_medium")
+            ),
+        }
+
+        try:
+            dup = get_duplicate_download_reason(
+                track_id, provider, location, output_format,
+                navidrome_library_path=navidrome_path,
+            )
+            if dup:
+                skipped_existing += 1
+                continue
+
+            track_for_queue = _resolve_track_for_queue(track_id, provider, track_hint)
+            payload_extra: Dict[str, Any] = {
+                "provider": provider,
+                "record_track_id": track_id,
+                "location": location,
+                "video_id": None,
+                "output_format": output_format,
+                "audio_quality": None,
+                "metadata_provider": provider,
+                "max_retries": 0,
+                "navidrome_library_path": navidrome_path,
+                "track": track_for_queue,
+                # Mix-spezifische Marker — gelesen von /api/plugin/finished-tracks
+                # wenn ein Mix-Build-Job die Tracks für seine Playlist sammelt.
+                "plugin_mix_run_id": run_id,
+                "plugin_mix_name": req.mix_name,
+                "plugin_mix_navidrome_user": req.navidrome_user,
+                "plugin_mix_genre": req.genre,
+            }
+            upsert_job(
+                track_id,
+                status="queued",
+                message=f"Download queued (mix={req.mix_name})",
+                progress=0,
+                stage="queued",
+                payload=payload_extra,
+            )
+            queued += 1
+        except Exception as e:
+            failed += 1
+            print(f"[plugin-mix-discovery] queue fail track={track_id}: {e}")
+
+    elapsed_ms = _now_ms() - started
+    print(
+        f"[plugin-mix-discovery] {req.mix_name!r} (genre={req.genre}) "
+        f"done in {elapsed_ms}ms — pool={len(items)} "
+        f"queued={queued} skipped_existing={skipped_existing} failed={failed}"
+    )
+
+
 def _run_plugin_sync(req: PluginSyncRequest) -> None:
     """Background-Task hinter POST /api/plugin/sync.
 
@@ -2729,6 +2922,37 @@ async def plugin_sync(
     /api/plugin/sync-status (Feld plugin_sync.last_status)."""
     background_tasks.add_task(_run_plugin_sync, req)
     return {"started": True, "message": "discovery+queue running in background"}
+
+
+@app.post("/api/plugin/mix/discovery")
+async def plugin_mix_discovery(
+    req: PluginMixDiscoveryRequest,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(require_token),
+):
+    """Plugin-Trigger für Genre-basierte Mixes (Wed-Discovery-Cron-Pfad).
+
+    Returnt sofort mit der Liste der bereits-in-Library-vorhandenen Tracks
+    (für die Plugin-Build-Phase). Fehlende Tracks werden im Hintergrund in
+    die Download-Queue gelegt, mit Mix-Markern im Payload (mix_name +
+    navidrome_user). Beim Build-Cron (Fr) holt das Plugin sich die
+    inzwischen-fertigen Tracks via /api/plugin/finished-tracks und mischt
+    sie mit den existing tracks zur finalen Playlist.
+
+    Trotz feuer-und-vergiss: die existing-Liste muss synchron berechnet
+    werden, weil das Plugin sie für die Build-Phase im KVStore speichern
+    muss. Library-Lookup per Navidrome-search3 ist schnell genug
+    (~50ms/Track × 25 = 1-2 s) — bleibt im 30-s-Plugin-Limit.
+    """
+    background_tasks.add_task(_run_plugin_mix_discovery, req)
+    # Synchroner Library-Check für die existing-Liste — Plugin braucht das
+    # für KVStore-Persistierung
+    existing = _check_mix_tracks_in_library(req)
+    return {
+        "started": True,
+        "message": "mix discovery + queueing missing tracks in background",
+        "existing": existing,
+    }
 
 
 @app.get("/api/plugin/finished-tracks")

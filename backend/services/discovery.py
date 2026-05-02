@@ -169,6 +169,48 @@ def lb_recommendations(user: str, count: int = 100) -> List[Dict]:
     return out
 
 
+def lb_genre_top_recordings(genre: str, count: int = 50) -> List[Dict]:
+    """Top-Recordings eines Genres aus ListenBrainz Charts.
+
+    Verwendet den `popular/release-groups`-Endpoint mit Genre-Filter, holt
+    dann pro Release die Tracklist via MB. Der Genre-String muss ein
+    LB/MB-Tag sein (z.B. 'metalcore', 'hip-hop', 'shoegaze').
+
+    Output: Liste von ``{"artist": str, "title": str, "mbid": str}``.
+    Leer falls Genre unbekannt oder LB API down.
+    """
+    out: List[Dict] = []
+    try:
+        r = requests.get(
+            f"{LB_API}/popular/release-groups",
+            params={"genre": genre, "count": min(count, 100)},
+            timeout=20,
+            headers={"User-Agent": USER_AGENT},
+        )
+        if not r.ok or not r.text.strip():
+            return out
+        try:
+            data = r.json()
+        except ValueError:
+            return out
+        rgs = ((data.get("payload") or {}).get("release_groups")) or []
+        # Pro Release-Group den ersten Recording als "repräsentativen" Track
+        # nehmen — vermeidet, dass eine Library mit dem gleichen Album
+        # mehrfach matched. Wer mehr Tiefe will, kann pro RG mehr Recordings
+        # ausweiten (kostet aber MB-Lookups).
+        for rg in rgs:
+            artist = (rg.get("artist_credit_name") or "").strip()
+            title = (rg.get("release_group_name") or "").strip()
+            mbid = rg.get("release_group_mbid") or ""
+            if artist and title:
+                out.append({"artist": artist, "title": title, "mbid": mbid})
+            if len(out) >= count:
+                break
+    except Exception:
+        pass
+    return out
+
+
 def lb_playlist_tracks(user: str, slug_or_mbid: str) -> List[Dict]:
     """Tracks einer LB-'createdfor'-Playlist (z.B. 'daily-jams')."""
     out: List[Dict] = []
