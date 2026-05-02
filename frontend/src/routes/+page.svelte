@@ -4,17 +4,20 @@
     searchApi,
     downloadApi,
     providersApi,
+    urlApi,
+    reverseApi,
     ApiError,
     type Track,
     type Album,
-    type MetadataProvidersResponse
+    type MetadataProvidersResponse,
+    type ReverseLookupResult
   } from '$lib/api';
   import { base } from '$app/paths';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
-  import { Search, Download, Loader2, ChevronRight } from 'lucide-svelte';
+  import { Search, Download, Loader2, ChevronRight, Link2, Youtube } from 'lucide-svelte';
 
-  type Mode = 'tracks' | 'albums';
+  type Mode = 'tracks' | 'albums' | 'url' | 'reverse';
 
   let query = $state('');
   let mode = $state<Mode>('tracks');
@@ -26,6 +29,91 @@
   let searchError = $state<string | null>(null);
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
   let queuedIds = $state<Record<string, DownloadState>>({});
+
+  // ── URL-Direktdownload ──────────────────────────────────
+  let urlInput = $state('');
+  let urlBusy = $state(false);
+  let urlMessage = $state<string | null>(null);
+  let urlError = $state<string | null>(null);
+
+  async function submitUrl() {
+    if (!urlInput.trim()) return;
+    urlBusy = true;
+    urlMessage = null;
+    urlError = null;
+    try {
+      const r = await urlApi.download(urlInput.trim(), { location: 'navidrome' });
+      urlMessage = r.message ?? `In Queue als ${r.job_id}`;
+      urlInput = '';
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        const detail =
+          err.body && typeof err.body === 'object' && 'detail' in err.body
+            ? String((err.body as { detail: unknown }).detail)
+            : 'bereits vorhanden';
+        urlMessage = `${detail}`;
+      } else {
+        urlError = err instanceof Error ? err.message : 'URL-Download fehlgeschlagen';
+      }
+    } finally {
+      urlBusy = false;
+    }
+  }
+
+  // ── Reverse YouTube (URL → Match-Kandidaten) ─────────────
+  let revUrl = $state('');
+  let revBusy = $state(false);
+  let revLookup = $state<ReverseLookupResult | null>(null);
+  let revError = $state<string | null>(null);
+  let revQueuing = $state<Record<string, DownloadState>>({});
+
+  async function submitReverse() {
+    if (!revUrl.trim()) return;
+    revBusy = true;
+    revError = null;
+    revLookup = null;
+    revQueuing = {};
+    try {
+      revLookup = await reverseApi.lookup(revUrl.trim(), provider || undefined);
+    } catch (err) {
+      revError = err instanceof Error ? err.message : 'Reverse-Lookup fehlgeschlagen';
+    } finally {
+      revBusy = false;
+    }
+  }
+
+  async function pickRevCandidate(c: Track) {
+    revQueuing = { ...revQueuing, [c.id]: { kind: 'queued' } };
+    try {
+      await reverseApi.download(revUrl.trim(), c, {
+        location: 'navidrome',
+        provider: provider || undefined
+      });
+      revQueuing = { ...revQueuing, [c.id]: { kind: 'done' } };
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        const detail =
+          err.body && typeof err.body === 'object' && 'detail' in err.body
+            ? String((err.body as { detail: unknown }).detail)
+            : 'bereits vorhanden';
+        revQueuing = { ...revQueuing, [c.id]: { kind: 'exists', message: detail } };
+      } else {
+        revQueuing = { ...revQueuing, [c.id]: { kind: 'error' } };
+      }
+    }
+  }
+
+  async function pickRevRaw() {
+    if (!revUrl.trim()) return;
+    revError = null;
+    try {
+      await reverseApi.download(revUrl.trim(), null, { location: 'navidrome' });
+      revUrl = '';
+      revLookup = null;
+    } catch (err) {
+      revError = err instanceof Error ? err.message : 'Direkter Download fehlgeschlagen';
+    }
+  }
 
   onMount(async () => {
     try {
@@ -147,43 +235,17 @@
     </p>
   </header>
 
-  <GlassCard padding="md">
-    <div class="flex items-center gap-3">
-      <Search size={18} strokeWidth={1.5} style="color: var(--color-fg-tertiary); flex-shrink: 0;" />
-      <input
-        bind:value={query}
-        oninput={onInput}
-        onkeydown={(e) => e.key === 'Enter' && runSearch()}
-        type="text"
-        placeholder={mode === 'tracks' ? 'Track, Artist oder Album …' : 'Album oder Artist …'}
-        class="flex-1 bg-transparent outline-none text-base"
-        style="color: var(--color-fg-primary);"
-        autocomplete="off"
-        spellcheck="false"
-      />
-      {#if providersData}
-        <select
-          bind:value={provider}
-          class="text-[12px] px-2 py-1 rounded-md outline-none"
-          style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
-        >
-          {#each providersData.providers.filter((p) => p.configured) as p}
-            <option value={p.id}>{p.label}</option>
-          {/each}
-        </select>
-      {/if}
-      {#if searching}
-        <Loader2 size={16} class="animate-spin" style="color: var(--color-fg-tertiary);" />
-      {/if}
-    </div>
-  </GlassCard>
-
-  <!-- Mode-Toggle: Tracks / Alben -->
-  <div class="flex items-center gap-1">
-    {#each [{ id: 'tracks', label: 'Tracks' }, { id: 'albums', label: 'Alben' }] as m}
+  <!-- Mode-Toggle: Tracks · Alben · URL · Reverse YouTube -->
+  <div class="flex items-center gap-1 flex-wrap">
+    {#each [
+      { id: 'tracks' as Mode, label: 'Tracks', icon: Search },
+      { id: 'albums' as Mode, label: 'Alben', icon: Search },
+      { id: 'url' as Mode, label: 'URL', icon: Link2 },
+      { id: 'reverse' as Mode, label: 'Reverse YouTube', icon: Youtube }
+    ] as m}
       <button
-        onclick={() => setMode(m.id as Mode)}
-        class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
+        onclick={() => setMode(m.id)}
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] transition-colors"
         style="background: {mode === m.id
           ? 'var(--color-accent)'
           : 'transparent'}; color: {mode === m.id
@@ -192,12 +254,50 @@
           ? 'transparent'
           : 'var(--color-border-soft)'};"
       >
+        <svelte:component this={m.icon} size={13} strokeWidth={1.5} />
         {m.label}
       </button>
     {/each}
+    {#if providersData}
+      <select
+        bind:value={provider}
+        class="ml-auto text-[12px] px-2 py-1 rounded-md outline-none"
+        style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+      >
+        {#each providersData.providers.filter((p) => p.configured) as p}
+          <option value={p.id}>{p.label}</option>
+        {/each}
+      </select>
+    {/if}
   </div>
 
-  {#if searchError}
+  {#if mode === 'tracks' || mode === 'albums'}
+    <GlassCard padding="md">
+      <div class="flex items-center gap-3">
+        <Search
+          size={18}
+          strokeWidth={1.5}
+          style="color: var(--color-fg-tertiary); flex-shrink: 0;"
+        />
+        <input
+          bind:value={query}
+          oninput={onInput}
+          onkeydown={(e) => e.key === 'Enter' && runSearch()}
+          type="text"
+          placeholder={mode === 'tracks' ? 'Track, Artist oder Album …' : 'Album oder Artist …'}
+          class="flex-1 bg-transparent outline-none text-base"
+          style="color: var(--color-fg-primary);"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        {#if searching}
+          <Loader2 size={16} class="animate-spin" style="color: var(--color-fg-tertiary);" />
+        {/if}
+      </div>
+    </GlassCard>
+  {/if}
+
+  {#if searchError && (mode === 'tracks' || mode === 'albums')}
     <div class="text-sm" style="color: var(--color-status-error);">{searchError}</div>
   {/if}
 
@@ -354,9 +454,191 @@
         </div>
       {/each}
     </div>
-  {:else if query && !searching}
+  {:else if mode === 'url'}
+    <!-- ────────── URL (yt-dlp direct) ────────── -->
+    <GlassCard padding="md">
+      <div class="space-y-3">
+        <label class="block space-y-2">
+          <span class="text-[13px] font-medium" style="color: var(--color-fg-primary);">
+            URL — YouTube, SoundCloud, Bandcamp, Vimeo, …
+          </span>
+          <input
+            type="url"
+            bind:value={urlInput}
+            onkeydown={(e) => e.key === 'Enter' && submitUrl()}
+            placeholder="https://…"
+            spellcheck="false"
+            autocomplete="off"
+            class="w-full px-3 py-2.5 rounded-md text-[13px] font-mono outline-none focus:border-[var(--color-accent)]"
+            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
+          />
+        </label>
+        <div class="flex items-center gap-3 flex-wrap">
+          <button
+            onclick={submitUrl}
+            disabled={urlBusy || !urlInput.trim()}
+            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
+            style="background: var(--color-accent); color: #1a1410;"
+          >
+            {#if urlBusy}
+              <Loader2 size={13} class="animate-spin" />
+            {:else}
+              <Download size={13} strokeWidth={1.8} />
+            {/if}
+            In Queue
+          </button>
+          {#if urlMessage}
+            <span class="text-[12px]" style="color: var(--color-status-done);">
+              ✓ {urlMessage}
+            </span>
+          {/if}
+          {#if urlError}
+            <span class="text-[12px]" style="color: var(--color-status-error);">{urlError}</span>
+          {/if}
+        </div>
+      </div>
+    </GlassCard>
+    <p class="text-[12px]" style="color: var(--color-fg-tertiary);">
+      Lädt direkt via yt-dlp ohne Metadata-Match. Title und Artist-Tag bleiben so wie auf der
+      Quelle. Brauchst du saubere Tags, nutze stattdessen <strong>Reverse YouTube</strong>.
+    </p>
+  {:else if mode === 'reverse'}
+    <!-- ────────── Reverse YouTube ────────── -->
+    <GlassCard padding="md">
+      <div class="space-y-3">
+        <label class="block space-y-2">
+          <span class="text-[13px] font-medium" style="color: var(--color-fg-primary);">
+            YouTube-URL — wir matchen den Track im Provider und queuen mit sauberen Tags
+          </span>
+          <input
+            type="url"
+            bind:value={revUrl}
+            onkeydown={(e) => e.key === 'Enter' && submitReverse()}
+            placeholder="https://www.youtube.com/watch?v=…"
+            spellcheck="false"
+            autocomplete="off"
+            class="w-full px-3 py-2.5 rounded-md text-[13px] font-mono outline-none focus:border-[var(--color-accent)]"
+            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
+          />
+        </label>
+        <div class="flex items-center gap-3 flex-wrap">
+          <button
+            onclick={submitReverse}
+            disabled={revBusy || !revUrl.trim()}
+            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
+            style="background: var(--color-accent); color: #1a1410;"
+          >
+            {#if revBusy}
+              <Loader2 size={13} class="animate-spin" />
+            {:else}
+              Match suchen
+            {/if}
+          </button>
+          {#if revLookup || revError}
+            <button
+              onclick={pickRevRaw}
+              class="inline-flex items-center gap-2 px-3 py-2 rounded-md text-[12px] transition-colors"
+              style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+            >
+              Direkt laden ohne Match
+            </button>
+          {/if}
+          {#if revError}
+            <span class="text-[12px]" style="color: var(--color-status-error);">{revError}</span>
+          {/if}
+        </div>
+      </div>
+    </GlassCard>
+
+    {#if revLookup}
+      <div class="space-y-3">
+        {#if revLookup.youtube?.title}
+          <div class="text-[13px]" style="color: var(--color-fg-secondary);">
+            <span style="color: var(--color-fg-tertiary);">YouTube:</span>
+            <span style="color: var(--color-fg-primary);" class="font-medium">
+              {revLookup.youtube.title}
+            </span>
+            {#if revLookup.youtube.channel}
+              · {revLookup.youtube.channel}
+            {/if}
+          </div>
+        {/if}
+        <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
+          {revLookup.spotify_candidates.length} mögliche Treffer · wähle einen für Tags + Cover
+        </div>
+        <div class="space-y-2">
+          {#each revLookup.spotify_candidates as c (c.id)}
+            {@const state = revQueuing[c.id]}
+            {@const rLoading = state?.kind === 'queued'}
+            <div class="relative" class:skeleton-card={rLoading}>
+              <GlassCard padding="sm" interactive>
+                <div class="flex items-center gap-4" class:opacity-60={rLoading}>
+                  <AlbumArt src={c.album_art} alt={c.album} size="md" />
+                  <div class="flex-1 min-w-0">
+                    <div
+                      class="font-medium text-[14px] truncate"
+                      style="color: var(--color-fg-primary);"
+                    >
+                      {c.name}
+                    </div>
+                    <div
+                      class="text-[12px] truncate"
+                      style="color: var(--color-fg-secondary);"
+                    >
+                      {c.artist}
+                      {#if c.album}
+                        <span style="color: var(--color-fg-tertiary);"> · {c.album}</span>
+                      {/if}
+                    </div>
+                  </div>
+                  <div
+                    class="text-[12px] tabular-nums"
+                    style="color: var(--color-fg-tertiary);"
+                  >
+                    {fmtDuration(c.duration_ms)}
+                  </div>
+                  <button
+                    onclick={() => pickRevCandidate(c)}
+                    disabled={rLoading || state?.kind === 'done' || state?.kind === 'exists'}
+                    title={state?.message ?? ''}
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:cursor-default"
+                    style="background: {state?.kind === 'done'
+                      ? 'var(--color-status-done)'
+                      : state?.kind === 'exists'
+                        ? 'var(--color-surface-3)'
+                        : state?.kind === 'error'
+                          ? 'var(--color-status-error)'
+                          : rLoading
+                            ? 'var(--color-surface-3)'
+                            : 'var(--color-accent)'}; color: {state?.kind === 'exists' || rLoading
+                      ? 'var(--color-fg-secondary)'
+                      : '#1a1410'}; border: {state?.kind === 'exists' || rLoading
+                      ? '1px solid var(--color-border-soft)'
+                      : 'none'}; min-width: 110px; justify-content: center;"
+                  >
+                    {#if rLoading}
+                      <span class="skeleton-text">queue …</span>
+                    {:else if state?.kind === 'done'}
+                      ✓ in Queue
+                    {:else if state?.kind === 'exists'}
+                      ✓ vorhanden
+                    {:else if state?.kind === 'error'}
+                      Fehler
+                    {:else}
+                      <Download size={13} strokeWidth={1.8} />
+                      Diesen Match
+                    {/if}
+                  </button>
+                </div>
+              </GlassCard>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+  {:else if (mode === 'tracks' || mode === 'albums') && query && !searching}
     <div class="text-sm" style="color: var(--color-fg-tertiary);">Keine Treffer.</div>
-  {:else if !query}
+  {:else if (mode === 'tracks' || mode === 'albums') && !query}
     <div class="text-sm" style="color: var(--color-fg-tertiary);">
       Tipp: Suchbegriff eingeben und ↵ drücken, oder einfach 320 ms tippen.
     </div>
