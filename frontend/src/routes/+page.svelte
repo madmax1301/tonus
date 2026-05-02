@@ -421,30 +421,23 @@
     </div>
   </div>
 
-  <!-- Glass search bar -->
-  {#if mode === 'tracks' || mode === 'albums'}
-    <div
-      class="flex items-center"
-      style="
-        background: rgba(20, 20, 24, 0.5);
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
-        border: 1px solid var(--color-border-soft);
-        border-radius: 18px;
-        padding: 18px 22px;
-        gap: 16px;
-        margin-bottom: 22px;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      "
-    >
-      <svg
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke={accent}
-        stroke-width="1.5"
-      >
+  <!-- Universal Glass-Search-Bar — Inhalt switcht mit Mode, immer oben -->
+  <div
+    class="flex items-center"
+    style="
+      background: rgba(20, 20, 24, 0.5);
+      backdrop-filter: blur(40px) saturate(1.2);
+      -webkit-backdrop-filter: blur(40px) saturate(1.2);
+      border: 1px solid var(--color-border-soft);
+      border-radius: 18px;
+      padding: 18px 22px;
+      gap: 16px;
+      margin-bottom: 22px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    "
+  >
+    {#if mode === 'tracks' || mode === 'albums'}
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={accent} stroke-width="1.5">
         <circle cx="11" cy="11" r="7" />
         <path d="M21 21l-4.3-4.3" />
       </svg>
@@ -455,44 +448,72 @@
         type="text"
         placeholder={mode === 'tracks' ? 'Track, Artist oder Album …' : 'Album oder Artist …'}
         class="flex-1 bg-transparent outline-none"
-        style="
-          font-size: 18px;
-          font-weight: 300;
-          letter-spacing: -0.005em;
-          color: var(--color-fg-primary);
-        "
+        style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary);"
         autocomplete="off"
         spellcheck="false"
       />
       {#if searching}
         <Loader2 size={16} class="animate-spin" style="color: var(--color-fg-tertiary);" />
       {:else if mode === 'tracks' && trackResults.length > 0}
-        <span
-          class="uppercase"
-          style="
-            font-size: 11px;
-            color: var(--color-fg-tertiary);
-            font-family: var(--font-mono);
-            letter-spacing: 0.04em;
-          "
-        >
+        <span class="uppercase" style="font-size: 11px; color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.04em;">
           {trackResults.length} Treffer
         </span>
       {:else if mode === 'albums' && albumResults.length > 0}
-        <span
-          class="uppercase"
-          style="
-            font-size: 11px;
-            color: var(--color-fg-tertiary);
-            font-family: var(--font-mono);
-            letter-spacing: 0.04em;
-          "
-        >
+        <span class="uppercase" style="font-size: 11px; color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.04em;">
           {albumResults.length} Treffer
         </span>
       {/if}
-    </div>
-  {/if}
+    {:else if mode === 'url'}
+      <Link2 size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
+      <input
+        type="url"
+        bind:value={urlInput}
+        onkeydown={(e) => e.key === 'Enter' && submitUrl()}
+        placeholder="https:// — YouTube, SoundCloud, Bandcamp, Vimeo …"
+        spellcheck="false"
+        autocomplete="off"
+        class="flex-1 bg-transparent outline-none"
+        style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary); font-family: var(--font-mono);"
+      />
+      <button
+        onclick={submitUrl}
+        disabled={urlBusy || !urlInput.trim()}
+        class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+        style="background: {accent}; color: #0a0a0c; padding: 9px 18px; border-radius: 999px; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; flex-shrink: 0;"
+      >
+        {#if urlBusy}
+          <Loader2 size={13} class="animate-spin" />
+        {:else}
+          <Download size={13} strokeWidth={1.8} />
+        {/if}
+        In Queue
+      </button>
+    {:else if mode === 'reverse'}
+      <Youtube size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
+      <input
+        type="url"
+        bind:value={revUrl}
+        onkeydown={(e) => e.key === 'Enter' && submitReverse()}
+        placeholder="https://www.youtube.com/watch?v=…"
+        spellcheck="false"
+        autocomplete="off"
+        class="flex-1 bg-transparent outline-none"
+        style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary); font-family: var(--font-mono);"
+      />
+      <button
+        onclick={submitReverse}
+        disabled={revBusy || !revUrl.trim()}
+        class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+        style="background: {accent}; color: #0a0a0c; padding: 9px 18px; border-radius: 999px; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; flex-shrink: 0;"
+      >
+        {#if revBusy}
+          <Loader2 size={13} class="animate-spin" />
+        {:else}
+          Match suchen
+        {/if}
+      </button>
+    {/if}
+  </div>
 
   <!-- Mode strip — underline tabs + provider info -->
   <div
@@ -633,155 +654,46 @@
       {/each}
     </div>
 
-  <!-- ─── URL direkt-download (gleicher Glass-Search-Style wie Tracks/Albums) ─── -->
+  <!-- ─── URL: nur Status + Hint (Eingabe lebt jetzt in der Top-Search-Bar) ─── -->
   {:else if mode === 'url'}
-    <div
-      class="flex items-center"
-      style="
-        background: rgba(20, 20, 24, 0.5);
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
-        border: 1px solid var(--color-border-soft);
-        border-radius: 18px;
-        padding: 18px 22px;
-        gap: 16px;
-        margin-bottom: 14px;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      "
-    >
-      <Link2 size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
-      <input
-        type="url"
-        bind:value={urlInput}
-        onkeydown={(e) => e.key === 'Enter' && submitUrl()}
-        placeholder="https:// — YouTube, SoundCloud, Bandcamp, Vimeo …"
-        spellcheck="false"
-        autocomplete="off"
-        class="flex-1 bg-transparent outline-none"
-        style="
-          font-size: 18px;
-          font-weight: 300;
-          letter-spacing: -0.005em;
-          color: var(--color-fg-primary);
-          font-family: var(--font-mono);
-        "
-      />
-      <button
-        onclick={submitUrl}
-        disabled={urlBusy || !urlInput.trim()}
-        class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
-        style="
-          background: {accent};
-          color: #0a0a0c;
-          padding: 9px 18px;
-          border-radius: 999px;
-          font-size: 13px;
-          font-weight: 600;
-          letter-spacing: 0.02em;
-          flex-shrink: 0;
-        "
-      >
-        {#if urlBusy}
-          <Loader2 size={13} class="animate-spin" />
-        {:else}
-          <Download size={13} strokeWidth={1.8} />
+    {#if urlMessage || urlError}
+      <div class="flex items-center gap-3 flex-wrap mb-3" style="font-size: 12px;">
+        {#if urlMessage}
+          <span style="color: var(--color-status-done);">✓ {urlMessage}</span>
         {/if}
-        In Queue
-      </button>
-    </div>
-    <div class="flex items-center gap-3 flex-wrap mb-2" style="font-size: 12px;">
-      {#if urlMessage}
-        <span style="color: var(--color-status-done);">✓ {urlMessage}</span>
-      {/if}
-      {#if urlError}
-        <span style="color: var(--color-status-error);">{urlError}</span>
-      {/if}
-    </div>
+        {#if urlError}
+          <span style="color: var(--color-status-error);">{urlError}</span>
+        {/if}
+      </div>
+    {/if}
     <p class="text-[12px]" style="color: var(--color-fg-tertiary); max-width: 720px; line-height: 1.5;">
       Lädt direkt via yt-dlp ohne Metadata-Match. Title und Artist-Tag bleiben so wie auf der
       Quelle. Brauchst du saubere Tags, nutze stattdessen <strong>YouTube-Match</strong>.
     </p>
 
-  <!-- ─── YouTube-Match (gleicher Glass-Search-Style wie Tracks/Albums) ─── -->
+  <!-- ─── YouTube-Match: Hint + Direct-Action + Lookup-Results ─── -->
   {:else if mode === 'reverse'}
-    <div
-      class="flex items-center"
-      style="
-        background: rgba(20, 20, 24, 0.5);
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
-        border: 1px solid var(--color-border-soft);
-        border-radius: 18px;
-        padding: 18px 22px;
-        gap: 16px;
-        margin-bottom: 14px;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      "
-    >
-      <Youtube size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
-      <input
-        type="url"
-        bind:value={revUrl}
-        onkeydown={(e) => e.key === 'Enter' && submitReverse()}
-        placeholder="https://www.youtube.com/watch?v=…"
-        spellcheck="false"
-        autocomplete="off"
-        class="flex-1 bg-transparent outline-none"
-        style="
-          font-size: 18px;
-          font-weight: 300;
-          letter-spacing: -0.005em;
-          color: var(--color-fg-primary);
-          font-family: var(--font-mono);
-        "
-      />
-      <button
-        onclick={submitReverse}
-        disabled={revBusy || !revUrl.trim()}
-        class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
-        style="
-          background: {accent};
-          color: #0a0a0c;
-          padding: 9px 18px;
-          border-radius: 999px;
-          font-size: 13px;
-          font-weight: 600;
-          letter-spacing: 0.02em;
-          flex-shrink: 0;
-        "
-      >
-        {#if revBusy}
-          <Loader2 size={13} class="animate-spin" />
-        {:else}
-          Match suchen
-        {/if}
-      </button>
-    </div>
-    <div class="flex items-center gap-3 flex-wrap mb-2" style="font-size: 12px;">
-      {#if revLookup || revError}
+    {#if revLookup || revError}
+      <div class="flex items-center gap-3 flex-wrap mb-3" style="font-size: 12px;">
         <button
           onclick={pickRevRaw}
           class="inline-flex items-center gap-2 transition-colors"
-          style="
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid var(--color-border-soft);
-            color: var(--color-fg-secondary);
-            padding: 6px 14px;
-            border-radius: 999px;
-            font-size: 11.5px;
-          "
+          style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary); padding: 6px 14px; border-radius: 999px; font-size: 11.5px;"
         >
           Direkt laden ohne Match
         </button>
-      {/if}
-      {#if revError}
-        <span style="color: var(--color-status-error);">{revError}</span>
-      {/if}
-    </div>
-    <p class="text-[12px]" style="color: var(--color-fg-tertiary); max-width: 720px; line-height: 1.5;">
-      Sucht den Track aus dem YouTube-Video im gewählten Provider (Deezer/Spotify) und lädt ihn von
-      dort mit sauberen Tags + Cover. Bei keinem Match-Treffer kannst du immer noch direkt laden.
-    </p>
+        {#if revError}
+          <span style="color: var(--color-status-error);">{revError}</span>
+        {/if}
+      </div>
+    {/if}
+    {#if !revLookup}
+      <p class="text-[12px]" style="color: var(--color-fg-tertiary); max-width: 720px; line-height: 1.5;">
+        Sucht den Track aus dem YouTube-Video im gewählten Provider (Deezer/Spotify) und lädt ihn
+        von dort mit sauberen Tags + Cover. Bei keinem Match-Treffer kannst du immer noch direkt
+        laden.
+      </p>
+    {/if}
 
     {#if revLookup}
       <div class="space-y-3 mt-4">
