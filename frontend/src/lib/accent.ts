@@ -58,6 +58,26 @@ export async function extractHue(url: string | null | undefined): Promise<number
   return promise;
 }
 
+/** Run a callback when the browser is idle. Falls back to a microtask
+ *  (with a tiny setTimeout buffer) on Safari, where requestIdleCallback
+ *  isn't natively available.
+ */
+function whenIdle(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') {
+      resolve();
+      return;
+    }
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
+      .requestIdleCallback;
+    if (ric) {
+      ric(() => resolve(), { timeout: 1500 });
+    } else {
+      setTimeout(resolve, 50);
+    }
+  });
+}
+
 async function doExtract(url: string): Promise<number> {
   if (typeof window === 'undefined') return DEFAULT_HUE;
   try {
@@ -69,6 +89,12 @@ async function doExtract(url: string): Promise<number> {
       img.onerror = () => reject(new Error('image load failed'));
       img.src = url;
     });
+
+    // Wait for an idle slot before doing the canvas work — the drawImage +
+    // getImageData + per-pixel loop is ~1-3 ms on a small image but compounds
+    // when 20 cards extract in parallel during a scroll. requestIdleCallback
+    // means we yield to the user's scroll thread first.
+    await whenIdle();
 
     const size = 16;
     const canvas =

@@ -91,12 +91,28 @@ API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 
-# Optional Bearer-Token-Auth für Mutate-Endpoints. Wenn leer: alle Endpoints offen
-# (Verhalten wie heute). Wenn gesetzt: POST/DELETE-Routen verlangen
-# `Authorization: Bearer <token>`. Read-Endpoints (GET /api/queue*, /api/health,
-# /api/plugin/health) bleiben offen, damit das Plugin Status auch ohne Token
-# abfragen kann.
+# Phase F: Multi-User-Auth mit JWT + 2FA. Drei Auth-Pfade:
+#   1) Browser-Session: POST /api/auth/login → JWT (Access + Refresh)
+#   2) Plugin/CLI: Personal Access Token (PAT) im "Authorization: Bearer tonus_pat_…" Header
+#   3) Legacy-Compat: TONUS_API_TOKEN aus env, deprecated, wird in einer späteren
+#      Version entfernt. Wenn gesetzt → Backwards-Compat aktiv (alte Plugin-Configs
+#      funktionieren weiter).
 TONUS_API_TOKEN = (os.getenv("TONUS_API_TOKEN") or "").strip()
+
+# JWT-Konfiguration
+# JWT_SECRET wird beim ersten Start automatisch generiert und in jobs.db persistiert
+# (Tabelle "auth_meta"). Per Env überschreibbar — sinnvoll wenn man mehrere
+# Tonus-Instanzen mit demselben Secret betreiben will (Replikation).
+JWT_SECRET_OVERRIDE = (os.getenv("JWT_SECRET") or "").strip()
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TTL_MIN = int(os.getenv("JWT_ACCESS_TTL_MIN", "15"))
+JWT_REFRESH_TTL_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
+
+# TOTP-Issuer-Name (erscheint in Authenticator-Apps)
+TOTP_ISSUER = (os.getenv("TOTP_ISSUER") or "Tonus").strip()
+
+# Login Rate-Limit (failed attempts)
+LOGIN_RATE_LIMIT_PER_15MIN = int(os.getenv("LOGIN_RATE_LIMIT_PER_15MIN", "5"))
 
 # Create directories if they don't exist
 Path(DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)

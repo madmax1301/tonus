@@ -10,3 +10,8 @@ pydantic==2.5.0
 python-dotenv==1.0.0
 ytmusicapi==1.11.4
 yt-dlp-get-pot-rustypipe==0.2.0
+# ─── Auth (Phase F) ──────────────────────────
+argon2-cffi==23.1.0
+pyotp==2.9.0
+qrcode==7.4.2
+PyJWT==2.8.0

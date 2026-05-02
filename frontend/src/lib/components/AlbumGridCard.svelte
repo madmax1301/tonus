@@ -46,6 +46,7 @@
     text-decoration: none;
     color: inherit;
     animation-delay: {index * 0.04}s;
+    contain: layout paint style;
   "
 >
   <article class="relative cursor-pointer group">

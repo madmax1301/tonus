@@ -33,6 +33,9 @@
       -webkit-backdrop-filter: blur(40px) saturate(1.2);
       background: rgba(8, 8, 10, 0.55);
       border-bottom: 1px solid var(--color-border-soft);
+      transform: translateZ(0);
+      will-change: transform;
+      contain: layout paint;
     "
   >
     <div class="mx-auto max-w-[1180px] px-7 h-[54px] flex items-center gap-7">
