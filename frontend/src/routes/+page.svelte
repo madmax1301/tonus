@@ -129,17 +129,67 @@
     }
   }
 
+  // sessionStorage-Key — Library-State überlebt Album-Detail-Roundtrips auch
+  // wenn die URL-Sync wegen replaceState-Edge-Cases verloren ging.
+  const LIBRARY_STATE_KEY = 'tonus-library-state-v1';
+
+  type PersistedState = {
+    q: string;
+    mode: Mode;
+    /** ms-Timestamp; auto-expire nach 1 h damit alte Sessions nicht aufpoppen */
+    t: number;
+  };
+
+  function readPersistedState(): PersistedState | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = sessionStorage.getItem(LIBRARY_STATE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as PersistedState;
+      if (!parsed || typeof parsed !== 'object') return null;
+      if (Date.now() - parsed.t > 60 * 60 * 1000) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  function writePersistedState() {
+    if (typeof window === 'undefined') return;
+    try {
+      const payload: PersistedState = { q: query, mode, t: Date.now() };
+      sessionStorage.setItem(LIBRARY_STATE_KEY, JSON.stringify(payload));
+    } catch {
+      // Quota / private-mode — silently ignore
+    }
+  }
+
   onMount(async () => {
-    // Restore search state from URL params (browser back from Album-Detail
-    // landet hier mit q+mode in der URL — wir picken sie auf und re-runnen
-    // die Suche, sodass die Liste nicht leer ist)
+    // Restore search state. URL ist primary (deep-link-friendly), sessionStorage
+    // ist Fallback wenn URL nichts hergibt (Browser-back-Edge-Cases, syncUrl
+    // wurde vor Album-Klick nicht durchgelaufen, etc.).
     const sp = $page.url.searchParams;
     const qFromUrl = sp.get('q') ?? '';
     const modeFromUrl = sp.get('mode') as Mode | null;
-    if (qFromUrl) query = qFromUrl;
+
+    let restoredQ = '';
+    let restoredMode: Mode | null = null;
+
+    if (qFromUrl) restoredQ = qFromUrl;
     if (modeFromUrl && ['tracks', 'albums', 'url', 'reverse'].includes(modeFromUrl)) {
-      mode = modeFromUrl;
+      restoredMode = modeFromUrl;
     }
+
+    if (!restoredQ || !restoredMode) {
+      const cached = readPersistedState();
+      if (cached) {
+        if (!restoredQ && cached.q) restoredQ = cached.q;
+        if (!restoredMode && cached.mode) restoredMode = cached.mode;
+      }
+    }
+
+    if (restoredQ) query = restoredQ;
+    if (restoredMode) mode = restoredMode;
 
     try {
       providersData = await providersApi.list();
@@ -149,15 +199,17 @@
       // Auth-Sheet handled in api.ts
     }
 
-    if (qFromUrl && (mode === 'tracks' || mode === 'albums')) {
+    // URL erneuern damit beide Quellen synchron sind (falls URL leer war)
+    syncUrl();
+
+    if (query.trim() && (mode === 'tracks' || mode === 'albums')) {
       runSearch();
     }
   });
 
   /**
-   * Sync `query` + `mode` to URL search params via replaceState (kein neuer
-   * History-Entry — sonst würde jeder Tastenanschlag eine History-Position
-   * erzeugen und Browser-Back wäre kaputt).
+   * Sync `query` + `mode` zu URL-Params (replaceState — kein History-Spam)
+   * UND zu sessionStorage (überlebt URL-Quirks beim Browser-Back).
    */
   function syncUrl() {
     if (typeof window === 'undefined') return;
@@ -173,6 +225,7 @@
       url.searchParams.delete('mode');
     }
     replaceState(url, $page.state ?? {});
+    writePersistedState();
   }
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
