@@ -244,6 +244,7 @@ app.add_middleware(
 
 from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 class NoCacheStaticFiles(StaticFiles):
     """Static files without browser caching for JS/CSS."""
@@ -3087,15 +3088,21 @@ class SpaStaticFiles(StaticFiles):
     """
 
     async def get_response(self, path: str, scope):
-        response = await super().get_response(path, scope)
-
-        # SPA-Fallback bei 404: keine Datei-Extension + kein API-Pfad → index.html
-        if response.status_code == 404:
+        # Starlettes StaticFiles wirft bei 404 eine StarletteHTTPException —
+        # nicht ein Response-Objekt mit status 404. FastAPI's HTTPException ist
+        # eine Subklasse, deckt die Starlette-Parent NICHT ab. Wir fangen
+        # explicit die Starlette-Variante.
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
             last_segment = path.rsplit("/", 1)[-1] if path else ""
             looks_like_file = "." in last_segment
-            is_api = path.startswith("api/") or path.startswith("api")
-            if not looks_like_file and not is_api:
-                response = await super().get_response("index.html", scope)
+            is_api = path.startswith("api")
+            if looks_like_file or is_api:
+                raise
+            response = await super().get_response("index.html", scope)
 
         if path.endswith('.html') or path == '' or path == '/':
             response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
