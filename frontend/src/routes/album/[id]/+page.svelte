@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { base } from '$app/paths';
   import { goto } from '$app/navigation';
@@ -11,10 +10,10 @@
     type Track
   } from '$lib/api';
   import { defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
-  import GlassCard from '$lib/components/GlassCard.svelte';
-  import AlbumArt from '$lib/components/AlbumArt.svelte';
-  import ProgressLine from '$lib/components/ProgressLine.svelte';
-  import { ArrowLeft, Download, Loader2 } from 'lucide-svelte';
+  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
+  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
+  import { ArrowLeft, Download, Loader2, Check } from 'lucide-svelte';
 
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
 
@@ -26,6 +25,7 @@
   let loadError = $state<string | null>(null);
   let queuedIds = $state<Record<string, DownloadState>>({});
   let albumState = $state<DownloadState | null>(null);
+  let albumHue: number = $state(DEFAULT_HUE);
 
   $effect(() => {
     albumId; // dependency
@@ -61,14 +61,14 @@
     return `${h} Std ${m} Min`;
   }
 
-  function setQueueState(id: string, state: DownloadState) {
-    queuedIds = { ...queuedIds, [id]: state };
+  function setQueueState(id: string, s: DownloadState) {
+    queuedIds = { ...queuedIds, [id]: s };
   }
 
   function handleError(id: string | null, err: unknown, isAlbum = false) {
-    const set = (state: DownloadState) => {
-      if (isAlbum) albumState = state;
-      else if (id) setQueueState(id, state);
+    const set = (s: DownloadState) => {
+      if (isAlbum) albumState = s;
+      else if (id) setQueueState(id, s);
     };
     if (err instanceof ApiError && err.status === 409) {
       const detail =
@@ -121,17 +121,25 @@
       handleError(null, err, true);
     }
   }
+
+  // Reactive accent — driven by extracted album hue
+  const accent = $derived(tint(albumHue));
+  const accentSoft = $derived(tint(albumHue, 0.5));
+  const accentBg = $derived(tint(albumHue, 0.12));
 </script>
 
-<section class="space-y-8">
+<CinemaBackdrop hue={albumHue} intensity={1.2} />
+
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 24px 36px 60px;">
+  <!-- Back link -->
   <button
     onclick={() => goto(`${base}/`)}
-    class="inline-flex items-center gap-1.5 text-[13px] transition-colors"
-    style="color: var(--color-fg-secondary);"
+    class="inline-flex items-center gap-1.5 transition-colors mb-7"
+    style="font-size: 12.5px; color: var(--color-fg-secondary);"
     onmouseenter={(e) => (e.currentTarget.style.color = 'var(--color-fg-primary)')}
     onmouseleave={(e) => (e.currentTarget.style.color = 'var(--color-fg-secondary)')}
   >
-    <ArrowLeft size={14} strokeWidth={1.5} />
+    <ArrowLeft size={13} strokeWidth={1.5} />
     Bibliothek
   </button>
 
@@ -140,155 +148,292 @@
   {:else if loadError}
     <div class="text-sm" style="color: var(--color-status-error);">{loadError}</div>
   {:else if album}
-    <!-- Hero -->
-    <header class="flex items-end gap-8 flex-wrap">
-      <AlbumArt src={album.cover ?? album.album_art} alt={album.name} size="xl" />
-      <div class="flex-1 min-w-0 space-y-3">
-        <div class="text-[11px] font-medium uppercase tracking-widest" style="color: var(--color-fg-tertiary);">
-          Album
+    <!-- Hero: Vinyl-with-cover left, oversized type right -->
+    <div
+      class="grid items-center"
+      style="grid-template-columns: auto 1fr; gap: 56px; margin-bottom: 48px;"
+    >
+      <VinylWithCover
+        src={album.cover ?? album.album_art ?? null}
+        alt={album.name}
+        artist={album.artist}
+        year={album.release_date?.slice(0, 4) ?? ''}
+        size={280}
+        spinning
+        onhue={(h) => (albumHue = h)}
+      />
+
+      <div class="min-w-0">
+        <div
+          class="font-semibold uppercase"
+          style="
+            font-size: 11px;
+            letter-spacing: 0.24em;
+            color: {accent};
+            margin-bottom: 12px;
+          "
+        >
+          {#if album.release_date}
+            {album.release_date.slice(0, 4)}
+          {/if}
+          {#if album.genres && album.genres.length > 0}
+            · {album.genres[0]}
+          {/if}
+          {#if album.tracks?.length}
+            · {album.tracks.length} Tracks
+            {#if totalDuration(album.tracks)}
+              · {totalDuration(album.tracks)}
+            {/if}
+          {/if}
         </div>
+
         <h1
-          class="text-4xl font-semibold tracking-tight leading-tight"
-          style="color: var(--color-fg-primary);"
+          class="font-semibold m-0 truncate"
+          style="
+            font-family: var(--font-display);
+            font-size: 64px;
+            line-height: 0.95;
+            letter-spacing: -0.04em;
+          "
+          title={album.name}
         >
           {album.name}
         </h1>
-        <div class="text-[14px]" style="color: var(--color-fg-secondary);">
-          <span style="color: var(--color-fg-primary);">{album.artist}</span>
-          {#if album.release_date}
-            <span> · {album.release_date.slice(0, 4)}</span>
-          {/if}
-          {#if album.tracks?.length}
-            <span> · {album.tracks.length} Tracks</span>
-            <span style="color: var(--color-fg-tertiary);"> · {totalDuration(album.tracks)}</span>
-          {/if}
+
+        <div
+          class="mt-3.5"
+          style="
+            font-size: 22px;
+            font-weight: 300;
+            letter-spacing: -0.005em;
+            color: var(--color-fg-primary);
+          "
+        >
+          {album.artist}
         </div>
-        {#if album.genres && album.genres.length > 0}
-          <div class="flex flex-wrap gap-1.5">
-            {#each album.genres as g}
-              <span
-                class="px-2 py-0.5 rounded-full text-[11px]"
-                style="background: var(--color-surface-3); color: var(--color-fg-secondary);"
-              >
-                {g}
-              </span>
-            {/each}
-          </div>
-        {/if}
-        <div class="pt-2 space-y-2 max-w-[280px]">
+
+        <div class="flex flex-wrap gap-2.5 mt-7 items-center">
           <button
             onclick={queueAlbum}
             disabled={albumState?.kind === 'queued' ||
               albumState?.kind === 'done' ||
               albumState?.kind === 'exists'}
-            class="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-md text-[13px] font-medium transition-opacity disabled:cursor-default"
-            style="background: {albumState?.kind === 'done'
+            class="inline-flex items-center gap-2 transition-transform disabled:cursor-default"
+            style="
+              background: {albumState?.kind === 'done'
               ? 'var(--color-status-done)'
               : albumState?.kind === 'exists'
-                ? 'var(--color-surface-3)'
+                ? 'rgba(255,255,255,0.08)'
                 : albumState?.kind === 'error'
                   ? 'var(--color-status-error)'
-                  : 'var(--color-accent)'}; color: {albumState?.kind === 'exists'
-              ? 'var(--color-fg-secondary)'
-              : '#1a1410'};"
+                  : accent};
+              color: {albumState?.kind === 'exists' ? 'var(--color-fg-secondary)' : '#0a0a0c'};
+              padding: 12px 22px;
+              border-radius: 999px;
+              border: {albumState?.kind === 'exists' ? '1px solid var(--color-border-soft)' : 'none'};
+              font-size: 13px;
+              font-weight: 600;
+              letter-spacing: 0.02em;
+              box-shadow: {albumState?.kind === 'exists' || albumState?.kind === 'done' || albumState?.kind === 'error'
+                ? 'none'
+                : `0 8px 24px ${accentSoft}`};
+            "
           >
             {#if albumState?.kind === 'queued'}
-              <span class="skeleton-text">Album wird gequeued …</span>
+              <Loader2 size={13} strokeWidth={2.4} class="animate-spin" />
+              <span class="skeleton-text">wird gequeued …</span>
             {:else if albumState?.kind === 'done'}
-              ✓ {albumState.message}
+              <Check size={14} strokeWidth={2.4} />
+              {albumState.message}
             {:else if albumState?.kind === 'exists'}
-              ✓ vorhanden
+              <Check size={14} strokeWidth={2} />
+              vorhanden
             {:else if albumState?.kind === 'error'}
-              Fehler
+              Fehler — erneut versuchen
             {:else}
-              <Download size={14} strokeWidth={1.8} />
-              Komplettes Album laden
+              <Download size={14} strokeWidth={2.2} />
+              Komplettes Album · {album.tracks.length} Tracks
             {/if}
           </button>
-          {#if albumState?.kind === 'queued'}
-            <ProgressLine pareto thin />
+
+          {#if album.external_url}
+            <a
+              href={album.external_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center gap-2 transition-colors"
+              style="
+                background: rgba(255,255,255,0.06);
+                color: var(--color-fg-primary);
+                border: 1px solid var(--color-border-soft);
+                padding: 12px 18px;
+                border-radius: 999px;
+                font-size: 13px;
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                text-decoration: none;
+              "
+            >
+              Bei Quelle öffnen
+            </a>
           {/if}
         </div>
       </div>
-    </header>
+    </div>
 
-    <!-- Track-Liste -->
-    <div class="space-y-1">
+    <!-- Track list — Glass panel with hairlines -->
+    <div
+      class="overflow-hidden"
+      style="
+        background: rgba(15, 15, 18, 0.5);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 14px;
+        contain: layout paint;
+      "
+    >
       {#each album.tracks as track, idx (track.id)}
         {@const state = queuedIds[track.id]}
         {@const tLoading = state?.kind === 'queued'}
-        <div class="relative" class:skeleton-card={tLoading}>
-          <GlassCard padding="sm" interactive>
-            <div class="flex items-center gap-4" class:opacity-60={tLoading}>
-              <div
-                class="w-7 text-right text-[13px] tabular-nums"
-                style="color: var(--color-fg-tertiary);"
-              >
-                {track.track_number ?? idx + 1}
-              </div>
-              <div class="flex-1 min-w-0">
-                <div
-                  class="font-medium text-[14px] truncate"
-                  style="color: var(--color-fg-primary);"
-                >
-                  {track.name}
-                </div>
-                {#if track.artist && track.artist !== album.artist}
-                  <div
-                    class="text-[12px] truncate"
-                    style="color: var(--color-fg-secondary);"
-                  >
-                    {track.artist}
-                  </div>
-                {/if}
-              </div>
-              <div
-                class="text-[12px] tabular-nums"
-                style="color: var(--color-fg-tertiary); min-width: 42px; text-align: right;"
-              >
-                {fmtDuration(track.duration_ms)}
-              </div>
-              <button
-                onclick={() => queueTrack(track)}
-                disabled={tLoading || state?.kind === 'done' || state?.kind === 'exists'}
-                title={state?.message ?? ''}
-                class="inline-flex items-center justify-center px-2.5 py-1 rounded-md text-[11px] font-medium transition-all disabled:cursor-default"
-                style="background: {state?.kind === 'done'
-                  ? 'var(--color-status-done)'
-                  : state?.kind === 'exists'
-                    ? 'transparent'
-                    : state?.kind === 'error'
-                      ? 'var(--color-status-error)'
-                      : tLoading
-                        ? 'var(--color-surface-3)'
-                        : 'var(--color-surface-3)'}; color: {state?.kind === 'done'
-                  ? '#1a1410'
-                  : state?.kind === 'error'
-                    ? '#1a1410'
-                    : 'var(--color-fg-secondary)'}; border: 1px solid {state?.kind === 'done' ||
-                state?.kind === 'error'
-                  ? 'transparent'
-                  : 'var(--color-border-soft)'}; min-width: 96px;"
-              >
-                {#if tLoading}
-                  <span class="skeleton-text">queue …</span>
-                {:else if state?.kind === 'done'}
-                  ✓ in Queue
-                {:else if state?.kind === 'exists'}
-                  ✓ vorhanden
-                {:else if state?.kind === 'error'}
-                  Fehler
-                {:else}
-                  <Download size={11} strokeWidth={1.8} />
-                  <span class="ml-1">Track</span>
-                {/if}
-              </button>
+        {@const isDone = state?.kind === 'done' || state?.kind === 'exists'}
+        {@const isLast = idx === album.tracks.length - 1}
+        <div
+          class="grid items-center transition-colors group"
+          style="
+            grid-template-columns: 44px 1fr 70px 130px;
+            gap: 16px;
+            padding: 14px 22px;
+            border-bottom: {isLast ? 'none' : '1px solid var(--color-border-soft)'};
+            font-size: 14px;
+            background: {tLoading ? `linear-gradient(90deg, ${accentBg}, transparent)` : 'transparent'};
+          "
+          onmouseenter={(e) => {
+            if (!tLoading) e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+          }}
+          onmouseleave={(e) => {
+            if (!tLoading)
+              e.currentTarget.style.background = 'transparent';
+          }}
+          role="presentation"
+        >
+          <span
+            class="tabular-nums"
+            style="
+              color: {tLoading ? accent : 'var(--color-fg-tertiary)'};
+              font-weight: {tLoading ? 600 : 400};
+              font-size: 13px;
+              font-family: var(--font-display);
+            "
+          >
+            {String(track.track_number ?? idx + 1).padStart(2, '0')}
+          </span>
+
+          <div class="min-w-0">
+            <div
+              class="truncate"
+              style="
+                font-weight: {tLoading ? 500 : 400};
+                letter-spacing: -0.005em;
+                color: var(--color-fg-primary);
+              "
+            >
+              {track.name}
             </div>
-          </GlassCard>
+            {#if tLoading}
+              <div
+                class="mt-0.5 inline-flex items-center gap-1.5"
+                style="font-size: 11px; color: {accent}; font-weight: 500;"
+              >
+                <span
+                  class="inline-block rounded-full"
+                  style="width: 6px; height: 6px; background: {accent}; animation: tonus-pulse-soft 1.4s ease-in-out infinite;"
+                ></span>
+                wird heruntergeladen
+              </div>
+            {:else if track.artist && track.artist !== album.artist}
+              <div class="text-[12px] truncate mt-0.5" style="color: var(--color-fg-secondary);">
+                {track.artist}
+              </div>
+            {/if}
+          </div>
+
+          <span
+            class="tabular-nums text-right"
+            style="
+              color: var(--color-fg-tertiary);
+              font-size: 11.5px;
+              font-family: var(--font-mono);
+            "
+          >
+            {fmtDuration(track.duration_ms)}
+          </span>
+
+          <button
+            onclick={() => queueTrack(track)}
+            disabled={tLoading || isDone}
+            title={state?.message ?? ''}
+            class="inline-flex items-center justify-center gap-1.5 ml-auto transition-colors disabled:cursor-default"
+            style="
+              font-size: 11.5px;
+              padding: 6px 14px;
+              border-radius: 999px;
+              font-weight: {tLoading ? 600 : 400};
+              background: {state?.kind === 'done'
+              ? 'transparent'
+              : state?.kind === 'exists'
+                ? 'transparent'
+                : state?.kind === 'error'
+                  ? 'var(--color-status-error)'
+                  : tLoading
+                    ? accent
+                    : 'rgba(255,255,255,0.06)'};
+              color: {state?.kind === 'done'
+              ? 'var(--color-status-done)'
+              : state?.kind === 'exists'
+                ? 'var(--color-fg-tertiary)'
+                : state?.kind === 'error'
+                  ? '#0a0a0c'
+                  : tLoading
+                    ? '#0a0a0c'
+                    : 'var(--color-fg-secondary)'};
+              border: {state?.kind === 'done'
+                ? `1px solid ${'rgba(48,209,88,0.4)'}`
+                : state?.kind === 'exists'
+                  ? '1px solid var(--color-border-soft)'
+                  : 'none'};
+              min-width: 110px;
+            "
+          >
+            {#if tLoading}
+              <span class="skeleton-text">queue …</span>
+            {:else if state?.kind === 'done'}
+              <Check size={11} strokeWidth={2.4} />
+              in Library
+            {:else if state?.kind === 'exists'}
+              <Check size={11} strokeWidth={1.8} />
+              vorhanden
+            {:else if state?.kind === 'error'}
+              Fehler
+            {:else}
+              <Download size={11} strokeWidth={1.8} />
+              Track
+            {/if}
+          </button>
         </div>
       {/each}
     </div>
   {/if}
 </section>
 
-<!-- skeleton-card / skeleton-text leben global in app.css -->
+<style>
+  @keyframes tonus-pulse-soft {
+    0%,
+    100% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+</style>
