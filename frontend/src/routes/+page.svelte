@@ -473,18 +473,18 @@
         spellcheck="false"
         autocomplete="off"
         class="flex-1 bg-transparent outline-none"
-        style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary); font-family: var(--font-mono);"
+        style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary);"
       />
       <button
         onclick={submitUrl}
         disabled={urlBusy || !urlInput.trim()}
-        class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
-        style="background: {accent}; color: #0a0a0c; padding: 9px 18px; border-radius: 999px; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; flex-shrink: 0;"
+        class="inline-flex items-center gap-1.5 transition-opacity disabled:opacity-40"
+        style="background: {accent}; color: #0a0a0c; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; line-height: 1; text-transform: uppercase; flex-shrink: 0;"
       >
         {#if urlBusy}
-          <Loader2 size={13} class="animate-spin" />
+          <Loader2 size={11} class="animate-spin" />
         {:else}
-          <Download size={13} strokeWidth={1.8} />
+          <Download size={11} strokeWidth={2} />
         {/if}
         In Queue
       </button>
@@ -498,16 +498,16 @@
         spellcheck="false"
         autocomplete="off"
         class="flex-1 bg-transparent outline-none"
-        style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary); font-family: var(--font-mono);"
+        style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary);"
       />
       <button
         onclick={submitReverse}
         disabled={revBusy || !revUrl.trim()}
-        class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
-        style="background: {accent}; color: #0a0a0c; padding: 9px 18px; border-radius: 999px; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; flex-shrink: 0;"
+        class="inline-flex items-center gap-1.5 transition-opacity disabled:opacity-40"
+        style="background: {accent}; color: #0a0a0c; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; line-height: 1; text-transform: uppercase; flex-shrink: 0;"
       >
         {#if revBusy}
-          <Loader2 size={13} class="animate-spin" />
+          <Loader2 size={11} class="animate-spin" />
         {:else}
           Match suchen
         {/if}
