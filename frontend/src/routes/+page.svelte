@@ -13,7 +13,7 @@
     type ReverseLookupResult
   } from '$lib/api';
   import { base } from '$app/paths';
-  import { defaultProvider, defaultLocation } from '$lib/preferences';
+  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import { get } from 'svelte/store';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
@@ -198,7 +198,9 @@
     try {
       await downloadApi.start(track.id, {
         location: $defaultLocation,
-        provider: provider || undefined
+        provider: provider || undefined,
+        format: $defaultFormat || undefined,
+        quality: $defaultQuality || undefined
       });
       setQueueState(track.id, { kind: 'done' });
     } catch (err) {
@@ -211,7 +213,9 @@
     try {
       const r = await downloadApi.album(album.id, {
         location: $defaultLocation,
-        provider: provider || undefined
+        provider: provider || undefined,
+        format: $defaultFormat || undefined,
+        quality: $defaultQuality || undefined
       });
       const queued = r.queued ?? album.total_tracks;
       const skipped = r.skipped ?? 0;

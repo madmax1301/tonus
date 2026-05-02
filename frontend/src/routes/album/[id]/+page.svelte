@@ -10,7 +10,7 @@
     type AlbumDetail,
     type Track
   } from '$lib/api';
-  import { defaultLocation } from '$lib/preferences';
+  import { defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import ProgressLine from '$lib/components/ProgressLine.svelte';
@@ -91,7 +91,9 @@
     try {
       await downloadApi.start(track.id, {
         location: $defaultLocation,
-        provider: provider || undefined
+        provider: provider || undefined,
+        format: $defaultFormat || undefined,
+        quality: $defaultQuality || undefined
       });
       setQueueState(track.id, { kind: 'done' });
     } catch (err) {
@@ -105,7 +107,9 @@
     try {
       const r = await downloadApi.album(album.id, {
         location: $defaultLocation,
-        provider: provider || undefined
+        provider: provider || undefined,
+        format: $defaultFormat || undefined,
+        quality: $defaultQuality || undefined
       });
       const queued = r.queued ?? album.tracks.length;
       const skipped = r.skipped ?? 0;

@@ -5,6 +5,8 @@ type Location = 'local' | 'navidrome';
 
 const PROVIDER_KEY = 'tonus_default_provider';
 const LOCATION_KEY = 'tonus_default_location';
+const FORMAT_KEY = 'tonus_default_format';
+const QUALITY_KEY = 'tonus_default_quality';
 
 function readString(key: string, fallback: string): string {
   if (!browser) return fallback;
@@ -37,3 +39,11 @@ export const defaultLocation = (() => {
   }
   return store;
 })();
+
+/** Audio-Format-Override (mp3/m4a/opus/ogg/flac).
+ *  Leer = Backend-Default aus config.OUTPUT_FORMAT. */
+export const defaultFormat = persistedString(FORMAT_KEY, '');
+
+/** Audio-Quality-Override (96/128/192/256/320/lossless).
+ *  Leer = Backend-Default aus config.AUDIO_QUALITY. */
+export const defaultQuality = persistedString(QUALITY_KEY, '');

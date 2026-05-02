@@ -129,23 +129,31 @@ export const albumApi = {
   }
 };
 
+export interface DownloadOpts {
+  location?: 'local' | 'navidrome';
+  provider?: string;
+  format?: string;
+  quality?: string;
+}
+
 export const downloadApi = {
-  start: (trackId: string, opts: { location?: 'local' | 'navidrome'; provider?: string } = {}) =>
+  start: (trackId: string, opts: DownloadOpts = {}) =>
     api.post<{ status: string; message: string }>('/api/download', {
       track_id: trackId,
       location: opts.location ?? 'navidrome',
-      metadata_provider: opts.provider
+      provider: opts.provider,
+      format: opts.format,
+      quality: opts.quality
     }),
-  album: (
-    albumId: string,
-    opts: { location?: 'local' | 'navidrome'; provider?: string } = {}
-  ) =>
+  album: (albumId: string, opts: DownloadOpts = {}) =>
     api.post<{ message: string; total_tracks?: number; queued?: number; skipped?: number }>(
       '/api/download/album',
       {
         album_id: albumId,
         location: opts.location ?? 'navidrome',
-        provider: opts.provider
+        provider: opts.provider,
+        format: opts.format,
+        quality: opts.quality
       }
     )
 };
@@ -154,11 +162,17 @@ export const providersApi = {
   list: () => api.get<MetadataProvidersResponse>('/api/metadata/providers')
 };
 
+export interface FormatOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
 export interface FormatsInfo {
-  formats: { id: string; label: string }[];
+  formats: FormatOption[];
+  qualities: FormatOption[];
   default_format: string;
-  qualities: { id: string; label: string }[];
-  default_quality?: string;
+  default_quality: string;
 }
 
 export interface NavidromeLibrary {

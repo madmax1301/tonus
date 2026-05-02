@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiToken } from '$lib/auth';
-  import { defaultProvider, defaultLocation } from '$lib/preferences';
+  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import {
     providersApi,
     systemApi,
@@ -184,6 +184,88 @@
             </button>
           {/each}
         </div>
+      </div>
+
+      <div class="space-y-2">
+        <span class="text-[12px]" style="color: var(--color-fg-secondary);">
+          Audio-Format
+        </span>
+        <div class="flex items-center gap-1 flex-wrap">
+          <button
+            onclick={() => defaultFormat.set('')}
+            class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
+            style="background: {!$defaultFormat
+              ? 'var(--color-accent)'
+              : 'transparent'}; color: {!$defaultFormat
+              ? '#1a1410'
+              : 'var(--color-fg-secondary)'}; border: 1px solid {!$defaultFormat
+              ? 'transparent'
+              : 'var(--color-border-soft)'};"
+          >
+            Backend-Default {formats?.default_format ? `(${formats.default_format})` : ''}
+          </button>
+          {#if formats}
+            {#each formats.formats as f}
+              <button
+                onclick={() => defaultFormat.set(f.value)}
+                title={f.description ?? ''}
+                class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
+                style="background: {$defaultFormat === f.value
+                  ? 'var(--color-accent)'
+                  : 'transparent'}; color: {$defaultFormat === f.value
+                  ? '#1a1410'
+                  : 'var(--color-fg-secondary)'}; border: 1px solid {$defaultFormat === f.value
+                  ? 'transparent'
+                  : 'var(--color-border-soft)'};"
+              >
+                {f.label}
+              </button>
+            {/each}
+          {/if}
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <span class="text-[12px]" style="color: var(--color-fg-secondary);">
+          Audio-Qualität / Bitrate
+        </span>
+        <div class="flex items-center gap-1 flex-wrap">
+          <button
+            onclick={() => defaultQuality.set('')}
+            class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
+            style="background: {!$defaultQuality
+              ? 'var(--color-accent)'
+              : 'transparent'}; color: {!$defaultQuality
+              ? '#1a1410'
+              : 'var(--color-fg-secondary)'}; border: 1px solid {!$defaultQuality
+              ? 'transparent'
+              : 'var(--color-border-soft)'};"
+          >
+            Backend-Default {formats?.default_quality ? `(${formats.default_quality})` : ''}
+          </button>
+          {#if formats}
+            {#each formats.qualities as q}
+              <button
+                onclick={() => defaultQuality.set(q.value)}
+                title={q.description ?? ''}
+                class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
+                style="background: {$defaultQuality === q.value
+                  ? 'var(--color-accent)'
+                  : 'transparent'}; color: {$defaultQuality === q.value
+                  ? '#1a1410'
+                  : 'var(--color-fg-secondary)'}; border: 1px solid {$defaultQuality === q.value
+                  ? 'transparent'
+                  : 'var(--color-border-soft)'};"
+              >
+                {q.label}
+              </button>
+            {/each}
+          {/if}
+        </div>
+        <p class="text-[11px]" style="color: var(--color-fg-tertiary);">
+          FLAC ignoriert die Bitrate (lossless). Opus &amp; OGG haben effektiv andere
+          Skalen — der Backend-Wert wird passend gemappt.
+        </p>
       </div>
     </div>
   </GlassCard>
