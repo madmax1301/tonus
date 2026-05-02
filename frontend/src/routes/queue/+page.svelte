@@ -335,7 +335,7 @@
           ></span>
         {/if}
         Live · {processingCount} in Bewegung
-        {#if nextLaneReadyMs > 0 && processingCount === 0}
+        {#if nextLaneReadyMs >= 1000 && processingCount === 0}
           <span style="color: var(--color-fg-tertiary); letter-spacing: 0.04em; font-family: var(--font-mono); margin-left: 6px;">
             · Lane in {fmtMs(nextLaneReadyMs)}
           </span>
@@ -535,7 +535,7 @@
           "
         >
           {#if isFeaturedQueued}
-            Wartet auf Lane{nextLaneReadyMs > 0 ? ` · ${fmtMs(nextLaneReadyMs)}` : ' · Slot frei'}
+            Wartet auf Lane{nextLaneReadyMs >= 1000 ? ` · ${fmtMs(nextLaneReadyMs)}` : ' · Slot frei'}
           {:else}
             {featuredJob.stage ?? 'Wird verarbeitet'}
           {/if}
@@ -615,7 +615,7 @@
               class="tabular-nums"
               style="font-size: 13px; color: var(--color-fg-tertiary); font-weight: 500; min-width: 60px; text-align: right; font-family: var(--font-mono);"
             >
-              {nextLaneReadyMs > 0 ? fmtMs(nextLaneReadyMs) : 'frei'}
+              {nextLaneReadyMs >= 1000 ? fmtMs(nextLaneReadyMs) : 'frei'}
             </span>
           {:else}
             <span
