@@ -247,19 +247,23 @@ export interface CsvImportStatus {
 }
 
 export interface CsvMatched {
-  query?: string;
-  raw_line?: string;
-  artist?: string;
-  title?: string;
-  matched_track: Track;
+  /** Roh-Zeile aus dem CSV-Input. */
+  original: string;
+  /** Geparster Artist aus der Zeile (best-effort). */
+  requested_artist?: string;
+  /** Geparster Titel aus der Zeile (best-effort). */
+  requested_title?: string;
+  /** Der gefundene Track aus dem Provider — null bei unmatched. */
+  track: Track | null;
 }
 
 export interface CsvUnmatched {
-  query?: string;
-  raw_line?: string;
-  artist?: string;
-  title?: string;
-  reason?: string;
+  /** Roh-Zeile aus dem CSV-Input. */
+  original: string;
+  /** Geparster Artist aus der Zeile (best-effort). */
+  requested_artist?: string;
+  /** Geparster Titel aus der Zeile (best-effort). */
+  requested_title?: string;
 }
 
 export interface CsvImportResult {

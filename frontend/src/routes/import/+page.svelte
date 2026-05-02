@@ -159,12 +159,12 @@
         csvExportProgress = { loaded: collected.length, total: target };
       }
 
-      const header = 'artist;title;reason';
+      const header = 'artist;title;original';
       const lines = collected.map((u) =>
         [
-          csvEscape(u.artist || u.query || ''),
-          csvEscape(u.title || ''),
-          csvEscape(u.reason || '')
+          csvEscape(u.requested_artist || ''),
+          csvEscape(u.requested_title || ''),
+          csvEscape(u.original || '')
         ].join(';')
       );
       const csv = '﻿' + [header, ...lines].join('\n');
@@ -711,6 +711,51 @@
           ✓ {csvQueueAllResult}
         </div>
       {/if}
+
+      {#if csvResult.found + csvResult.not_found > 0}
+        {@const matchRate = Math.round(
+          (csvResult.found / (csvResult.found + csvResult.not_found)) * 100
+        )}
+        <div
+          class="mt-4 pt-4 flex items-start gap-4 flex-wrap"
+          style="border-top: 1px solid var(--color-border-soft);"
+        >
+          <div class="flex items-center gap-2">
+            <span
+              class="font-semibold uppercase"
+              style="
+                font-size: 10px;
+                letter-spacing: 0.2em;
+                color: var(--color-fg-tertiary);
+              "
+            >
+              Match-Rate
+            </span>
+            <span
+              class="tabular-nums font-medium"
+              style="
+                font-size: 13px;
+                color: {matchRate >= 70 ? 'var(--color-status-done)' : matchRate >= 40 ? accent : 'var(--color-status-error)'};
+              "
+            >
+              {matchRate}%
+            </span>
+          </div>
+          {#if csvStatus?.message}
+            <div
+              class="text-[11px] tabular-nums flex-1 min-w-0"
+              style="
+                color: var(--color-fg-tertiary);
+                font-family: var(--font-mono);
+                line-height: 1.55;
+                word-break: break-word;
+              "
+            >
+              {csvStatus.message}
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <!-- ─── Unmatched list ─────────────────────────────────── -->
@@ -790,20 +835,14 @@
                 {String(i + 1).padStart(3, '0')}
               </span>
               <div class="text-[13px] truncate" style="color: var(--color-fg-secondary);">
-                <span style="color: var(--color-fg-primary);">{u.artist || u.query || u.raw_line || '?'}</span>
-                {#if u.title}
-                  <span style="color: var(--color-fg-tertiary);"> · {u.title}</span>
+                <span style="color: var(--color-fg-primary);"
+                  >{u.requested_artist || u.original || '?'}</span
+                >
+                {#if u.requested_title}
+                  <span style="color: var(--color-fg-tertiary);"> · {u.requested_title}</span>
                 {/if}
               </div>
             </div>
-            {#if u.reason}
-              <div
-                class="text-[10.5px] flex-shrink-0 uppercase"
-                style="color: var(--color-fg-tertiary); letter-spacing: 0.08em;"
-              >
-                {u.reason}
-              </div>
-            {/if}
           </div>
         {/each}
       </div>
