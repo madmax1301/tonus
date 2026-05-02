@@ -82,24 +82,31 @@
           Authentifizierung
         </h2>
       </div>
-      <label class="block space-y-2">
-        <span class="text-[12px]" style="color: var(--color-fg-secondary);">
+      <form
+        onsubmit={(e) => {
+          e.preventDefault();
+          saveToken();
+        }}
+        class="space-y-2"
+      >
+        <label for="tonus-token-input" class="text-[12px]" style="color: var(--color-fg-secondary);">
           API-Token (matcht <code style="color: var(--color-accent);">TONUS_API_TOKEN</code> in
           backend/.env)
-        </span>
+        </label>
         <div class="flex items-center gap-2">
           <input
+            id="tonus-token-input"
+            name="tonus-api-token"
             type="password"
             bind:value={tokenValue}
             spellcheck="false"
-            autocomplete="off"
-            onkeydown={(e) => e.key === 'Enter' && saveToken()}
+            autocomplete="current-password"
             class="flex-1 px-3 py-2 rounded-md text-sm font-mono outline-none focus:border-[var(--color-accent)]"
             style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
             placeholder="ttkn_•••••••••••••••••••••••••"
           />
           <button
-            onclick={saveToken}
+            type="submit"
             class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity"
             style="background: var(--color-accent); color: #1a1410;"
           >
@@ -111,7 +118,7 @@
             {/if}
           </button>
         </div>
-      </label>
+      </form>
     </div>
   </GlassCard>
 

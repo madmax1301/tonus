@@ -68,38 +68,46 @@
           </button>
         </header>
 
-        <label class="block space-y-2">
-          <span
-            class="text-[12px] font-medium"
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            save();
+          }}
+          class="space-y-2"
+        >
+          <label
+            for="tonus-token-sheet-input"
+            class="block text-[12px] font-medium"
             style="color: var(--color-fg-secondary);"
           >
             API-Token
-          </span>
+          </label>
           <input
+            id="tonus-token-sheet-input"
+            name="tonus-api-token"
             type="password"
             bind:value
-            autocomplete="off"
+            autocomplete="current-password"
             spellcheck="false"
-            onkeydown={(e) => e.key === 'Enter' && save()}
             class="w-full px-3 py-2.5 rounded-md text-sm font-mono outline-none focus:border-[var(--color-accent)] transition-colors"
             style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
             placeholder="ttkn_•••••••••••••••••••••••••"
           />
-        </label>
 
-        <div class="flex items-center gap-3 mt-5">
-          <button
-            onclick={save}
-            disabled={!value.trim()}
-            class="px-4 py-2 rounded-md text-sm font-medium transition-opacity disabled:opacity-40"
-            style="background: var(--color-accent); color: #1a1410;"
-          >
-            {saved ? '✓ Gespeichert' : 'Speichern'}
-          </button>
-          <span class="text-[12px]" style="color: var(--color-fg-tertiary);">
-            ↵ zum Speichern · Esc zum Schließen
-          </span>
-        </div>
+          <div class="flex items-center gap-3 mt-5">
+            <button
+              type="submit"
+              disabled={!value.trim()}
+              class="px-4 py-2 rounded-md text-sm font-medium transition-opacity disabled:opacity-40"
+              style="background: var(--color-accent); color: #1a1410;"
+            >
+              {saved ? '✓ Gespeichert' : 'Speichern'}
+            </button>
+            <span class="text-[12px]" style="color: var(--color-fg-tertiary);">
+              ↵ zum Speichern · Esc zum Schließen
+            </span>
+          </div>
+        </form>
       </div>
     </Dialog.Content>
   </Dialog.Portal>
