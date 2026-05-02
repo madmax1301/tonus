@@ -47,6 +47,7 @@
     color: inherit;
     animation-delay: {index * 0.04}s;
     contain: layout paint style;
+    min-width: 0;
   "
 >
   <article class="relative cursor-pointer group">
@@ -62,9 +63,8 @@
         src={album.album_art}
         alt={album.name}
         artist={album.artist}
-        size={280}
         radius={10}
-        class="w-full h-full"
+        fluid
         onhue={(h) => (hue = h)}
       />
 
@@ -118,14 +118,28 @@
     </div>
 
     <div
-      class="font-medium leading-tight truncate"
-      style="font-size: 13.5px; letter-spacing: -0.005em; color: var(--color-fg-primary);"
+      class="font-medium leading-tight"
+      style="
+        font-size: 13.5px;
+        letter-spacing: -0.005em;
+        color: var(--color-fg-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      "
+      title={album.name}
     >
       {album.name}
     </div>
     <div
-      class="truncate mt-0.5"
-      style="font-size: 11.5px; color: var(--color-fg-secondary);"
+      class="mt-0.5"
+      style="
+        font-size: 11.5px;
+        color: var(--color-fg-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      "
     >
       {album.artist}
       {#if yearStr}

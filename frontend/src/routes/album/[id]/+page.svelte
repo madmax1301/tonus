@@ -129,19 +129,16 @@
 
   /**
    * Smart back navigation:
-   *  - Wenn die User-History innerhalb von Tonus liegt, browser-back —
-   *    landet auf der Library mit erhaltenem Suchstate (URL-Params).
-   *  - Wenn der Album-Detail per Deep-Link / Reload erreicht wurde
-   *    (referrer leer oder cross-origin), goto Library-Index als Fallback.
+   *  - Wenn der User per SPA-Navigation hierher gekommen ist (history.length
+   *    > 1 reicht als Indikator — SvelteKit pushState erhöht es), nutze
+   *    history.back(). Damit landet er auf der Library-URL inkl. ?q=…&mode=…
+   *  - `document.referrer` taugt hier nicht: SPA-pushState aktualisiert es
+   *    nicht. Würden wir darauf prüfen, fällt's immer auf den Fallback
+   *    zurück und der Library-State geht verloren.
+   *  - Bei Deep-Link/Reload (history.length === 1) goto Library als Fallback.
    */
   function goBack() {
-    if (typeof window === 'undefined') {
-      goto(`${base}/`);
-      return;
-    }
-    const ref = document.referrer;
-    const sameOrigin = ref && ref.startsWith(window.location.origin);
-    if (sameOrigin && window.history.length > 1) {
+    if (typeof window !== 'undefined' && window.history.length > 1) {
       window.history.back();
     } else {
       goto(`${base}/`);

@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { extractHue, DEFAULT_HUE } from '$lib/accent';
 
   type Props = {
     src?: string | null;
     alt?: string;
-    /** Pixel size; sets a square box. Use Tailwind classes via `class` for non-square sizing. */
+    /** Pixel size; sets a square box. Ignored when `fluid` is true. */
     size?: number;
     /** Border-radius in px */
     radius?: number;
@@ -16,6 +15,13 @@
     /** Notify parent when hue is known (real or fallback). */
     onhue?: (hue: number) => void;
     class?: string;
+    /**
+     * When true, the cover fills its parent (width/height: 100%) — needed
+     * when the parent uses `aspect-ratio: 1` to size the cover. Falls back
+     * to a container-query for the watermark size so initials remain
+     * proportional to the actual rendered width.
+     */
+    fluid?: boolean;
   };
 
   let {
@@ -26,7 +32,8 @@
     artist = '',
     hue: externalHue,
     onhue,
-    class: extraClass = ''
+    class: extraClass = '',
+    fluid = false
   }: Props = $props();
 
   let imgLoaded = $state(false);
@@ -82,8 +89,9 @@
 <div
   class="relative overflow-hidden flex-shrink-0 {extraClass}"
   style="
-    width: {size}px;
-    height: {size}px;
+    {fluid
+    ? 'width: 100%; height: 100%; container-type: inline-size;'
+    : `width: ${size}px; height: ${size}px;`}
     border-radius: {radius}px;
     background:
       radial-gradient(120% 90% at 20% 10%, oklch(78% 0.15 {h}) 0%, transparent 55%),
@@ -111,7 +119,7 @@
       style="
         font-family: var(--font-display);
         color: rgba(255, 255, 255, 0.18);
-        font-size: {Math.round(size * 0.42)}px;
+        font-size: {fluid ? '42cqw' : `${Math.round(size * 0.42)}px`};
         letter-spacing: -0.02em;
         text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
       "
