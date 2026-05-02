@@ -15,9 +15,13 @@
   import { base } from '$app/paths';
   import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import { get } from 'svelte/store';
+  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
+  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
-  import { Search, Download, Loader2, ChevronRight, Link2, Youtube } from 'lucide-svelte';
+  import AlbumGridCard from '$lib/components/AlbumGridCard.svelte';
+  import { Download, Loader2, Link2, Youtube } from 'lucide-svelte';
 
   type Mode = 'tracks' | 'albums' | 'url' | 'reverse';
 
@@ -31,6 +35,12 @@
   let searchError = $state<string | null>(null);
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
   let queuedIds = $state<Record<string, DownloadState>>({});
+
+  // Featured album drives backdrop + hero vinyl. Falls keine Suche aktiv ist
+  // (oder Track-Modus ohne Album-Cover): Default-Gold (DEFAULT_HUE).
+  let featured = $state<{ src?: string | null; artist?: string; year?: string; hue: number } | null>(
+    null
+  );
 
   // ── URL-Direktdownload ──────────────────────────────────
   let urlInput = $state('');
@@ -62,7 +72,7 @@
     }
   }
 
-  // ── Reverse YouTube (URL → Match-Kandidaten) ─────────────
+  // ── Reverse YouTube ─────────────
   let revUrl = $state('');
   let revBusy = $state(false);
   let revLookup = $state<ReverseLookupResult | null>(null);
@@ -147,15 +157,33 @@
       if (mode === 'tracks') {
         trackResults = await searchApi.tracks(query.trim(), provider || undefined, 20);
         albumResults = [];
+        const first = trackResults[0];
+        if (first?.album_art) {
+          featured = {
+            src: first.album_art,
+            artist: first.artist,
+            year: first.release_date?.slice(0, 4),
+            hue: DEFAULT_HUE
+          };
+        }
       } else {
         albumResults = await searchApi.albums(query.trim(), provider || undefined, 20);
         trackResults = [];
+        const first = albumResults[0];
+        if (first?.album_art) {
+          featured = {
+            src: first.album_art,
+            artist: first.artist,
+            year: first.release_date?.slice(0, 4),
+            hue: DEFAULT_HUE
+          };
+        }
       }
     } catch (err) {
       trackResults = [];
       albumResults = [];
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-        searchError = null; // sheet öffnet sich
+        searchError = null;
       } else {
         searchError = err instanceof Error ? err.message : 'Suche fehlgeschlagen';
       }
@@ -186,7 +214,6 @@
           : 'bereits vorhanden';
       setQueueState(id, { kind: 'exists', message: detail });
     } else if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-      // Sheet öffnet sich automatisch via api.ts
       clearQueueState(id);
     } else {
       setQueueState(id, { kind: 'error' });
@@ -233,85 +260,222 @@
     const s = Math.round(ms / 1000);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
+
+  // Reactive accent — driven by featured album, fallback DEFAULT_HUE
+  const accentHue = $derived(featured?.hue ?? DEFAULT_HUE);
+  const accent = $derived(tint(accentHue));
+  const accentSoft = $derived(tint(accentHue, 0.95));
+
+  function setFeaturedHue(h: number) {
+    if (featured) featured = { ...featured, hue: h };
+  }
 </script>
 
-<section class="space-y-8">
-  <header class="space-y-2">
-    <h1 class="text-4xl font-semibold tracking-tight" style="color: var(--color-fg-primary);">
-      Bibliothek
-    </h1>
-    <p class="text-sm" style="color: var(--color-fg-secondary);">
-      Suche Tracks aus Deezer/Spotify/YouTube und schicke sie in die Warteschlange.
-    </p>
-  </header>
+<CinemaBackdrop hue={accentHue} />
 
-  <!-- Mode-Toggle: Tracks · Alben · URL · Reverse YouTube -->
-  <div class="flex items-center gap-1 flex-wrap">
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 40px 36px 50px;">
+  <!-- Editorial Hero: oversized title + featured vinyl -->
+  <div class="grid items-center" style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: 48px;">
+    <div>
+      <div
+        class="font-semibold uppercase"
+        style="
+          font-size: 11px;
+          letter-spacing: 0.24em;
+          color: {accent};
+          margin-bottom: 14px;
+        "
+      >
+        Bibliothek
+      </div>
+      <h1
+        class="font-semibold m-0"
+        style="
+          font-family: var(--font-display);
+          font-size: 48px;
+          font-weight: 600;
+          line-height: 0.95;
+          letter-spacing: -0.035em;
+        "
+      >
+        Was hörst du<br />
+        <em style="color: {accent}; font-weight: 400; font-style: italic;">heute Abend</em>?
+      </h1>
+      <p
+        style="
+          font-size: 14px;
+          color: var(--color-fg-secondary);
+          max-width: 440px;
+          margin-top: 18px;
+          line-height: 1.6;
+        "
+      >
+        Suche über Deezer, Spotify und YouTube — Tonus matcht Tags und legt
+        den Track sauber in deine Bibliothek.
+      </p>
+    </div>
+    <div class="flex justify-center">
+      <VinylWithCover
+        src={featured?.src ?? null}
+        alt={featured?.artist ?? ''}
+        artist={featured?.artist ?? 'Tonus'}
+        year={featured?.year ?? ''}
+        size={260}
+        spinning={!!featured}
+        onhue={setFeaturedHue}
+      />
+    </div>
+  </div>
+
+  <!-- Glass search bar -->
+  {#if mode === 'tracks' || mode === 'albums'}
+    <div
+      class="flex items-center"
+      style="
+        background: rgba(20, 20, 24, 0.5);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 18px;
+        padding: 18px 22px;
+        gap: 16px;
+        margin-bottom: 22px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      "
+    >
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={accent}
+        stroke-width="1.5"
+      >
+        <circle cx="11" cy="11" r="7" />
+        <path d="M21 21l-4.3-4.3" />
+      </svg>
+      <input
+        bind:value={query}
+        oninput={onInput}
+        onkeydown={(e) => e.key === 'Enter' && runSearch()}
+        type="text"
+        placeholder={mode === 'tracks' ? 'Track, Artist oder Album …' : 'Album oder Artist …'}
+        class="flex-1 bg-transparent outline-none"
+        style="
+          font-size: 18px;
+          font-weight: 300;
+          letter-spacing: -0.005em;
+          color: var(--color-fg-primary);
+        "
+        autocomplete="off"
+        spellcheck="false"
+      />
+      {#if searching}
+        <Loader2 size={16} class="animate-spin" style="color: var(--color-fg-tertiary);" />
+      {:else if mode === 'tracks' && trackResults.length > 0}
+        <span
+          class="uppercase"
+          style="
+            font-size: 11px;
+            color: var(--color-fg-tertiary);
+            font-family: var(--font-mono);
+            letter-spacing: 0.04em;
+          "
+        >
+          {trackResults.length} Treffer
+        </span>
+      {:else if mode === 'albums' && albumResults.length > 0}
+        <span
+          class="uppercase"
+          style="
+            font-size: 11px;
+            color: var(--color-fg-tertiary);
+            font-family: var(--font-mono);
+            letter-spacing: 0.04em;
+          "
+        >
+          {albumResults.length} Treffer
+        </span>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Mode strip — underline tabs + provider info -->
+  <div
+    class="flex items-center"
+    style="
+      gap: 24px;
+      font-size: 13px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--color-border-soft);
+      padding-bottom: 14px;
+    "
+  >
     {#each [
-      { id: 'tracks' as Mode, label: 'Tracks', icon: Search },
-      { id: 'albums' as Mode, label: 'Alben', icon: Search },
-      { id: 'url' as Mode, label: 'URL', icon: Link2 },
-      { id: 'reverse' as Mode, label: 'Reverse YouTube', icon: Youtube }
+      { id: 'tracks' as Mode, label: 'Tracks', count: trackResults.length, icon: null },
+      { id: 'albums' as Mode, label: 'Alben', count: albumResults.length, icon: null },
+      { id: 'url' as Mode, label: 'URL', count: null, icon: Link2 },
+      { id: 'reverse' as Mode, label: 'Reverse YouTube', count: null, icon: Youtube }
     ] as m}
+      {@const active = mode === m.id}
       <button
         onclick={() => setMode(m.id)}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] transition-colors"
-        style="background: {mode === m.id
-          ? 'var(--color-accent)'
-          : 'transparent'}; color: {mode === m.id
-          ? '#1a1410'
-          : 'var(--color-fg-secondary)'}; border: 1px solid {mode === m.id
-          ? 'transparent'
-          : 'var(--color-border-soft)'};"
+        class="relative inline-flex items-center gap-1.5 transition-colors"
+        style="
+          color: {active ? 'var(--color-fg-primary)' : 'var(--color-fg-secondary)'};
+          font-weight: {active ? 500 : 400};
+          padding-bottom: 14px;
+          margin-bottom: -14px;
+          border-bottom: 2px solid {active ? accent : 'transparent'};
+        "
       >
-        <svelte:component this={m.icon} size={13} strokeWidth={1.5} />
+        {#if m.icon}
+          <svelte:component this={m.icon} size={13} strokeWidth={1.5} />
+        {/if}
         {m.label}
+        {#if m.count !== null && m.count > 0}
+          <span style="color: var(--color-fg-tertiary);"> · {m.count}</span>
+        {/if}
       </button>
     {/each}
     {#if providersData}
       <select
         bind:value={provider}
-        class="ml-auto text-[12px] px-2 py-1 rounded-md outline-none"
-        style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+        class="ml-auto text-[11px] px-2 py-1 rounded-md outline-none"
+        style="
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--color-border-soft);
+          color: var(--color-fg-tertiary);
+        "
       >
         {#each providersData.providers.filter((p) => p.configured) as p}
-          <option value={p.id}>{p.label}</option>
+          <option value={p.id}>{p.label} · Default</option>
         {/each}
       </select>
     {/if}
   </div>
 
-  {#if mode === 'tracks' || mode === 'albums'}
-    <GlassCard padding="md">
-      <div class="flex items-center gap-3">
-        <Search
-          size={18}
-          strokeWidth={1.5}
-          style="color: var(--color-fg-tertiary); flex-shrink: 0;"
-        />
-        <input
-          bind:value={query}
-          oninput={onInput}
-          onkeydown={(e) => e.key === 'Enter' && runSearch()}
-          type="text"
-          placeholder={mode === 'tracks' ? 'Track, Artist oder Album …' : 'Album oder Artist …'}
-          class="flex-1 bg-transparent outline-none text-base"
-          style="color: var(--color-fg-primary);"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        {#if searching}
-          <Loader2 size={16} class="animate-spin" style="color: var(--color-fg-tertiary);" />
-        {/if}
-      </div>
-    </GlassCard>
-  {/if}
-
   {#if searchError && (mode === 'tracks' || mode === 'albums')}
-    <div class="text-sm" style="color: var(--color-status-error);">{searchError}</div>
+    <div class="text-sm mb-4" style="color: var(--color-status-error);">{searchError}</div>
   {/if}
 
-  {#if mode === 'tracks' && trackResults.length > 0}
+  <!-- ─── Album grid (Direction-B signature) ─── -->
+  {#if mode === 'albums' && albumResults.length > 0}
+    <div class="grid" style="grid-template-columns: repeat(4, 1fr); gap: 20px;">
+      {#each albumResults as album, i (album.id)}
+        <AlbumGridCard
+          {album}
+          queueState={queuedIds[album.id]}
+          loading={queuedIds[album.id]?.kind === 'queued'}
+          index={i}
+          {provider}
+          onqueue={() => queueAlbum(album)}
+        />
+      {/each}
+    </div>
+
+  <!-- ─── Track list (mode=tracks) ─── -->
+  {:else if mode === 'tracks' && trackResults.length > 0}
     <div class="space-y-2">
       {#each trackResults as track (track.id)}
         {@const state = queuedIds[track.id]}
@@ -321,16 +485,10 @@
             <div class="flex items-center gap-4" class:opacity-60={loading}>
               <AlbumArt src={track.album_art} alt={track.album} size="md" />
               <div class="flex-1 min-w-0">
-                <div
-                  class="font-medium text-[15px] truncate"
-                  style="color: var(--color-fg-primary);"
-                >
+                <div class="font-medium text-[15px] truncate" style="color: var(--color-fg-primary);">
                   {track.name}
                 </div>
-                <div
-                  class="text-[13px] truncate"
-                  style="color: var(--color-fg-secondary);"
-                >
+                <div class="text-[13px] truncate" style="color: var(--color-fg-secondary);">
                   {track.artist}
                   {#if track.album}
                     <span style="color: var(--color-fg-tertiary);"> · {track.album}</span>
@@ -339,7 +497,7 @@
               </div>
               <div
                 class="text-[12px] tabular-nums"
-                style="color: var(--color-fg-tertiary);"
+                style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
               >
                 {fmtDuration(track.duration_ms)}
               </div>
@@ -356,9 +514,9 @@
                       ? 'var(--color-status-error)'
                       : loading
                         ? 'var(--color-surface-3)'
-                        : 'var(--color-accent)'}; color: {state?.kind === 'exists' || loading
+                        : accentSoft}; color: {state?.kind === 'exists' || loading
                   ? 'var(--color-fg-secondary)'
-                  : '#1a1410'}; border: {state?.kind === 'exists' || loading
+                  : '#0a0a0c'}; border: {state?.kind === 'exists' || loading
                   ? '1px solid var(--color-border-soft)'
                   : 'none'}; min-width: 110px; justify-content: center;"
               >
@@ -380,92 +538,9 @@
         </div>
       {/each}
     </div>
-  {:else if mode === 'albums' && albumResults.length > 0}
-    <div class="space-y-2">
-      {#each albumResults as album (album.id)}
-        {@const state = queuedIds[album.id]}
-        {@const loading = state?.kind === 'queued'}
-        <div class="relative" class:skeleton-card={loading}>
-          <a
-            href="{base}/album/{album.id}?provider={provider}"
-            class="block"
-            data-sveltekit-preload-data="hover"
-          >
-            <GlassCard padding="sm" interactive>
-              <div class="flex items-center gap-4" class:opacity-60={loading}>
-                <AlbumArt src={album.album_art} alt={album.name} size="md" />
-                <div class="flex-1 min-w-0">
-                  <div
-                    class="font-medium text-[15px] truncate"
-                    style="color: var(--color-fg-primary);"
-                  >
-                    {album.name}
-                  </div>
-                  <div
-                    class="text-[13px] truncate"
-                    style="color: var(--color-fg-secondary);"
-                  >
-                    {album.artist}
-                    {#if album.release_date}
-                      <span style="color: var(--color-fg-tertiary);"
-                        > · {album.release_date.slice(0, 4)}</span
-                      >
-                    {/if}
-                    {#if album.total_tracks}
-                      <span style="color: var(--color-fg-tertiary);"
-                        > · {album.total_tracks} Tracks</span
-                      >
-                    {/if}
-                  </div>
-                </div>
-                <button
-                  onclick={(e) => {
-                    e.preventDefault();
-                    queueAlbum(album);
-                  }}
-                  disabled={loading || state?.kind === 'done' || state?.kind === 'exists'}
-                  title={state?.message ?? ''}
-                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:cursor-default"
-                  style="background: {state?.kind === 'done'
-                    ? 'var(--color-status-done)'
-                    : state?.kind === 'exists'
-                      ? 'var(--color-surface-3)'
-                      : state?.kind === 'error'
-                        ? 'var(--color-status-error)'
-                        : loading
-                          ? 'var(--color-surface-3)'
-                          : 'var(--color-accent)'}; color: {state?.kind === 'exists' || loading
-                    ? 'var(--color-fg-secondary)'
-                    : '#1a1410'}; border: {state?.kind === 'exists' || loading
-                    ? '1px solid var(--color-border-soft)'
-                    : 'none'}; min-width: 130px; justify-content: center;"
-                >
-                  {#if loading}
-                    <span class="skeleton-text">queue …</span>
-                  {:else if state?.kind === 'done'}
-                    ✓ {state.message ?? 'in Queue'}
-                  {:else if state?.kind === 'exists'}
-                    ✓ vorhanden
-                  {:else if state?.kind === 'error'}
-                    Fehler
-                  {:else}
-                    <Download size={13} strokeWidth={1.8} />
-                    Album laden
-                  {/if}
-                </button>
-                <ChevronRight
-                  size={16}
-                  strokeWidth={1.5}
-                  style="color: var(--color-fg-tertiary); flex-shrink: 0;"
-                />
-              </div>
-            </GlassCard>
-          </a>
-        </div>
-      {/each}
-    </div>
+
+  <!-- ─── URL direkt-download ─── -->
   {:else if mode === 'url'}
-    <!-- ────────── URL (yt-dlp direct) ────────── -->
     <GlassCard padding="md">
       <div class="space-y-3">
         <label class="block space-y-2">
@@ -479,8 +554,13 @@
             placeholder="https://…"
             spellcheck="false"
             autocomplete="off"
-            class="w-full px-3 py-2.5 rounded-md text-[13px] font-mono outline-none focus:border-[var(--color-accent)]"
-            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
+            class="w-full px-3 py-2.5 rounded-md text-[13px] outline-none"
+            style="
+              background: var(--color-surface-3);
+              border: 1px solid var(--color-border-soft);
+              color: var(--color-fg-primary);
+              font-family: var(--font-mono);
+            "
           />
         </label>
         <div class="flex items-center gap-3 flex-wrap">
@@ -488,7 +568,7 @@
             onclick={submitUrl}
             disabled={urlBusy || !urlInput.trim()}
             class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
-            style="background: var(--color-accent); color: #1a1410;"
+            style="background: {accent}; color: #0a0a0c;"
           >
             {#if urlBusy}
               <Loader2 size={13} class="animate-spin" />
@@ -498,9 +578,7 @@
             In Queue
           </button>
           {#if urlMessage}
-            <span class="text-[12px]" style="color: var(--color-status-done);">
-              ✓ {urlMessage}
-            </span>
+            <span class="text-[12px]" style="color: var(--color-status-done);">✓ {urlMessage}</span>
           {/if}
           {#if urlError}
             <span class="text-[12px]" style="color: var(--color-status-error);">{urlError}</span>
@@ -508,12 +586,13 @@
         </div>
       </div>
     </GlassCard>
-    <p class="text-[12px]" style="color: var(--color-fg-tertiary);">
+    <p class="text-[12px] mt-3" style="color: var(--color-fg-tertiary);">
       Lädt direkt via yt-dlp ohne Metadata-Match. Title und Artist-Tag bleiben so wie auf der
       Quelle. Brauchst du saubere Tags, nutze stattdessen <strong>Reverse YouTube</strong>.
     </p>
+
+  <!-- ─── Reverse YouTube ─── -->
   {:else if mode === 'reverse'}
-    <!-- ────────── Reverse YouTube ────────── -->
     <GlassCard padding="md">
       <div class="space-y-3">
         <label class="block space-y-2">
@@ -527,8 +606,13 @@
             placeholder="https://www.youtube.com/watch?v=…"
             spellcheck="false"
             autocomplete="off"
-            class="w-full px-3 py-2.5 rounded-md text-[13px] font-mono outline-none focus:border-[var(--color-accent)]"
-            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
+            class="w-full px-3 py-2.5 rounded-md text-[13px] outline-none"
+            style="
+              background: var(--color-surface-3);
+              border: 1px solid var(--color-border-soft);
+              color: var(--color-fg-primary);
+              font-family: var(--font-mono);
+            "
           />
         </label>
         <div class="flex items-center gap-3 flex-wrap">
@@ -536,7 +620,7 @@
             onclick={submitReverse}
             disabled={revBusy || !revUrl.trim()}
             class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
-            style="background: var(--color-accent); color: #1a1410;"
+            style="background: {accent}; color: #0a0a0c;"
           >
             {#if revBusy}
               <Loader2 size={13} class="animate-spin" />
@@ -561,16 +645,14 @@
     </GlassCard>
 
     {#if revLookup}
-      <div class="space-y-3">
+      <div class="space-y-3 mt-4">
         {#if revLookup.youtube?.title}
           <div class="text-[13px]" style="color: var(--color-fg-secondary);">
             <span style="color: var(--color-fg-tertiary);">YouTube:</span>
             <span style="color: var(--color-fg-primary);" class="font-medium">
               {revLookup.youtube.title}
             </span>
-            {#if revLookup.youtube.channel}
-              · {revLookup.youtube.channel}
-            {/if}
+            {#if revLookup.youtube.channel}· {revLookup.youtube.channel}{/if}
           </div>
         {/if}
         <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
@@ -585,16 +667,10 @@
                 <div class="flex items-center gap-4" class:opacity-60={rLoading}>
                   <AlbumArt src={c.album_art} alt={c.album} size="md" />
                   <div class="flex-1 min-w-0">
-                    <div
-                      class="font-medium text-[14px] truncate"
-                      style="color: var(--color-fg-primary);"
-                    >
+                    <div class="font-medium text-[14px] truncate" style="color: var(--color-fg-primary);">
                       {c.name}
                     </div>
-                    <div
-                      class="text-[12px] truncate"
-                      style="color: var(--color-fg-secondary);"
-                    >
+                    <div class="text-[12px] truncate" style="color: var(--color-fg-secondary);">
                       {c.artist}
                       {#if c.album}
                         <span style="color: var(--color-fg-tertiary);"> · {c.album}</span>
@@ -603,7 +679,7 @@
                   </div>
                   <div
                     class="text-[12px] tabular-nums"
-                    style="color: var(--color-fg-tertiary);"
+                    style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
                   >
                     {fmtDuration(c.duration_ms)}
                   </div>
@@ -620,9 +696,9 @@
                           ? 'var(--color-status-error)'
                           : rLoading
                             ? 'var(--color-surface-3)'
-                            : 'var(--color-accent)'}; color: {state?.kind === 'exists' || rLoading
+                            : accentSoft}; color: {state?.kind === 'exists' || rLoading
                       ? 'var(--color-fg-secondary)'
-                      : '#1a1410'}; border: {state?.kind === 'exists' || rLoading
+                      : '#0a0a0c'}; border: {state?.kind === 'exists' || rLoading
                       ? '1px solid var(--color-border-soft)'
                       : 'none'}; min-width: 110px; justify-content: center;"
                   >
@@ -646,13 +722,14 @@
         </div>
       </div>
     {/if}
+
+  <!-- Empty states -->
   {:else if (mode === 'tracks' || mode === 'albums') && query && !searching}
     <div class="text-sm" style="color: var(--color-fg-tertiary);">Keine Treffer.</div>
   {:else if (mode === 'tracks' || mode === 'albums') && !query}
     <div class="text-sm" style="color: var(--color-fg-tertiary);">
-      Tipp: Suchbegriff eingeben und ↵ drücken, oder einfach 320 ms tippen.
+      Tipp: Suchbegriff eingeben und ↵ drücken, oder einfach 320&nbsp;ms tippen.
     </div>
   {/if}
 </section>
 
-<!-- skeleton-card / skeleton-text leben global in app.css -->

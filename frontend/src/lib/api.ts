@@ -90,6 +90,8 @@ export interface Track {
   preview_url?: string;
   album_art?: string;
   release_date: string;
+  track_number?: number;
+  disc_number?: number;
 }
 
 export interface Album {

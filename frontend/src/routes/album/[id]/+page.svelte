@@ -36,7 +36,7 @@
     loading = true;
     loadError = null;
     try {
-      album = await albumApi.get(albumId, provider || undefined);
+      album = await albumApi.get(albumId ?? '', provider || undefined);
     } catch (err) {
       if (!(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
         loadError = err instanceof Error ? err.message : 'Album konnte nicht geladen werden';

@@ -29,8 +29,9 @@
   --radius-lg: 22px;
   --radius-xl: 32px;
 
-  --font-sans: 'SF Pro Display', 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'SF Mono', 'JetBrains Mono', ui-monospace, monospace;
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-display: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, monospace;
 }
 
 :root {
@@ -138,3 +139,44 @@ body {
     background-position: -200% 0;
   }
 }
+
+/* ─── Cinema-Direction Animations ─────────────────────────
+   Vinyl-Spin (12s linear), Pareto progress flow,
+   subtle fade-in für Card-Cascading.
+   ─────────────────────────────────────────────────────── */
+@keyframes tonus-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes tonus-progress-flow {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+@keyframes tonus-fadein {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.tonus-fadein {
+  animation: tonus-fadein 0.3s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tonus-vinyl-disc,
+  .tonus-fadein,
+  .skeleton-card::after,
+  .skeleton-text {
+    animation: none !important;
+  }
+}
+

@@ -25,53 +25,98 @@
   const hasToken = $derived(!!$apiToken);
 </script>
 
-<div class="min-h-screen flex flex-col">
+<div class="min-h-screen flex flex-col relative">
   <header
-    class="sticky top-0 z-30 backdrop-blur-[24px]"
-    style="background: var(--color-surface-1); border-bottom: 1px solid var(--color-border-soft);"
+    class="sticky top-0 z-30"
+    style="
+      backdrop-filter: blur(40px) saturate(1.2);
+      -webkit-backdrop-filter: blur(40px) saturate(1.2);
+      background: rgba(8, 8, 10, 0.55);
+      border-bottom: 1px solid var(--color-border-soft);
+    "
   >
-    <div class="mx-auto max-w-7xl px-6 h-14 flex items-center gap-8">
+    <div class="mx-auto max-w-[1180px] px-7 h-[54px] flex items-center gap-7">
+      <!-- Tonus mark + wordmark -->
       <a
         href="{base}/"
-        class="font-medium tracking-tight text-[15px]"
+        class="flex items-center gap-[9px]"
         style="color: var(--color-fg-primary);"
         aria-label="Tonus — Startseite"
       >
-        Tonus
+        <span
+          class="relative inline-block"
+          style="
+            width: 22px;
+            height: 22px;
+            border-radius: 6px;
+            background: linear-gradient(135deg, var(--color-accent), oklch(35% 0.15 30));
+          "
+        >
+          <span
+            class="absolute"
+            style="inset: 30%; border-radius: 50%; background: var(--color-surface-0);"
+          ></span>
+        </span>
+        <span
+          class="font-semibold"
+          style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.02em;"
+        >
+          Tonus
+        </span>
       </a>
-      <nav class="flex items-center gap-1 text-[13px]">
+
+      <!-- Underline tabs -->
+      <nav class="flex items-center text-[12.5px] ml-5">
         {#each tabs as tab}
+          {@const active = isActive(tab.href, $page.url.pathname)}
           <a
             href="{base}{tab.href}"
-            class="px-3 py-1.5 rounded-md transition-colors"
-            style="color: {isActive(tab.href, $page.url.pathname)
-              ? 'var(--color-fg-primary)'
-              : 'var(--color-fg-secondary)'}; background: {isActive(tab.href, $page.url.pathname)
-              ? 'var(--color-surface-3)'
-              : 'transparent'};"
+            class="relative transition-colors"
+            style="
+              padding: 8px 14px;
+              color: {active ? 'var(--color-fg-primary)' : 'var(--color-fg-secondary)'};
+              letter-spacing: 0.01em;
+            "
           >
             {tab.label}
+            {#if active}
+              <span
+                class="absolute"
+                style="
+                  left: 14px;
+                  right: 14px;
+                  bottom: -1px;
+                  height: 2px;
+                  background: var(--color-accent);
+                  border-radius: 2px;
+                "
+              ></span>
+            {/if}
           </a>
         {/each}
       </nav>
-      <div class="ml-auto flex items-center gap-3">
-        <button
-          onclick={challengeAuth}
-          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] transition-colors"
-          style="color: {hasToken
-            ? 'var(--color-fg-secondary)'
-            : 'var(--color-status-error)'}; background: var(--color-surface-3);"
-          aria-label="API-Token verwalten"
-        >
-          <KeyRound size={13} strokeWidth={1.5} />
-          {hasToken ? 'Token' : 'Token fehlt'}
-        </button>
-        <span class="text-[12px]" style="color: var(--color-fg-tertiary);">v0.1</span>
-      </div>
+
+      <!-- Token-pill (right-aligned) -->
+      <button
+        onclick={challengeAuth}
+        class="ml-auto inline-flex items-center gap-1.5 transition-colors"
+        style="
+          padding: 4px 10px;
+          font-size: 11px;
+          border-radius: 999px;
+          border: 1px solid var(--color-border-soft);
+          background: rgba(255, 255, 255, 0.02);
+          color: {hasToken ? 'var(--color-fg-secondary)' : 'var(--color-status-error)'};
+        "
+        aria-label="API-Token verwalten"
+      >
+        <KeyRound size={11} strokeWidth={1.5} />
+        {hasToken ? 'Token aktiv' : 'Token fehlt'}
+      </button>
     </div>
   </header>
 
-  <main class="flex-1 mx-auto max-w-7xl w-full px-6 py-10">
+  <main class="flex-1 relative">
     {@render children()}
   </main>
 
