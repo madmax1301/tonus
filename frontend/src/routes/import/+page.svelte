@@ -9,9 +9,11 @@
   } from '$lib/api';
   import { defaultProvider, defaultLocation } from '$lib/preferences';
   import { get } from 'svelte/store';
-  import GlassCard from '$lib/components/GlassCard.svelte';
+  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
+  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import ProgressLine from '$lib/components/ProgressLine.svelte';
-  import { Upload, Loader2, Download } from 'lucide-svelte';
+  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { Upload, Loader2, Download, FileText, X } from 'lucide-svelte';
 
   // ── Provider ────────────────────────────────────────────
   let provider = $state<string>('');
@@ -202,66 +204,235 @@
     input.value = '';
   }
 
+  // ── Drag & Drop ──────────────────────────────────────────
+  let dragOver = $state(false);
+  let dragDepth = 0;
+
+  function onDragEnter(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    dragDepth++;
+    dragOver = true;
+  }
+  function onDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }
+  function onDragLeave(e: DragEvent) {
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dragOver = false;
+  }
+  async function onDrop(e: DragEvent) {
+    e.preventDefault();
+    dragDepth = 0;
+    dragOver = false;
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    csvText = await f.text();
+  }
+
   const csvProgress = $derived(
     csvStatus && csvStatus.total
       ? Math.round((csvStatus.processed / csvStatus.total) * 100)
       : 0
   );
+
+  // Accent — Import hat keinen Cover-Hue, daher konstant Default-Gold.
+  const accent = $derived(tint(DEFAULT_HUE));
+  const accentSoft = $derived(tint(DEFAULT_HUE, 0.95));
+
+  const lineCount = $derived(csvText.split(/\r?\n/).filter((l) => l.trim()).length);
 </script>
 
-<section class="space-y-8">
-  <header class="space-y-2">
-    <h1 class="text-4xl font-semibold tracking-tight" style="color: var(--color-fg-primary);">
-      Import
-    </h1>
-    <p class="text-sm" style="color: var(--color-fg-secondary);">
-      Bulk-Import größerer CSV-Listen — eine Zeile pro Track.
-      <span style="color: var(--color-fg-tertiary);"
-        >Einzelne URLs und Reverse-Lookups laufen auf <a
-          href="/"
-          style="color: var(--color-accent); text-decoration: underline;">Bibliothek</a
-        >.</span
-      >
-    </p>
-  </header>
+<CinemaBackdrop hue={DEFAULT_HUE} />
 
-  {#if providersData}
-    <div class="flex items-center gap-2">
-      <span class="text-[12px]" style="color: var(--color-fg-tertiary);">Provider</span>
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 40px 36px 50px;">
+  <!-- ─── Editorial Hero ───────────────────────────────────── -->
+  <div
+    class="grid items-center"
+    style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: 48px;"
+  >
+    <div>
+      <div
+        class="font-semibold uppercase"
+        style="
+          font-size: 11px;
+          letter-spacing: 0.24em;
+          color: {accent};
+          margin-bottom: 14px;
+        "
+      >
+        Bulk Import
+      </div>
+      <h1
+        class="font-semibold m-0"
+        style="
+          font-family: var(--font-display);
+          font-size: 48px;
+          font-weight: 600;
+          line-height: 0.95;
+          letter-spacing: -0.035em;
+        "
+      >
+        Hunderte Tracks.<br />
+        <em style="color: {accent}; font-weight: 400; font-style: italic;">Eine Liste.</em>
+      </h1>
+      <p
+        style="
+          font-size: 14px;
+          color: var(--color-fg-secondary);
+          max-width: 440px;
+          margin-top: 18px;
+          line-height: 1.6;
+        "
+      >
+        CSV oder Freitext rein — Tonus matcht jede Zeile gegen Deezer/Spotify und queued
+        sauber, was zu finden war. Was nicht passt, kannst du als CSV exportieren.
+      </p>
+    </div>
+    <div class="flex justify-center">
+      <VinylWithCover
+        src={null}
+        alt=""
+        artist="Liste"
+        year={lineCount > 0 ? lineCount : ''}
+        size={260}
+        spinning={!!csvJobId && csvStatus?.status !== 'completed'}
+      />
+    </div>
+  </div>
+
+  <!-- ─── Mode strip — Provider als underline-Pill (analog Library) ─── -->
+  <div
+    class="flex items-center"
+    style="
+      gap: 24px;
+      font-size: 13px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--color-border-soft);
+      padding-bottom: 14px;
+    "
+  >
+    <div
+      class="relative inline-flex items-center"
+      style="
+        color: var(--color-fg-primary);
+        font-weight: 500;
+        padding-bottom: 14px;
+        margin-bottom: -14px;
+        border-bottom: 2px solid {accent};
+      "
+    >
+      CSV
+    </div>
+    {#if csvJobId}
+      <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
+        Job · <span class="font-mono" style="font-family: var(--font-mono);">{csvJobId.slice(0, 8)}</span>
+      </div>
+    {/if}
+    {#if providersData}
       <select
         bind:value={provider}
-        class="text-[12px] px-2 py-1 rounded-md outline-none"
-        style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+        disabled={!!csvJobId}
+        class="ml-auto text-[11px] px-2 py-1 rounded-md outline-none disabled:opacity-60"
+        style="
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--color-border-soft);
+          color: var(--color-fg-tertiary);
+        "
       >
         {#each providersData.providers.filter((p) => p.configured) as p}
-          <option value={p.id}>{p.label}</option>
+          <option value={p.id}>{p.label} · Provider</option>
         {/each}
       </select>
-    </div>
-  {/if}
+    {/if}
+  </div>
 
   {#if !csvJobId}
-    <GlassCard padding="md">
-      <div class="space-y-3">
-        <label class="block space-y-2">
-          <span class="text-[13px] font-medium" style="color: var(--color-fg-primary);"
-            >CSV-Inhalt</span
+    <!-- ─── Glass Drop-Zone ─────────────────────────────────── -->
+    <div
+      role="region"
+      aria-label="CSV-Eingabe"
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.5);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid {dragOver ? accent : 'var(--color-border-soft)'};
+        border-radius: 22px;
+        padding: 28px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        transition: border-color 0.18s ease;
+      "
+      ondragenter={onDragEnter}
+      ondragover={onDragOver}
+      ondragleave={onDragLeave}
+      ondrop={onDrop}
+    >
+      <!-- Drag overlay -->
+      {#if dragOver}
+        <div
+          class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
+          style="
+            background: rgba(20, 20, 24, 0.85);
+            border: 2px dashed {accent};
+            border-radius: 22px;
+            backdrop-filter: blur(8px);
+          "
+        >
+          <div class="text-center">
+            <Upload size={48} strokeWidth={1.2} style="color: {accent}; margin-inline: auto;" />
+            <div
+              class="font-semibold uppercase mt-3"
+              style="font-size: 11px; letter-spacing: 0.24em; color: {accent};"
+            >
+              Drop to import
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Header row: title + actions -->
+      <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="
+              font-size: 11px;
+              letter-spacing: 0.2em;
+              color: var(--color-fg-tertiary);
+            "
           >
-          <textarea
-            bind:value={csvText}
-            rows="10"
-            spellcheck="false"
-            placeholder={'Format: Künstler;Titel\noder: Künstler,Titel\noder: 1 Zeile pro Track als Freitext'}
-            class="w-full px-3 py-2.5 rounded-md text-[13px] font-mono outline-none resize-y focus:border-[var(--color-accent)]"
-            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
-          ></textarea>
-        </label>
-        <div class="flex items-center gap-3">
+            Eingabe
+          </div>
+          <div
+            class="mt-1"
+            style="
+              font-family: var(--font-display);
+              font-size: 22px;
+              font-weight: 500;
+              letter-spacing: -0.015em;
+              color: var(--color-fg-primary);
+            "
+          >
+            Datei droppen oder Liste einfügen
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
           <label
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] cursor-pointer transition-colors"
-            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+            class="inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+            style="
+              background: rgba(255, 255, 255, 0.04);
+              border: 1px solid var(--color-border-soft);
+              color: var(--color-fg-secondary);
+              padding: 6px 14px;
+              border-radius: 999px;
+              font-size: 11.5px;
+            "
           >
-            <Upload size={13} strokeWidth={1.5} />
+            <Upload size={12} strokeWidth={1.5} />
             CSV-Datei wählen
             <input
               type="file"
@@ -270,173 +441,399 @@
               class="hidden"
             />
           </label>
-          <button
-            onclick={startCsv}
-            disabled={csvBusy || !csvText.trim()}
-            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
-            style="background: var(--color-accent); color: #1a1410;"
-          >
-            {#if csvBusy}
-              <Loader2 size={13} class="animate-spin" />
-              Lade …
-            {:else}
-              Import starten
-            {/if}
-          </button>
-          <span class="text-[12px]" style="color: var(--color-fg-tertiary);">
-            {csvText.split(/\r?\n/).filter((l) => l.trim()).length} Zeilen
-          </span>
-        </div>
-        {#if csvError}
-          <div class="text-sm" style="color: var(--color-status-error);">{csvError}</div>
-        {/if}
-      </div>
-    </GlassCard>
-  {:else if csvStatus && csvStatus.status !== 'completed'}
-    <GlassCard padding="md">
-      <div class="space-y-3">
-        <div class="flex items-center justify-between text-[13px]">
-          <span style="color: var(--color-fg-primary);" class="font-medium"> CSV-Import läuft </span>
-          <span class="tabular-nums" style="color: var(--color-fg-secondary);">
-            {csvStatus.processed.toLocaleString('de-DE')} / {csvStatus.total.toLocaleString(
-              'de-DE'
-            )}
-          </span>
-        </div>
-        <ProgressLine
-          value={csvProgress > 0 ? csvProgress : undefined}
-          pareto={csvProgress === 0}
-        />
-        <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
-          {csvStatus.found} matched · {csvStatus.not_found} nicht gefunden
-          {#if csvStatus.message}
-            <span class="ml-2">· {csvStatus.message}</span>
+          {#if csvText}
+            <button
+              type="button"
+              onclick={() => (csvText = '')}
+              class="inline-flex items-center gap-1.5 transition-colors"
+              style="
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid var(--color-border-soft);
+                color: var(--color-fg-tertiary);
+                padding: 6px 12px;
+                border-radius: 999px;
+                font-size: 11px;
+              "
+              aria-label="Zurücksetzen"
+            >
+              <X size={11} strokeWidth={1.5} />
+              Leeren
+            </button>
           {/if}
         </div>
       </div>
-    </GlassCard>
+
+      <textarea
+        bind:value={csvText}
+        rows="10"
+        spellcheck="false"
+        placeholder={'Künstler;Titel\nDaft Punk;Get Lucky\nQueen;Bohemian Rhapsody\n\noder eine Zeile pro Track als Freitext'}
+        class="w-full px-4 py-3 outline-none resize-y"
+        style="
+          background: rgba(0, 0, 0, 0.25);
+          border: 1px solid var(--color-border-soft);
+          border-radius: 14px;
+          color: var(--color-fg-primary);
+          font-family: var(--font-mono);
+          font-size: 12.5px;
+          line-height: 1.55;
+        "
+      ></textarea>
+
+      <!-- Footer row: action -->
+      <div class="flex items-center justify-between flex-wrap gap-3 mt-4">
+        <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
+          {#if lineCount > 0}
+            <span style="color: {accent}; font-weight: 500;">{lineCount.toLocaleString('de-DE')}</span>
+            <span> Zeile{lineCount === 1 ? '' : 'n'} bereit</span>
+          {:else}
+            Liste einfügen oder Datei droppen — Format: <code style="font-family: var(--font-mono); color: var(--color-fg-secondary);">Künstler;Titel</code>
+          {/if}
+        </div>
+        <button
+          onclick={startCsv}
+          disabled={csvBusy || !csvText.trim()}
+          class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+          style="
+            background: {accent};
+            color: #1a1410;
+            padding: 10px 22px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+          "
+        >
+          {#if csvBusy}
+            <Loader2 size={13} class="animate-spin" />
+            Lade …
+          {:else}
+            <FileText size={13} strokeWidth={2} />
+            Import starten
+          {/if}
+        </button>
+      </div>
+      {#if csvError}
+        <div
+          class="mt-3 text-[12px]"
+          style="color: var(--color-status-error);"
+        >
+          {csvError}
+        </div>
+      {/if}
+    </div>
+  {:else if csvStatus && csvStatus.status !== 'completed'}
+    <!-- ─── Live-Card during import ─────────────────────────── -->
+    <div
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.55);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 22px;
+        padding: 32px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      "
+    >
+      <div class="flex items-center gap-3 mb-3">
+        <span
+          class="inline-block rounded-full"
+          style="width: 8px; height: 8px; background: {accent}; box-shadow: 0 0 12px {accent};"
+        ></span>
+        <div
+          class="font-semibold uppercase"
+          style="
+            font-size: 11px;
+            letter-spacing: 0.24em;
+            color: {accent};
+          "
+        >
+          Live · matching against {provider || 'provider'}
+        </div>
+      </div>
+
+      <div
+        class="font-medium mb-4"
+        style="
+          font-family: var(--font-display);
+          font-size: 36px;
+          font-weight: 500;
+          letter-spacing: -0.025em;
+          line-height: 1.05;
+          color: var(--color-fg-primary);
+        "
+      >
+        <span class="tabular-nums">{csvStatus.processed.toLocaleString('de-DE')}</span>
+        <span style="color: var(--color-fg-tertiary); font-weight: 300;"> / </span>
+        <span class="tabular-nums" style="color: var(--color-fg-secondary);">{csvStatus.total.toLocaleString('de-DE')}</span>
+        <span
+          style="
+            font-size: 14px;
+            color: var(--color-fg-tertiary);
+            font-weight: 400;
+            margin-left: 12px;
+            letter-spacing: 0;
+          "
+        >
+          Tracks verarbeitet
+        </span>
+      </div>
+
+      <ProgressLine
+        value={csvProgress > 0 ? csvProgress : undefined}
+        pareto={csvProgress === 0}
+        height={3}
+        color={accent}
+        glow
+      />
+
+      <div class="flex items-center gap-6 mt-4 text-[12px] tabular-nums">
+        <div>
+          <span style="color: var(--color-fg-tertiary);">matched</span>
+          <span class="ml-1.5 font-medium" style="color: var(--color-status-done);"
+            >{csvStatus.found.toLocaleString('de-DE')}</span
+          >
+        </div>
+        <div>
+          <span style="color: var(--color-fg-tertiary);">nicht gefunden</span>
+          <span class="ml-1.5 font-medium" style="color: var(--color-status-error);"
+            >{csvStatus.not_found.toLocaleString('de-DE')}</span
+          >
+        </div>
+        {#if csvStatus.message}
+          <div class="ml-auto text-[11px]" style="color: var(--color-fg-tertiary);">
+            {csvStatus.message}
+          </div>
+        {/if}
+      </div>
+    </div>
   {:else if csvResult}
-    <GlassCard padding="md">
-      <div class="flex items-end justify-between gap-4 flex-wrap">
+    <!-- ─── Result Hero ─────────────────────────────────────── -->
+    <div
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.55);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 22px;
+        padding: 32px;
+        margin-bottom: 22px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      "
+    >
+      <div class="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div
-            class="text-[12px] uppercase tracking-widest"
-            style="color: var(--color-fg-tertiary);"
+            class="font-semibold uppercase"
+            style="
+              font-size: 11px;
+              letter-spacing: 0.24em;
+              color: {accent};
+              margin-bottom: 14px;
+            "
           >
-            CSV-Import abgeschlossen
+            Import abgeschlossen
           </div>
-          <div class="text-[20px] font-semibold mt-1" style="color: var(--color-fg-primary);">
-            {csvResult.found.toLocaleString('de-DE')} matched
-            <span style="color: var(--color-fg-tertiary);" class="font-normal">/</span>
-            <span style="color: var(--color-status-error);"
-              >{csvResult.not_found.toLocaleString('de-DE')} nicht gefunden</span
-            >
+          <div
+            class="font-medium m-0"
+            style="
+              font-family: var(--font-display);
+              font-size: 56px;
+              font-weight: 500;
+              line-height: 0.95;
+              letter-spacing: -0.035em;
+              color: var(--color-fg-primary);
+            "
+          >
+            <span class="tabular-nums">{csvResult.found.toLocaleString('de-DE')}</span>
+            <span style="font-size: 22px; color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
+              matched
+            </span>
+          </div>
+          <div class="mt-3 text-[14px]" style="color: var(--color-fg-secondary);">
+            {#if csvResult.not_found > 0}
+              <span style="color: var(--color-status-error); font-weight: 500;"
+                >{csvResult.not_found.toLocaleString('de-DE')}</span
+              >
+              <span style="color: var(--color-fg-tertiary);"> nicht gefunden</span>
+            {:else}
+              Alles gefunden — saubere Liste
+            {/if}
           </div>
         </div>
         <div class="flex items-center gap-3">
           <button
+            onclick={resetCsv}
+            class="inline-flex items-center gap-1.5 transition-colors"
+            style="
+              background: rgba(255, 255, 255, 0.04);
+              border: 1px solid var(--color-border-soft);
+              color: var(--color-fg-secondary);
+              padding: 8px 16px;
+              border-radius: 999px;
+              font-size: 12px;
+            "
+          >
+            Neuer Import
+          </button>
+          <button
             onclick={queueAllMatched}
             disabled={csvQueueAllBusy || csvResult.found === 0}
-            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
-            style="background: var(--color-accent); color: #1a1410;"
+            class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+            style="
+              background: {accent};
+              color: #1a1410;
+              padding: 10px 22px;
+              border-radius: 999px;
+              font-size: 12px;
+              font-weight: 600;
+              letter-spacing: 0.04em;
+              text-transform: uppercase;
+              box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+            "
           >
             {#if csvQueueAllBusy}
               <Loader2 size={13} class="animate-spin" />
+              Queue …
             {:else}
-              <Download size={13} strokeWidth={1.8} />
+              <Download size={13} strokeWidth={2} />
+              {csvResult.found.toLocaleString('de-DE')} queuen
             {/if}
-            Alle matched queuen
-          </button>
-          <button
-            onclick={resetCsv}
-            class="inline-flex items-center gap-2 px-3 py-2 rounded-md text-[12px] transition-colors"
-            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
-          >
-            Neuer Import
           </button>
         </div>
       </div>
       {#if csvQueueAllResult}
-        <div class="mt-3 text-[12px]" style="color: var(--color-fg-secondary);">
-          {csvQueueAllResult}
+        <div class="mt-4 text-[12px]" style="color: var(--color-fg-secondary);">
+          ✓ {csvQueueAllResult}
         </div>
       {/if}
-    </GlassCard>
+    </div>
 
+    <!-- ─── Unmatched list ─────────────────────────────────── -->
     {#if csvResult.not_found > 0}
-      <details class="space-y-3" open>
-        <summary
-          class="cursor-pointer text-[13px] font-medium select-none flex items-center gap-3 flex-wrap"
-          style="color: var(--color-fg-primary);"
+      <div
+        class="flex items-center justify-between flex-wrap gap-3"
+        style="
+          margin-bottom: 14px;
+          padding-bottom: 12px;
+          border-bottom: 1px solid var(--color-border-soft);
+        "
+      >
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="
+              font-size: 11px;
+              letter-spacing: 0.24em;
+              color: var(--color-fg-tertiary);
+            "
+          >
+            Nicht gefunden
+          </div>
+          <div
+            class="mt-1 text-[15px]"
+            style="color: var(--color-fg-primary); font-weight: 500;"
+          >
+            <span class="tabular-nums">{csvResult.unmatched.length.toLocaleString('de-DE')}</span>
+            <span style="color: var(--color-fg-tertiary); font-weight: 400;">
+              von {csvResult.not_found.toLocaleString('de-DE')} angezeigt
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onclick={exportUnmatched}
+          disabled={csvExportBusy}
+          class="inline-flex items-center gap-1.5 transition-colors disabled:opacity-50"
+          style="
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--color-border-soft);
+            color: var(--color-fg-secondary);
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 11.5px;
+          "
         >
-          <span>{csvResult.not_found.toLocaleString('de-DE')} nicht gefundene Zeilen</span>
-          <span class="text-[11px] font-normal" style="color: var(--color-fg-tertiary);">
-            · zeige {csvResult.unmatched.length.toLocaleString('de-DE')}
-          </span>
-          <span class="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onclick={(e) => {
-                e.preventDefault();
-                exportUnmatched();
-              }}
-              disabled={csvExportBusy}
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors disabled:opacity-50"
-              style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
-            >
-              {#if csvExportBusy && csvExportProgress}
-                <Loader2 size={11} class="animate-spin" />
-                CSV {csvExportProgress.loaded.toLocaleString('de-DE')} / {csvExportProgress.total.toLocaleString(
-                  'de-DE'
-                )}
-              {:else}
-                <Download size={11} strokeWidth={1.8} />
-                Als CSV exportieren
-              {/if}
-            </button>
-          </span>
-        </summary>
-        <div class="space-y-1">
-          {#each csvResult.unmatched as u}
-            <GlassCard padding="sm">
-              <div class="flex items-center justify-between gap-3">
-                <div class="text-[13px] truncate" style="color: var(--color-fg-secondary);">
-                  {u.artist || u.query || u.raw_line || '?'}
-                  {#if u.title}
-                    <span style="color: var(--color-fg-tertiary);"> · {u.title}</span>
-                  {/if}
-                </div>
-                {#if u.reason}
-                  <div
-                    class="text-[11px] flex-shrink-0"
-                    style="color: var(--color-fg-tertiary);"
-                  >
-                    {u.reason}
-                  </div>
+          {#if csvExportBusy && csvExportProgress}
+            <Loader2 size={11} class="animate-spin" />
+            CSV {csvExportProgress.loaded.toLocaleString('de-DE')} / {csvExportProgress.total.toLocaleString(
+              'de-DE'
+            )}
+          {:else}
+            <Download size={11} strokeWidth={1.8} />
+            Als CSV exportieren
+          {/if}
+        </button>
+      </div>
+
+      <div class="space-y-1.5">
+        {#each csvResult.unmatched as u, i}
+          <div
+            class="flex items-center justify-between gap-3 px-4 py-2.5 transition-colors"
+            style="
+              background: rgba(20, 20, 24, 0.4);
+              backdrop-filter: blur(20px);
+              -webkit-backdrop-filter: blur(20px);
+              border: 1px solid var(--color-border-soft);
+              border-radius: 12px;
+            "
+          >
+            <div class="flex items-center gap-3 min-w-0 flex-1">
+              <span
+                class="text-[10.5px] tabular-nums flex-shrink-0"
+                style="color: var(--color-fg-tertiary); font-family: var(--font-mono); width: 36px;"
+              >
+                {String(i + 1).padStart(3, '0')}
+              </span>
+              <div class="text-[13px] truncate" style="color: var(--color-fg-secondary);">
+                <span style="color: var(--color-fg-primary);">{u.artist || u.query || u.raw_line || '?'}</span>
+                {#if u.title}
+                  <span style="color: var(--color-fg-tertiary);"> · {u.title}</span>
                 {/if}
               </div>
-            </GlassCard>
-          {/each}
-        </div>
-        {#if csvResult.unmatched.length < csvResult.not_found}
-          <button
-            onclick={loadMoreUnmatched}
-            disabled={csvLoadMoreBusy}
-            class="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-[12px] transition-colors disabled:opacity-50"
-            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
-          >
-            {#if csvLoadMoreBusy}
-              <Loader2 size={13} class="animate-spin" />
-              lade …
-            {:else}
-              Mehr laden
-              <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
-                · noch {(csvResult.not_found - csvResult.unmatched.length).toLocaleString('de-DE')}
-              </span>
+            </div>
+            {#if u.reason}
+              <div
+                class="text-[10.5px] flex-shrink-0 uppercase"
+                style="color: var(--color-fg-tertiary); letter-spacing: 0.08em;"
+              >
+                {u.reason}
+              </div>
             {/if}
-          </button>
-        {/if}
-      </details>
+          </div>
+        {/each}
+      </div>
+
+      {#if csvResult.unmatched.length < csvResult.not_found}
+        <button
+          onclick={loadMoreUnmatched}
+          disabled={csvLoadMoreBusy}
+          class="w-full inline-flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+          style="
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--color-border-soft);
+            color: var(--color-fg-secondary);
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-top: 14px;
+          "
+        >
+          {#if csvLoadMoreBusy}
+            <Loader2 size={13} class="animate-spin" />
+            lade …
+          {:else}
+            Mehr laden
+            <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
+              · noch {(csvResult.not_found - csvResult.unmatched.length).toLocaleString('de-DE')}
+            </span>
+          {/if}
+        </button>
+      {/if}
     {/if}
   {/if}
 </section>
