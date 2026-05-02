@@ -13,30 +13,51 @@
     done?: boolean;
     /** Sehr dünn (1.5px) statt Default 2px — für inline-button Use. */
     thin?: boolean;
+    /** Bar-Höhe in px (überschreibt thin). */
+    height?: number;
+    /** Override-Farbe für die Bar (CSS-color). Default: var(--color-accent). */
+    color?: string;
+    /** Glow-Schatten in der Akzentfarbe (für Hero-/Featured-Bars). */
+    glow?: boolean;
   };
 
-  let { value, pareto = false, done = false, thin = false }: Props = $props();
+  let {
+    value,
+    pareto = false,
+    done = false,
+    thin = false,
+    height,
+    color,
+    glow = false
+  }: Props = $props();
 
   const hasReal = $derived(typeof value === 'number' && value >= 0);
   const clamped = $derived(hasReal ? Math.max(0, Math.min(100, value as number)) : 0);
   const showPareto = $derived(pareto && !done && !hasReal);
+  const fillColor = $derived(color ?? 'var(--color-accent)');
 </script>
 
 <div
   class="track"
   class:thin
-  style="background: var(--color-border-soft);"
+  style="background: var(--color-border-soft); {height ? `height: ${height}px;` : ''}"
 >
   {#if done}
     <div class="fill" style="width: 100%; background: var(--color-status-done);"></div>
   {:else if hasReal}
-    <div class="fill" style="width: {clamped}%; background: var(--color-accent);"></div>
+    <div
+      class="fill"
+      style="width: {clamped}%; background: {fillColor}; {glow ? `box-shadow: 0 0 12px ${fillColor};` : ''}"
+    ></div>
   {:else if showPareto}
-    <div class="fill pareto" style="background: var(--color-accent);">
+    <div
+      class="fill pareto"
+      style="background: {fillColor}; {glow ? `box-shadow: 0 0 12px ${fillColor};` : ''}"
+    >
       <div class="shimmer"></div>
     </div>
   {:else}
-    <div class="fill indeterminate" style="background: var(--color-accent);"></div>
+    <div class="fill indeterminate" style="background: {fillColor};"></div>
   {/if}
 </div>
 

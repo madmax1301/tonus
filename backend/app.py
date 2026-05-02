@@ -805,6 +805,18 @@ async def get_track(track_id: str, provider: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail=f"Error fetching track: {str(e)}")
 
 
+@app.get("/api/queue/lanes")
+async def queue_lanes():
+    """Lane-Cooldown-Status für die Live-Queue-UI.
+
+    Liefert pro Lane (`a`/`b` mit VPN-Split, sonst `default`) den Timestamp
+    bis zur nächsten Verfügbarkeit + die Restzeit in ms. Plus die globalen
+    Cooldown-Bereiche, damit das Frontend "Random zwischen X und Y Sekunden"
+    transparent machen kann.
+    """
+    return _download_worker.lane_status()
+
+
 @app.get("/api/queue")
 async def list_queue(
     offset: int = Query(default=0, ge=0),

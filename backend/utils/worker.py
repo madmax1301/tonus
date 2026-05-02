@@ -78,6 +78,33 @@ class JobWorker(threading.Thread):
     # Lane selection (Download-Worker, Dual-VPN)
     # ------------------------------------------------------------------
 
+    def lane_status(self) -> Dict[str, Any]:
+        """UI-View auf den Lane-Cooldown-State.
+
+        Wird von /api/queue/lanes für die Live-Queue gepollt — die User-
+        sichtbare "noch X:XX bis nächster Job"-Anzeige. Cooldown-Bereiche
+        kommen ebenfalls mit, damit das Frontend Range-Hints zeigen kann.
+        """
+        now = _now_ms()
+        lanes = []
+        for name in _DOWNLOAD_LANES:
+            ready_at = int(self._lane_ready_at.get(name, 0))
+            lanes.append({
+                "name": name,
+                "ready_at_ms": ready_at,
+                "remaining_ms": max(0, ready_at - now),
+            })
+        # Wenn mind. eine Lane ready: 0 ms bis nächste Lane verfügbar.
+        next_ready = min((l["remaining_ms"] for l in lanes), default=0)
+        return {
+            "lanes": lanes,
+            "next_ready_in_ms": next_ready,
+            "cooldown": {
+                "normal_seconds": list(_COOLDOWN_NORMAL),
+                "rate_limited_seconds": list(_COOLDOWN_429),
+            },
+        }
+
     def _pick_download_lane(self) -> Tuple[Optional[str], int]:
         """Returns (lane_or_None, wait_ms_until_next_ready).
 

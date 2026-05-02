@@ -116,11 +116,27 @@ export interface MetadataProvidersResponse {
   providers: MetadataProvider[];
 }
 
+export interface LaneInfo {
+  name: string;
+  ready_at_ms: number;
+  remaining_ms: number;
+}
+
+export interface LaneStatusResponse {
+  lanes: LaneInfo[];
+  next_ready_in_ms: number;
+  cooldown: {
+    normal_seconds: [number, number];
+    rate_limited_seconds: [number, number];
+  };
+}
+
 export const queueApi = {
   list: (status?: string) => {
     const q = status ? `?status=${encodeURIComponent(status)}` : '';
     return api.get<QueueResponse>(`/api/queue${q}`);
   },
+  lanes: () => api.get<LaneStatusResponse>('/api/queue/lanes'),
   retryAll: () => api.post<{ ok: boolean; retried: number }>('/api/queue/retry-all-errors'),
   clear: (status: 'completed' | 'error' | 'queued' | 'all' = 'completed') =>
     api.post<{ ok: boolean; deleted: number }>(`/api/queue/clear?status=${status}`),

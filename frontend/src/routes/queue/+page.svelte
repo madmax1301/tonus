@@ -1,10 +1,17 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { queueApi, ApiError, type QueueJob, type QueueResponse } from '$lib/api';
+  import {
+    queueApi,
+    ApiError,
+    type QueueJob,
+    type QueueResponse,
+    type LaneStatusResponse
+  } from '$lib/api';
   import { tint, extractHue, DEFAULT_HUE } from '$lib/accent';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import CoverArt from '$lib/components/CoverArt.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
+  import ProgressLine from '$lib/components/ProgressLine.svelte';
   import {
     RotateCw,
     Trash2,
@@ -57,10 +64,16 @@
 
   let activeFilter = $state<Filter>('all');
   let data = $state<QueueResponse | null>(null);
+  let lanes = $state<LaneStatusResponse | null>(null);
   let loadError = $state<string | null>(null);
-  let loading = $state(false);
+  /** Spinner zeigen wir nur beim **ersten** Load + bei Filter-Wechsel.
+   *  Während des Pollings nicht — sonst flackert die Page alle 3 s. */
+  let initialLoading = $state(true);
   let filterText = $state('');
   let featuredHue: number = $state(DEFAULT_HUE);
+  /** "Tick" im 1 s-Takt damit der Lane-Countdown live runterzählt ohne
+   *  einen Fetch pro Sekunde zu brauchen. */
+  let nowMs = $state<number>(Date.now());
 
   let busy = $state<{
     retryAll: boolean;
@@ -70,26 +83,33 @@
   }>({ retryAll: false, cleanup: false, clearAll: false });
 
   const POLL_MS = 3000;
+  const TICK_MS = 1000;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let tickTimer: ReturnType<typeof setInterval> | null = null;
 
-  async function fetchQueue() {
-    loading = true;
+  async function fetchQueue(showSpinner = false) {
+    if (showSpinner) initialLoading = true;
     try {
       const status = activeFilter === 'all' ? undefined : activeFilter;
-      data = await queueApi.list(status);
+      const [q, l] = await Promise.all([
+        queueApi.list(status),
+        queueApi.lanes().catch(() => null) // optional — älteres backend hat den endpoint nicht
+      ]);
+      data = q;
+      if (l) lanes = l;
       loadError = null;
     } catch (err) {
       if (!(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
         loadError = err instanceof Error ? err.message : 'Queue konnte nicht geladen werden';
       }
     } finally {
-      loading = false;
+      initialLoading = false;
     }
   }
 
   function startPolling() {
     if (timer) clearInterval(timer);
-    timer = setInterval(fetchQueue, POLL_MS);
+    timer = setInterval(() => fetchQueue(false), POLL_MS);
   }
 
   function stopPolling() {
@@ -97,29 +117,41 @@
       clearInterval(timer);
       timer = null;
     }
+    if (tickTimer) {
+      clearInterval(tickTimer);
+      tickTimer = null;
+    }
   }
 
   onMount(async () => {
-    await fetchQueue();
+    await fetchQueue(true);
     startPolling();
+    tickTimer = setInterval(() => (nowMs = Date.now()), TICK_MS);
   });
 
   onDestroy(stopPolling);
 
   $effect(() => {
     activeFilter; // dependency
-    fetchQueue();
+    fetchQueue(true);
   });
 
-  // Featured-Job = der processing-Job mit höchstem progress.
-  // Treibt Cinema-Backdrop-Hue + Hero-Card.
+  /** Featured-Job-Pick:
+   *   1) Wenn ≥1 processing → der mit dem **niedrigsten** Progress (gerade
+   *      gestartet → Vinyl spinnt für die ganze Verarbeitung sichtbar).
+   *   2) Sonst wenn ≥1 queued → der nächste queued Job (für Lane-Countdown).
+   *   3) Sonst null (Featured-Card ausgeblendet).
+   */
   const featuredJob = $derived.by<QueueJob | null>(() => {
     if (!data?.items) return null;
     const processing = data.items.filter((j) => j.status === 'processing');
-    if (processing.length === 0) return null;
-    return processing.reduce((best, j) =>
-      (j.progress ?? 0) > (best.progress ?? 0) ? j : best
-    );
+    if (processing.length > 0) {
+      return processing.reduce((best, j) =>
+        (j.progress ?? 0) < (best.progress ?? 0) ? j : best
+      );
+    }
+    const queued = data.items.filter((j) => j.status === 'queued');
+    return queued[0] ?? null;
   });
 
   $effect(() => {
@@ -216,6 +248,39 @@
   const accentSoft = $derived(tint(featuredHue, 0.5));
   const processingCount = $derived(counts.processing ?? 0);
 
+  /**
+   * Live-Countdown: lanes.next_ready_in_ms wird zum Polling-Zeitpunkt geliefert,
+   * wir rechnen pro Sekunde lokal runter (nowMs ticked alle 1 s).
+   * `lanesAnchor` = Wand-Zeit als die Lanes-Antwort kam.
+   */
+  let lanesAnchor = $state<number>(Date.now());
+  $effect(() => {
+    if (lanes) lanesAnchor = Date.now();
+  });
+
+  type LaneLive = {
+    name: string;
+    remaining_ms: number;
+  };
+  const liveLanes = $derived.by<LaneLive[]>(() => {
+    if (!lanes) return [];
+    const elapsed = nowMs - lanesAnchor;
+    return lanes.lanes.map((l) => ({
+      name: l.name,
+      remaining_ms: Math.max(0, l.remaining_ms - elapsed)
+    }));
+  });
+  const nextLaneReadyMs = $derived(
+    liveLanes.length === 0 ? 0 : Math.min(...liveLanes.map((l) => l.remaining_ms))
+  );
+
+  function fmtMs(ms: number): string {
+    const totalSec = Math.max(0, Math.round(ms / 1000));
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
   type FilterDef = {
     id: Filter;
     label: string;
@@ -256,7 +321,7 @@
           margin-bottom: 10px;
         "
       >
-        {#if loading}
+        {#if initialLoading}
           <Loader2 size={11} strokeWidth={2} class="animate-spin" />
         {:else}
           <span
@@ -270,6 +335,11 @@
           ></span>
         {/if}
         Live · {processingCount} in Bewegung
+        {#if nextLaneReadyMs > 0 && processingCount === 0}
+          <span style="color: var(--color-fg-tertiary); letter-spacing: 0.04em; font-family: var(--font-mono); margin-left: 6px;">
+            · Lane in {fmtMs(nextLaneReadyMs)}
+          </span>
+        {/if}
       </div>
       <h1
         class="font-semibold m-0"
@@ -433,6 +503,8 @@
     {@const t = featuredJob.payload?.track ?? {}}
     {@const origin = jobOrigin(featuredJob)}
     {@const dest = jobDest(featuredJob)}
+    {@const isFeaturedQueued = featuredJob.status === 'queued'}
+    {@const isFeaturedProcessing = featuredJob.status === 'processing'}
     <div
       class="flex items-center gap-6 mb-6"
       style="
@@ -450,7 +522,7 @@
         alt={t.album}
         artist={t.artist ?? ''}
         size={92}
-        spinning
+        spinning={isFeaturedProcessing}
       />
       <div class="flex-1 min-w-0">
         <div
@@ -458,11 +530,15 @@
           style="
             font-size: 11px;
             letter-spacing: 0.18em;
-            color: {accent};
+            color: {isFeaturedQueued ? 'var(--color-fg-tertiary)' : accent};
             margin-bottom: 4px;
           "
         >
-          {featuredJob.stage ?? 'Wird verarbeitet'}
+          {#if isFeaturedQueued}
+            Wartet auf Lane{nextLaneReadyMs > 0 ? ` · ${fmtMs(nextLaneReadyMs)}` : ' · Slot frei'}
+          {:else}
+            {featuredJob.stage ?? 'Wird verarbeitet'}
+          {/if}
         </div>
         <div
           class="font-semibold truncate"
@@ -522,41 +598,33 @@
           </span>
         </div>
 
-        <!-- Pareto bar 5px featured + percentage -->
+        <!-- Pareto bar 5px featured. Smooth Animation 0→95% via CSS-keyframe;
+             snap auf 100% bei done. Kein visueller Sprung mehr von 30%→100%. -->
         <div class="mt-3 flex items-center gap-3">
-          <div
-            class="relative flex-1 overflow-hidden"
-            style="height: 5px; border-radius: 5px; background: rgba(255, 255, 255, 0.06);"
-          >
-            <div
-              style="
-                position: absolute;
-                inset: 0;
-                width: {Math.max(2, featuredJob.progress ?? 0)}%;
-                background: {accent};
-                border-radius: 5px;
-                transition: width 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
-                box-shadow: 0 0 12px {accentSoft};
-              "
-            >
-              <div
-                style="
-                  position: absolute;
-                  inset: 0;
-                  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-                  transform: translateX(-100%);
-                  animation: tonus-progress-flow 1.6s linear infinite;
-                  width: 40%;
-                "
-              ></div>
-            </div>
+          <div class="flex-1">
+            <ProgressLine
+              pareto={isFeaturedProcessing}
+              done={featuredJob.status === 'completed'}
+              color={accent}
+              height={5}
+              glow
+            />
           </div>
-          <span
-            class="tabular-nums"
-            style="font-size: 13px; color: {accent}; font-weight: 600; min-width: 40px; text-align: right;"
-          >
-            {featuredJob.progress ?? 0}%
-          </span>
+          {#if isFeaturedQueued}
+            <span
+              class="tabular-nums"
+              style="font-size: 13px; color: var(--color-fg-tertiary); font-weight: 500; min-width: 60px; text-align: right; font-family: var(--font-mono);"
+            >
+              {nextLaneReadyMs > 0 ? fmtMs(nextLaneReadyMs) : 'frei'}
+            </span>
+          {:else}
+            <span
+              class="tabular-nums"
+              style="font-size: 13px; color: {accent}; font-weight: 600; min-width: 60px; text-align: right;"
+            >
+              {featuredJob.status === 'completed' ? '100%' : 'läuft'}
+            </span>
+          {/if}
         </div>
       </div>
     </div>
@@ -672,37 +740,12 @@
 
           {#if isRunning}
             <div class="flex flex-col gap-1.5" style="width: 200px;">
+              <ProgressLine pareto color={accent} height={5} />
               <div
-                class="relative overflow-hidden"
-                style="height: 5px; border-radius: 5px; background: rgba(255, 255, 255, 0.06);"
-              >
-                <div
-                  style="
-                    position: absolute;
-                    inset: 0;
-                    width: {Math.max(2, job.progress ?? 0)}%;
-                    background: {accent};
-                    border-radius: 5px;
-                    transition: width 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
-                  "
-                >
-                  <div
-                    style="
-                      position: absolute;
-                      inset: 0;
-                      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-                      transform: translateX(-100%);
-                      animation: tonus-progress-flow 1.6s linear infinite;
-                      width: 40%;
-                    "
-                  ></div>
-                </div>
-              </div>
-              <div
-                class="tabular-nums text-right"
+                class="text-right"
                 style="font-size: 10.5px; color: var(--color-fg-tertiary); font-family: var(--font-mono);"
               >
-                {job.progress ?? 0}%
+                läuft
               </div>
             </div>
           {/if}
