@@ -1,0 +1,103 @@
+name: Release
+
+# Trigger:
+# - On every git tag matching v*.*.* (semver) → builds and uploads .ndp as a
+#   GitHub Release asset.
+# - Manual workflow_dispatch with a version input → useful for re-running a
+#   failed build without re-tagging.
+#
+# Security: every external input (workflow_dispatch.inputs, github.ref) is
+# read into an env: block before being used in a run: shell — never inlined
+# via ${{ ... }} into the script body. This neutralises command-injection
+# from a hostile dispatch input.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to bake into manifest.json (e.g. 0.2.0). Empty = use existing."
+        required: false
+        default: ""
+
+permissions:
+  contents: write  # required to create / update releases and upload assets
+
+jobs:
+  build-release:
+    name: Build .ndp + create release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install TinyGo
+        env:
+          # Bump together with Go updates; same version that built v0.1.0 locally.
+          TINYGO_VERSION: "0.41.0"
+        run: |
+          wget -q "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          sudo dpkg -i "tinygo_${TINYGO_VERSION}_amd64.deb"
+          sudo apt-get install -y --no-install-recommends binaryen
+          tinygo version
+
+      - name: Resolve version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            value="$INPUT_VERSION"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            value="${GITHUB_REF#refs/tags/v}"
+          else
+            echo "::error::Could not determine version from tag or input"
+            exit 1
+          fi
+          # Whitelist what we accept — only digits + dots + optional hyphen-suffix.
+          if [[ ! "$value" =~ ^[0-9]+(\.[0-9]+){0,2}(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::Invalid version: $value"
+            exit 1
+          fi
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+
+      - name: Patch manifest.json with release version
+        env:
+          V: ${{ steps.ver.outputs.value }}
+        run: |
+          set -euo pipefail
+          jq --arg v "$V" '.version = $v' manifest.json > manifest.tmp
+          mv manifest.tmp manifest.json
+          echo "manifest.json after patch:"
+          jq '{name, version}' manifest.json
+
+      - name: Build + package (.ndp)
+        run: |
+          set -euo pipefail
+          go mod download
+          make package
+          ls -lh *.ndp
+
+      - name: Upload artifact (also keeps it available on workflow_dispatch)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tonus-navidrome-plugin-v${{ steps.ver.outputs.value }}
+          path: "*.ndp"
+          if-no-files-found: error
+
+      - name: Create GitHub Release + attach .ndp
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.ver.outputs.value }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            tonus-navidrome-plugin.ndp

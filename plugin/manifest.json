@@ -1,0 +1,162 @@
+{
+  "$schema": "https://raw.githubusercontent.com/navidrome/navidrome/refs/heads/master/plugins/manifest-schema.json",
+  "$id": "navidrome://plugins/manifest/tonus-sync",
+  "name": "tonus-sync",
+  "author": "madmax1301",
+  "version": "0.3.0",
+  "description": "Triggers tonus (FastAPI backend) on a schedule for automatic discovery + download per Navidrome user. Each configured user gets their own Discovery playlist owned by their Navidrome account, populated from their ListenBrainz top-artists via Deezer artist-radio.",
+  "website": "https://github.com/madmax1301/tonus-navidrome-plugin",
+  "permissions": {
+    "http": {
+      "reason": "Calls the tonus backend (/api/plugin/health, /api/plugin/sync, /api/plugin/finished-tracks).",
+      "requiredHosts": ["*"]
+    },
+    "scheduler": {
+      "reason": "Registers a recurring cron job to trigger the tonus discovery pipeline (default: daily 07:00)."
+    },
+    "kvstore": {
+      "reason": "Persists last-run status (timestamps, counts, last error) per Navidrome user.",
+      "maxSize": "1MB"
+    },
+    "subsonicapi": {
+      "reason": "Creates and updates per-user Discovery playlists in Navidrome on behalf of each configured user."
+    },
+    "users": {
+      "reason": "Discovery + playlist creation runs in the context of each selected Navidrome user."
+    },
+    "taskqueue": {
+      "reason": "One async task per Navidrome user runs the trigger + reconcile pipeline outside the cron callback timeout.",
+      "maxConcurrency": 1
+    }
+  },
+  "config": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "tonus_url": {
+          "type": "string",
+          "title": "tonus URL",
+          "description": "Base URL of the tonus backend. Example: http://tonus.lan:8000 (no trailing slash).",
+          "minLength": 7
+        },
+        "tonus_token": {
+          "type": "string",
+          "title": "API Token",
+          "description": "Bearer token from tonus's TONUS_API_TOKEN env var. Leave empty if tonus runs without a token."
+        },
+        "cron_expression": {
+          "type": "string",
+          "title": "Cron Expression",
+          "description": "When to run the sync for all configured users. Default: '0 7 * * *' (daily at 07:00). Use crontab.guru to test custom values.",
+          "default": "0 7 * * *"
+        },
+        "top_artists": {
+          "type": "integer",
+          "title": "Top N Artists (global)",
+          "description": "How many top-played LB artists to sample for discovery. Applies to every configured user.",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 10
+        },
+        "tracks_per_artist": {
+          "type": "integer",
+          "title": "Tracks per Artist (global)",
+          "description": "Discovery depth per artist (Deezer artist-radio). Applies to every configured user.",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 5
+        },
+        "max_queue_per_run": {
+          "type": "integer",
+          "title": "Max Queue per Run (global, per user)",
+          "description": "Hard cap on how many tracks can be queued per user per cron run.",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 30
+        },
+        "users": {
+          "type": "array",
+          "title": "User Mappings",
+          "description": "Each entry maps a Navidrome user to a ListenBrainz account and the name of their Discovery playlist. Use the + button to add additional users. The Discovery playlist is created and owned by the Navidrome user.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["navidrome_username", "listenbrainz_username"],
+            "properties": {
+              "navidrome_username": {
+                "type": "string",
+                "title": "Navidrome Username",
+                "description": "Must match an existing user that this plugin has access to (see Users Permission)."
+              },
+              "listenbrainz_username": {
+                "type": "string",
+                "title": "ListenBrainz Username",
+                "description": "Public LB user whose top-artists drive discovery for this Navidrome user."
+              },
+              "playlist_name": {
+                "type": "string",
+                "title": "Playlist Name Template",
+                "description": "Subsonic playlist name. Placeholder {date} → YYYY-MM-DD, {user} → Navidrome username. Default: 'Discovery {date}'.",
+                "default": "Discovery {date}"
+              }
+            }
+          }
+        }
+      },
+      "required": ["tonus_url", "cron_expression", "users"]
+    },
+    "uiSchema": {
+      "type": "VerticalLayout",
+      "elements": [
+        {
+          "type": "Group",
+          "label": "Connection",
+          "elements": [
+            { "type": "Control", "scope": "#/properties/tonus_url" },
+            {
+              "type": "Control",
+              "scope": "#/properties/tonus_token",
+              "options": { "format": "password" }
+            }
+          ]
+        },
+        {
+          "type": "Group",
+          "label": "Schedule + Global Discovery Tuning",
+          "elements": [
+            { "type": "Control", "scope": "#/properties/cron_expression" },
+            {
+              "type": "HorizontalLayout",
+              "elements": [
+                { "type": "Control", "scope": "#/properties/top_artists" },
+                { "type": "Control", "scope": "#/properties/tracks_per_artist" },
+                { "type": "Control", "scope": "#/properties/max_queue_per_run" }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Group",
+          "label": "Users",
+          "elements": [
+            {
+              "type": "Control",
+              "scope": "#/properties/users",
+              "options": {
+                "elementLabelProp": "navidrome_username",
+                "detail": {
+                  "type": "VerticalLayout",
+                  "elements": [
+                    { "type": "Control", "scope": "#/properties/navidrome_username" },
+                    { "type": "Control", "scope": "#/properties/listenbrainz_username" },
+                    { "type": "Control", "scope": "#/properties/playlist_name" }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
