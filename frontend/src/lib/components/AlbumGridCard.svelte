@@ -36,10 +36,29 @@
     e.stopPropagation();
     onqueue();
   }
+
+  /**
+   * Speichert die aktuelle Library-URL beim Album-Klick. Album-Detail's
+   * Back-Button liest diesen Wert und navigiert genau dorthin zurück —
+   * deterministisch, anders als history.back() das je nach History-Stack
+   * variieren kann.
+   */
+  function rememberFromUrl() {
+    if (typeof window === 'undefined') return;
+    try {
+      sessionStorage.setItem(
+        'tonus-album-back-url',
+        window.location.pathname + window.location.search
+      );
+    } catch {
+      // Quota / private mode — silently ignore
+    }
+  }
 </script>
 
 <a
   href="{base}/album/{album.id}?provider={provider}"
+  onclick={rememberFromUrl}
   data-sveltekit-preload-data="hover"
   class="block tonus-fadein"
   style="

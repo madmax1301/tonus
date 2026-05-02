@@ -128,18 +128,29 @@
   const accentBg = $derived(tint(albumHue, 0.12));
 
   /**
-   * Smart back navigation:
-   *  - Wenn der User per SPA-Navigation hierher gekommen ist (history.length
-   *    > 1 reicht als Indikator — SvelteKit pushState erhöht es), nutze
-   *    history.back(). Damit landet er auf der Library-URL inkl. ?q=…&mode=…
-   *  - `document.referrer` taugt hier nicht: SPA-pushState aktualisiert es
-   *    nicht. Würden wir darauf prüfen, fällt's immer auf den Fallback
-   *    zurück und der Library-State geht verloren.
-   *  - Bei Deep-Link/Reload (history.length === 1) goto Library als Fallback.
+   * Deterministic back navigation:
+   *  1. AlbumGridCard speichert die from-Library-URL in sessionStorage
+   *     beim Klick. Wir lesen sie hier und navigieren genau dorthin —
+   *     unabhängig vom Browser-History-Stack.
+   *  2. history.back() ist NICHT zuverlässig genug bei mehreren Album-
+   *     Roundtrips: nach Library → A → Lib → B → A führt back von A nicht
+   *     zur Library, sondern zur LIB nach B (oder zu B selbst).
+   *  3. Fallback: leere Library wenn deep-link/reload und nichts gespeichert.
    */
   function goBack() {
-    if (typeof window !== 'undefined' && window.history.length > 1) {
-      window.history.back();
+    if (typeof window === 'undefined') {
+      goto(`${base}/`);
+      return;
+    }
+    let fromUrl: string | null = null;
+    try {
+      fromUrl = sessionStorage.getItem('tonus-album-back-url');
+      if (fromUrl) sessionStorage.removeItem('tonus-album-back-url');
+    } catch {
+      // Quota / private mode — silently ignore
+    }
+    if (fromUrl) {
+      goto(fromUrl);
     } else {
       goto(`${base}/`);
     }

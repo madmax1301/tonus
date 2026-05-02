@@ -3074,16 +3074,29 @@ async def plugin_finished_tracks(
 # verschluckt. html=True liefert index.html für unbekannte Pfade
 # (Client-Side-Routing-Fallback) — ergänzt durch fallback in svelte.config.js.
 class SpaStaticFiles(StaticFiles):
-    """SvelteKit-Build mit korrekten Cache-Headern.
+    """SvelteKit-Build mit korrekten Cache-Headern + SPA-Routing-Fallback.
 
     - HTML (index.html, Fallback-Pfade): kein Cache → User sieht nach Build-Update
       sofort die neue Version, weil die hashed JS/CSS-URLs neu darin stehen.
     - Hashed Assets (/_app/immutable/*): aggressiv gecached (1 Jahr, immutable),
       weil ihr Inhalt durch den Hash im Pfad eindeutig identifiziert ist.
+    - SPA-Routes (z.B. /album/123, /queue, /settings): wenn 404 kommt und der
+      Pfad keine Datei-Extension hat und nicht unter /api/ liegt → index.html
+      servieren, damit der Client-Router die Route aufnimmt. Starlettes
+      `html=True` macht das nur für directory paths, nicht für deep links.
     """
 
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
+
+        # SPA-Fallback bei 404: keine Datei-Extension + kein API-Pfad → index.html
+        if response.status_code == 404:
+            last_segment = path.rsplit("/", 1)[-1] if path else ""
+            looks_like_file = "." in last_segment
+            is_api = path.startswith("api/") or path.startswith("api")
+            if not looks_like_file and not is_api:
+                response = await super().get_response("index.html", scope)
+
         if path.endswith('.html') or path == '' or path == '/':
             response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
         elif '_app/immutable/' in path:
