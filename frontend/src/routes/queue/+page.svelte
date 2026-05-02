@@ -5,7 +5,54 @@
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import StatusPill from '$lib/components/StatusPill.svelte';
   import ProgressLine from '$lib/components/ProgressLine.svelte';
-  import { RotateCw, Trash2, Eraser, X, Loader2 } from 'lucide-svelte';
+  import {
+    RotateCw,
+    Trash2,
+    Eraser,
+    X,
+    Loader2,
+    Search,
+    Disc,
+    Link2,
+    Puzzle,
+    User,
+    HardDrive,
+    Music,
+    ListMusic
+  } from 'lucide-svelte';
+
+  type OriginInfo = { icon: typeof Search; label: string; detail?: string };
+  type DestInfo = { icon: typeof HardDrive; label: string; detail?: string };
+
+  function jobOrigin(j: QueueJob): OriginInfo {
+    const p = j.payload ?? {};
+    if (p.plugin_sync_navidrome_user) {
+      return { icon: Puzzle, label: 'Plugin', detail: p.plugin_sync_navidrome_user };
+    }
+    if (p.kind === 'url') {
+      return { icon: Link2, label: 'URL' };
+    }
+    if (p.album_id || p.album_name) {
+      return { icon: Disc, label: 'Album', detail: p.album_name };
+    }
+    return { icon: Search, label: 'Suche' };
+  }
+
+  function jobDest(j: QueueJob): DestInfo {
+    const p = j.payload ?? {};
+    if (p.plugin_sync_playlist_name) {
+      return { icon: ListMusic, label: 'Playlist', detail: p.plugin_sync_playlist_name };
+    }
+    if (p.location === 'navidrome') {
+      const lib = p.navidrome_library_path;
+      if (lib) {
+        const last = lib.split('/').filter(Boolean).pop() ?? lib;
+        return { icon: Music, label: 'Navidrome', detail: last };
+      }
+      return { icon: Music, label: 'Navidrome' };
+    }
+    return { icon: HardDrive, label: 'Local' };
+  }
 
   type Filter = 'all' | 'queued' | 'processing' | 'completed' | 'error';
 
@@ -283,6 +330,8 @@
       {#each filtered as job (job.job_id)}
         {@const t = job.payload?.track ?? {}}
         {@const isRunning = job.status === 'processing'}
+        {@const origin = jobOrigin(job)}
+        {@const dest = jobDest(job)}
         <div class="relative" class:skeleton-card={isRunning}>
           <GlassCard padding="sm">
             <div class="flex items-center gap-4">
@@ -303,6 +352,41 @@
                     <span style="color: var(--color-fg-tertiary);"> · {job.message}</span>
                   {/if}
                 </div>
+
+                <!-- Origin → Destination chip-row -->
+                <div
+                  class="flex items-center gap-1.5 text-[11px] flex-wrap"
+                  style="color: var(--color-fg-tertiary);"
+                >
+                  <span
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
+                    style="background: var(--color-surface-3); color: var(--color-fg-secondary);"
+                    title="Quelle"
+                  >
+                    <svelte:component this={origin.icon} size={11} strokeWidth={1.6} />
+                    {origin.label}
+                    {#if origin.detail}
+                      <span style="color: var(--color-fg-tertiary);" class="font-mono"
+                        >· {origin.detail}</span
+                      >
+                    {/if}
+                  </span>
+                  <span aria-hidden="true">→</span>
+                  <span
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
+                    style="background: var(--color-surface-3); color: var(--color-fg-secondary);"
+                    title="Ziel"
+                  >
+                    <svelte:component this={dest.icon} size={11} strokeWidth={1.6} />
+                    {dest.label}
+                    {#if dest.detail}
+                      <span style="color: var(--color-fg-tertiary);" class="font-mono"
+                        >· {dest.detail}</span
+                      >
+                    {/if}
+                  </span>
+                </div>
+
                 {#if isRunning}
                   <ProgressLine
                     value={job.progress && job.progress > 0 ? job.progress : undefined}

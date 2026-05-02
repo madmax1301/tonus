@@ -46,13 +46,30 @@ export const api = {
   health: () => request<{ status: string }>('/api/health')
 };
 
+export interface QueueJobPayload {
+  kind?: 'url';
+  track?: { name?: string; artist?: string; album?: string; album_art?: string };
+  album_id?: string;
+  album_name?: string;
+  location?: 'local' | 'navidrome';
+  navidrome_library_path?: string;
+  output_format?: string;
+  audio_quality?: string;
+  /** plugin-sync markers — set when track was queued via /api/plugin/sync */
+  plugin_sync_run_id?: string;
+  plugin_sync_playlist_name?: string;
+  plugin_sync_navidrome_user?: string;
+  /** url-direct download */
+  url?: string;
+}
+
 export interface QueueJob {
   job_id: string;
   status: 'queued' | 'processing' | 'completed' | 'error';
   stage?: string;
   progress?: number;
   message?: string;
-  payload?: { track?: { name?: string; artist?: string; album?: string; album_art?: string } };
+  payload?: QueueJobPayload;
 }
 
 export interface QueueResponse {
