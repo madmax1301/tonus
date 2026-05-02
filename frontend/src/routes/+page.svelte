@@ -509,7 +509,7 @@
       { id: 'tracks' as Mode, label: 'Tracks', count: trackResults.length, icon: null },
       { id: 'albums' as Mode, label: 'Alben', count: albumResults.length, icon: null },
       { id: 'url' as Mode, label: 'URL', count: null, icon: Link2 },
-      { id: 'reverse' as Mode, label: 'Reverse YouTube', count: null, icon: Youtube }
+      { id: 'reverse' as Mode, label: 'YouTube-Match', count: null, icon: Youtube }
     ] as m}
       {@const active = mode === m.id}
       <button
@@ -633,110 +633,155 @@
       {/each}
     </div>
 
-  <!-- ─── URL direkt-download ─── -->
+  <!-- ─── URL direkt-download (gleicher Glass-Search-Style wie Tracks/Albums) ─── -->
   {:else if mode === 'url'}
-    <GlassCard padding="md">
-      <div class="space-y-3">
-        <label class="block space-y-2">
-          <span class="text-[13px] font-medium" style="color: var(--color-fg-primary);">
-            URL — YouTube, SoundCloud, Bandcamp, Vimeo, …
-          </span>
-          <input
-            type="url"
-            bind:value={urlInput}
-            onkeydown={(e) => e.key === 'Enter' && submitUrl()}
-            placeholder="https://…"
-            spellcheck="false"
-            autocomplete="off"
-            class="w-full px-3 py-2.5 rounded-md text-[13px] outline-none"
-            style="
-              background: var(--color-surface-3);
-              border: 1px solid var(--color-border-soft);
-              color: var(--color-fg-primary);
-              font-family: var(--font-mono);
-            "
-          />
-        </label>
-        <div class="flex items-center gap-3 flex-wrap">
-          <button
-            onclick={submitUrl}
-            disabled={urlBusy || !urlInput.trim()}
-            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
-            style="background: {accent}; color: #0a0a0c;"
-          >
-            {#if urlBusy}
-              <Loader2 size={13} class="animate-spin" />
-            {:else}
-              <Download size={13} strokeWidth={1.8} />
-            {/if}
-            In Queue
-          </button>
-          {#if urlMessage}
-            <span class="text-[12px]" style="color: var(--color-status-done);">✓ {urlMessage}</span>
-          {/if}
-          {#if urlError}
-            <span class="text-[12px]" style="color: var(--color-status-error);">{urlError}</span>
-          {/if}
-        </div>
-      </div>
-    </GlassCard>
-    <p class="text-[12px] mt-3" style="color: var(--color-fg-tertiary);">
+    <div
+      class="flex items-center"
+      style="
+        background: rgba(20, 20, 24, 0.5);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 18px;
+        padding: 18px 22px;
+        gap: 16px;
+        margin-bottom: 14px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      "
+    >
+      <Link2 size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
+      <input
+        type="url"
+        bind:value={urlInput}
+        onkeydown={(e) => e.key === 'Enter' && submitUrl()}
+        placeholder="https:// — YouTube, SoundCloud, Bandcamp, Vimeo …"
+        spellcheck="false"
+        autocomplete="off"
+        class="flex-1 bg-transparent outline-none"
+        style="
+          font-size: 18px;
+          font-weight: 300;
+          letter-spacing: -0.005em;
+          color: var(--color-fg-primary);
+          font-family: var(--font-mono);
+        "
+      />
+      <button
+        onclick={submitUrl}
+        disabled={urlBusy || !urlInput.trim()}
+        class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+        style="
+          background: {accent};
+          color: #0a0a0c;
+          padding: 9px 18px;
+          border-radius: 999px;
+          font-size: 13px;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+          flex-shrink: 0;
+        "
+      >
+        {#if urlBusy}
+          <Loader2 size={13} class="animate-spin" />
+        {:else}
+          <Download size={13} strokeWidth={1.8} />
+        {/if}
+        In Queue
+      </button>
+    </div>
+    <div class="flex items-center gap-3 flex-wrap mb-2" style="font-size: 12px;">
+      {#if urlMessage}
+        <span style="color: var(--color-status-done);">✓ {urlMessage}</span>
+      {/if}
+      {#if urlError}
+        <span style="color: var(--color-status-error);">{urlError}</span>
+      {/if}
+    </div>
+    <p class="text-[12px]" style="color: var(--color-fg-tertiary); max-width: 720px; line-height: 1.5;">
       Lädt direkt via yt-dlp ohne Metadata-Match. Title und Artist-Tag bleiben so wie auf der
-      Quelle. Brauchst du saubere Tags, nutze stattdessen <strong>Reverse YouTube</strong>.
+      Quelle. Brauchst du saubere Tags, nutze stattdessen <strong>YouTube-Match</strong>.
     </p>
 
-  <!-- ─── Reverse YouTube ─── -->
+  <!-- ─── YouTube-Match (gleicher Glass-Search-Style wie Tracks/Albums) ─── -->
   {:else if mode === 'reverse'}
-    <GlassCard padding="md">
-      <div class="space-y-3">
-        <label class="block space-y-2">
-          <span class="text-[13px] font-medium" style="color: var(--color-fg-primary);">
-            YouTube-URL — wir matchen den Track im Provider und queuen mit sauberen Tags
-          </span>
-          <input
-            type="url"
-            bind:value={revUrl}
-            onkeydown={(e) => e.key === 'Enter' && submitReverse()}
-            placeholder="https://www.youtube.com/watch?v=…"
-            spellcheck="false"
-            autocomplete="off"
-            class="w-full px-3 py-2.5 rounded-md text-[13px] outline-none"
-            style="
-              background: var(--color-surface-3);
-              border: 1px solid var(--color-border-soft);
-              color: var(--color-fg-primary);
-              font-family: var(--font-mono);
-            "
-          />
-        </label>
-        <div class="flex items-center gap-3 flex-wrap">
-          <button
-            onclick={submitReverse}
-            disabled={revBusy || !revUrl.trim()}
-            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity disabled:opacity-40"
-            style="background: {accent}; color: #0a0a0c;"
-          >
-            {#if revBusy}
-              <Loader2 size={13} class="animate-spin" />
-            {:else}
-              Match suchen
-            {/if}
-          </button>
-          {#if revLookup || revError}
-            <button
-              onclick={pickRevRaw}
-              class="inline-flex items-center gap-2 px-3 py-2 rounded-md text-[12px] transition-colors"
-              style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
-            >
-              Direkt laden ohne Match
-            </button>
-          {/if}
-          {#if revError}
-            <span class="text-[12px]" style="color: var(--color-status-error);">{revError}</span>
-          {/if}
-        </div>
-      </div>
-    </GlassCard>
+    <div
+      class="flex items-center"
+      style="
+        background: rgba(20, 20, 24, 0.5);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 18px;
+        padding: 18px 22px;
+        gap: 16px;
+        margin-bottom: 14px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      "
+    >
+      <Youtube size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
+      <input
+        type="url"
+        bind:value={revUrl}
+        onkeydown={(e) => e.key === 'Enter' && submitReverse()}
+        placeholder="https://www.youtube.com/watch?v=…"
+        spellcheck="false"
+        autocomplete="off"
+        class="flex-1 bg-transparent outline-none"
+        style="
+          font-size: 18px;
+          font-weight: 300;
+          letter-spacing: -0.005em;
+          color: var(--color-fg-primary);
+          font-family: var(--font-mono);
+        "
+      />
+      <button
+        onclick={submitReverse}
+        disabled={revBusy || !revUrl.trim()}
+        class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+        style="
+          background: {accent};
+          color: #0a0a0c;
+          padding: 9px 18px;
+          border-radius: 999px;
+          font-size: 13px;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+          flex-shrink: 0;
+        "
+      >
+        {#if revBusy}
+          <Loader2 size={13} class="animate-spin" />
+        {:else}
+          Match suchen
+        {/if}
+      </button>
+    </div>
+    <div class="flex items-center gap-3 flex-wrap mb-2" style="font-size: 12px;">
+      {#if revLookup || revError}
+        <button
+          onclick={pickRevRaw}
+          class="inline-flex items-center gap-2 transition-colors"
+          style="
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--color-border-soft);
+            color: var(--color-fg-secondary);
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 11.5px;
+          "
+        >
+          Direkt laden ohne Match
+        </button>
+      {/if}
+      {#if revError}
+        <span style="color: var(--color-status-error);">{revError}</span>
+      {/if}
+    </div>
+    <p class="text-[12px]" style="color: var(--color-fg-tertiary); max-width: 720px; line-height: 1.5;">
+      Sucht den Track aus dem YouTube-Video im gewählten Provider (Deezer/Spotify) und lädt ihn von
+      dort mit sauberen Tags + Cover. Bei keinem Match-Treffer kannst du immer noch direkt laden.
+    </p>
 
     {#if revLookup}
       <div class="space-y-3 mt-4">

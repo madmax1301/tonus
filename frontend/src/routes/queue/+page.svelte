@@ -334,11 +334,15 @@
             "
           ></span>
         {/if}
-        Live · {processingCount} in Bewegung
-        {#if nextLaneReadyMs >= 1000 && processingCount === 0}
+        {#if processingCount > 0}
+          Live
+        {:else if nextLaneReadyMs >= 1000}
+          Wartet
           <span style="color: var(--color-fg-tertiary); letter-spacing: 0.04em; font-family: var(--font-mono); margin-left: 6px;">
             · Lane in {fmtMs(nextLaneReadyMs)}
           </span>
+        {:else}
+          Bereit
         {/if}
       </div>
       <h1
