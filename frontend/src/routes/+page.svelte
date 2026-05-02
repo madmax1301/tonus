@@ -666,7 +666,7 @@
         {/if}
       </div>
     {/if}
-    <p class="text-[12px]" style="color: var(--color-fg-tertiary); max-width: 720px; line-height: 1.5;">
+    <p style="font-size: 12px; color: var(--color-fg-tertiary);">
       Lädt direkt via yt-dlp ohne Metadata-Match. Title und Artist-Tag bleiben so wie auf der
       Quelle. Brauchst du saubere Tags, nutze stattdessen <strong>YouTube-Match</strong>.
     </p>
@@ -688,7 +688,7 @@
       </div>
     {/if}
     {#if !revLookup}
-      <p class="text-[12px]" style="color: var(--color-fg-tertiary); max-width: 720px; line-height: 1.5;">
+      <p style="font-size: 12px; color: var(--color-fg-tertiary);">
         Sucht den Track aus dem YouTube-Video im gewählten Provider (Deezer/Spotify) und lädt ihn
         von dort mit sauberen Tags + Cover. Bei keinem Match-Treffer kannst du immer noch direkt
         laden.
@@ -776,11 +776,11 @@
 
   <!-- Empty states -->
   {:else if (mode === 'tracks' || mode === 'albums') && query && !searching}
-    <div class="text-sm" style="color: var(--color-fg-tertiary);">Keine Treffer.</div>
+    <p style="font-size: 12px; color: var(--color-fg-tertiary);">Keine Treffer.</p>
   {:else if (mode === 'tracks' || mode === 'albums') && !query}
-    <div class="text-sm" style="color: var(--color-fg-tertiary);">
+    <p style="font-size: 12px; color: var(--color-fg-tertiary);">
       Tipp: Suchbegriff eingeben und ↵ drücken, oder einfach 320&nbsp;ms tippen.
-    </div>
+    </p>
   {/if}
 </section>
 
