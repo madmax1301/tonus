@@ -10,6 +10,7 @@
     type AlbumDetail,
     type Track
   } from '$lib/api';
+  import { defaultLocation } from '$lib/preferences';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import ProgressLine from '$lib/components/ProgressLine.svelte';
@@ -88,7 +89,10 @@
   async function queueTrack(track: Track) {
     setQueueState(track.id, { kind: 'queued' });
     try {
-      await downloadApi.start(track.id, { location: 'navidrome', provider: provider || undefined });
+      await downloadApi.start(track.id, {
+        location: $defaultLocation,
+        provider: provider || undefined
+      });
       setQueueState(track.id, { kind: 'done' });
     } catch (err) {
       handleError(track.id, err);
@@ -100,7 +104,7 @@
     albumState = { kind: 'queued' };
     try {
       const r = await downloadApi.album(album.id, {
-        location: 'navidrome',
+        location: $defaultLocation,
         provider: provider || undefined
       });
       const queued = r.queued ?? album.tracks.length;

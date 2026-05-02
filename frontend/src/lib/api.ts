@@ -154,6 +154,32 @@ export const providersApi = {
   list: () => api.get<MetadataProvidersResponse>('/api/metadata/providers')
 };
 
+export interface FormatsInfo {
+  formats: { id: string; label: string }[];
+  default_format: string;
+  qualities: { id: string; label: string }[];
+  default_quality?: string;
+}
+
+export interface NavidromeLibrary {
+  path: string;
+  label?: string;
+}
+
+export interface HealthResponse {
+  status: string;
+  default_metadata_provider?: string;
+  spotify_configured?: boolean;
+  navidrome_path?: string;
+  navidrome_libraries?: NavidromeLibrary[];
+}
+
+export const systemApi = {
+  formats: () => api.get<FormatsInfo>('/api/formats'),
+  navidromeLibraries: () => api.get<{ libraries: NavidromeLibrary[] }>('/api/navidrome/libraries'),
+  health: () => api.get<HealthResponse>('/api/health')
+};
+
 // ─── Import / URL / Reverse ────────────────────────────────
 
 export interface CsvImportStartResponse {

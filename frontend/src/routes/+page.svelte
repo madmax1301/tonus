@@ -13,6 +13,8 @@
     type ReverseLookupResult
   } from '$lib/api';
   import { base } from '$app/paths';
+  import { defaultProvider, defaultLocation } from '$lib/preferences';
+  import { get } from 'svelte/store';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import { Search, Download, Loader2, ChevronRight, Link2, Youtube } from 'lucide-svelte';
@@ -42,7 +44,7 @@
     urlMessage = null;
     urlError = null;
     try {
-      const r = await urlApi.download(urlInput.trim(), { location: 'navidrome' });
+      const r = await urlApi.download(urlInput.trim(), { location: $defaultLocation });
       urlMessage = r.message ?? `In Queue als ${r.job_id}`;
       urlInput = '';
     } catch (err) {
@@ -86,7 +88,7 @@
     revQueuing = { ...revQueuing, [c.id]: { kind: 'queued' } };
     try {
       await reverseApi.download(revUrl.trim(), c, {
-        location: 'navidrome',
+        location: $defaultLocation,
         provider: provider || undefined
       });
       revQueuing = { ...revQueuing, [c.id]: { kind: 'done' } };
@@ -107,7 +109,7 @@
     if (!revUrl.trim()) return;
     revError = null;
     try {
-      await reverseApi.download(revUrl.trim(), null, { location: 'navidrome' });
+      await reverseApi.download(revUrl.trim(), null, { location: $defaultLocation });
       revUrl = '';
       revLookup = null;
     } catch (err) {
@@ -118,7 +120,8 @@
   onMount(async () => {
     try {
       providersData = await providersApi.list();
-      provider = providersData.default;
+      const userPref = get(defaultProvider);
+      provider = userPref || providersData.default;
     } catch {
       // Auth-Sheet handled in api.ts
     }
@@ -193,7 +196,10 @@
   async function queueTrack(track: Track) {
     setQueueState(track.id, { kind: 'queued' });
     try {
-      await downloadApi.start(track.id, { location: 'navidrome', provider: provider || undefined });
+      await downloadApi.start(track.id, {
+        location: $defaultLocation,
+        provider: provider || undefined
+      });
       setQueueState(track.id, { kind: 'done' });
     } catch (err) {
       handleDownloadError(track.id, err);
@@ -204,7 +210,7 @@
     setQueueState(album.id, { kind: 'queued' });
     try {
       const r = await downloadApi.album(album.id, {
-        location: 'navidrome',
+        location: $defaultLocation,
         provider: provider || undefined
       });
       const queued = r.queued ?? album.total_tracks;

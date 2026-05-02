@@ -7,6 +7,8 @@
     type CsvImportResult,
     type MetadataProvidersResponse
   } from '$lib/api';
+  import { defaultProvider, defaultLocation } from '$lib/preferences';
+  import { get } from 'svelte/store';
   import GlassCard from '$lib/components/GlassCard.svelte';
   import ProgressLine from '$lib/components/ProgressLine.svelte';
   import { Upload, Loader2, Download } from 'lucide-svelte';
@@ -18,7 +20,8 @@
   (async () => {
     try {
       providersData = await providersApi.list();
-      provider = providersData.default;
+      const userPref = get(defaultProvider);
+      provider = userPref || providersData.default;
     } catch {
       /* sheet handles auth */
     }
@@ -102,7 +105,7 @@
     csvQueueAllResult = null;
     try {
       const r = await importApi.queueAll(csvJobId, {
-        location: 'navidrome',
+        location: $defaultLocation,
         provider: provider || undefined
       });
       const queued = r.queued ?? 0;
