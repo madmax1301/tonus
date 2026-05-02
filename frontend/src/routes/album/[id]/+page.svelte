@@ -126,6 +126,27 @@
   const accent = $derived(tint(albumHue));
   const accentSoft = $derived(tint(albumHue, 0.5));
   const accentBg = $derived(tint(albumHue, 0.12));
+
+  /**
+   * Smart back navigation:
+   *  - Wenn die User-History innerhalb von Tonus liegt, browser-back —
+   *    landet auf der Library mit erhaltenem Suchstate (URL-Params).
+   *  - Wenn der Album-Detail per Deep-Link / Reload erreicht wurde
+   *    (referrer leer oder cross-origin), goto Library-Index als Fallback.
+   */
+  function goBack() {
+    if (typeof window === 'undefined') {
+      goto(`${base}/`);
+      return;
+    }
+    const ref = document.referrer;
+    const sameOrigin = ref && ref.startsWith(window.location.origin);
+    if (sameOrigin && window.history.length > 1) {
+      window.history.back();
+    } else {
+      goto(`${base}/`);
+    }
+  }
 </script>
 
 <CinemaBackdrop hue={albumHue} intensity={1.2} />
@@ -133,7 +154,7 @@
 <section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 24px 36px 60px;">
   <!-- Back link -->
   <button
-    onclick={() => goto(`${base}/`)}
+    onclick={goBack}
     class="inline-flex items-center gap-1.5 transition-colors mb-7"
     style="font-size: 12.5px; color: var(--color-fg-secondary);"
     onmouseenter={(e) => (e.currentTarget.style.color = 'var(--color-fg-primary)')}

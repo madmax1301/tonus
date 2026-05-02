@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/stores';
+  import { replaceState } from '$app/navigation';
   import {
     searchApi,
     downloadApi,
@@ -128,6 +130,17 @@
   }
 
   onMount(async () => {
+    // Restore search state from URL params (browser back from Album-Detail
+    // landet hier mit q+mode in der URL — wir picken sie auf und re-runnen
+    // die Suche, sodass die Liste nicht leer ist)
+    const sp = $page.url.searchParams;
+    const qFromUrl = sp.get('q') ?? '';
+    const modeFromUrl = sp.get('mode') as Mode | null;
+    if (qFromUrl) query = qFromUrl;
+    if (modeFromUrl && ['tracks', 'albums', 'url', 'reverse'].includes(modeFromUrl)) {
+      mode = modeFromUrl;
+    }
+
     try {
       providersData = await providersApi.list();
       const userPref = get(defaultProvider);
@@ -135,7 +148,32 @@
     } catch {
       // Auth-Sheet handled in api.ts
     }
+
+    if (qFromUrl && (mode === 'tracks' || mode === 'albums')) {
+      runSearch();
+    }
   });
+
+  /**
+   * Sync `query` + `mode` to URL search params via replaceState (kein neuer
+   * History-Entry — sonst würde jeder Tastenanschlag eine History-Position
+   * erzeugen und Browser-Back wäre kaputt).
+   */
+  function syncUrl() {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (query.trim()) {
+      url.searchParams.set('q', query.trim());
+    } else {
+      url.searchParams.delete('q');
+    }
+    if (mode !== 'tracks') {
+      url.searchParams.set('mode', mode);
+    } else {
+      url.searchParams.delete('mode');
+    }
+    replaceState(url, $page.state ?? {});
+  }
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   function onInput() {
@@ -144,6 +182,7 @@
       trackResults = [];
       albumResults = [];
       searchError = null;
+      syncUrl();
       return;
     }
     debounceTimer = setTimeout(runSearch, 320);
@@ -189,6 +228,7 @@
       }
     } finally {
       searching = false;
+      syncUrl();
     }
   }
 
@@ -196,6 +236,7 @@
     if (mode === next) return;
     mode = next;
     if (query.trim()) runSearch();
+    else syncUrl();
   }
 
   function setQueueState(id: string, state: DownloadState) {
