@@ -33,17 +33,25 @@ from utils.job_store import (
 _COOLDOWN_NORMAL = (60, 300)        # 1–5 min nach success / unauffälligem error
 _COOLDOWN_429 = (300, 600)          # 5–10 min nach erkanntem 429
 
-# CSV-Match-Tuning. 8 parallele Suchen liegen bei Deezer (~50 req / 5s soft-limit)
-# komfortabel drunter. DB-Inserts in 500er Chunks halten SQLite responsiv.
-_CSV_SEARCH_CONCURRENCY = 8
+# CSV-Match-Tuning. Dual-Lane: 8 parallel über 2 Source-IPs (4/Lane) liegen
+# bei Deezer (~50 req / 5s soft-limit) komfortabel drunter. Single-Lane: alle
+# Threads teilen sich eine IP, daher konservativ auf 2 reduzieren — sonst
+# bekommt jede 2. Anfrage 429 und der Single-Lane-Pfad hat keinen Failover.
+# DB-Inserts in 500er Chunks halten SQLite responsiv.
+_VPN_SPLIT_ENABLED = os.environ.get("VPN_SPLIT_ENABLED", "").strip().lower() == "true"
+_CSV_SEARCH_CONCURRENCY = 8 if _VPN_SPLIT_ENABLED else 2
 _CSV_FLUSH_BATCH = 500
 _CSV_PROGRESS_EVERY = 50            # alle N abgeschlossene Unique-Suchen Status updaten
+
+# Bei einem 429 ohne Failover-Möglichkeit (single-lane) versuchen wir es mit
+# exponential backoff erneut. 1.5 s → 3 s → aufgeben. Hält uns über schwankende
+# Provider-Limits hinweg, ohne den ThreadPool unbegrenzt zu blockieren.
+_CSV_429_RETRY_DELAYS: Tuple[float, ...] = (1.5, 3.0)
 
 # Dual-VPN-Splitting: gerade Thread-Indizes nutzen Lane A, ungerade Lane B —
 # pro Lane bindet services.deezer._get_session(...) eine andere Source-IP.
 # Bei VPN_SPLIT_ENABLED=false fällt alles auf "default" zurück (kein Bind).
 _CSV_LANES: Tuple[str, str] = ("a", "b")
-_VPN_SPLIT_ENABLED = os.environ.get("VPN_SPLIT_ENABLED", "").strip().lower() == "true"
 
 # Download-Worker: zwei Lanes mit getrennten Cooldown-Timern. Single-threaded
 # bleibt der Worker (keine parallelen yt-dlp-Prozesse — YouTube-Bot-Detection!),
@@ -316,12 +324,18 @@ class JobWorker(threading.Thread):
         def _do_search(
             key: Tuple[str, str], lane: str = "default"
         ) -> Tuple[Tuple[str, str], Optional[Dict[str, Any]], str, bool]:
-            """Sucht einen einzelnen Track. Bei 429 auf der zugewiesenen Lane wird
-            einmalig auf die andere Lane retried (Failover). Returnt
-            (key, result, lane_used, was_failover) — lane_used ist die Lane,
-            die das Result final geliefert hat (oder die ursprüngliche bei
-            finalem Fehlschlag); was_failover=True heißt, dass ein Lane-Wechsel
-            wegen 429 stattgefunden hat (relevant fürs Aggregat-Logging).
+            """Sucht einen einzelnen Track.
+
+            Strategie bei 429:
+            - Dual-Lane (lane in {a,b}): einmalig auf die andere Lane retried
+              (Failover). was_failover=True dokumentiert den Lane-Wechsel.
+            - Single-Lane (lane == "default"): es gibt keine Alternativ-Lane,
+              also exponential-backoff in-place (siehe _CSV_429_RETRY_DELAYS).
+              Damit gibt's zumindest 2 weitere Chancen, statt sofort
+              "unmatched" zu schreiben — das war der Hauptgrund für die
+              katastrophalen Match-Raten ohne VPN-Splitting.
+
+            Returnt (key, result, lane_used, was_failover).
             """
             artist_lc, title_lc = key
             query = f"{artist_lc} {title_lc}".strip() if artist_lc else title_lc
@@ -334,10 +348,24 @@ class JobWorker(threading.Thread):
                 return key, _attempt(lane), lane, False
             except requests.HTTPError as e:
                 status = getattr(e.response, "status_code", None)
-                if status == 429 and lane in _CSV_LANES:
+                if status != 429:
+                    return key, None, lane, False
+                # 429 → Failover-Strategie je nach Setup
+                if lane in _CSV_LANES:
                     other = _CSV_LANES[(_CSV_LANES.index(lane) + 1) % len(_CSV_LANES)]
                     try:
                         return key, _attempt(other), other, True
+                    except Exception:
+                        return key, None, lane, False
+                # Single-Lane (default): exponential backoff in-place.
+                for delay in _CSV_429_RETRY_DELAYS:
+                    time.sleep(delay)
+                    try:
+                        return key, _attempt(lane), lane, False
+                    except requests.HTTPError as e2:
+                        if getattr(e2.response, "status_code", None) != 429:
+                            return key, None, lane, False
+                        continue
                     except Exception:
                         return key, None, lane, False
                 return key, None, lane, False
