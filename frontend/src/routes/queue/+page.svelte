@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { base } from '$app/paths';
   import {
     queueApi,
     ApiError,
@@ -14,6 +15,7 @@
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import CoverArt from '$lib/components/CoverArt.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
   import ProgressLine from '$lib/components/ProgressLine.svelte';
   import {
     RotateCw,
@@ -657,7 +659,41 @@
   <!-- Job list -->
   {#if loadError}
     <div class="text-sm" style="color: var(--color-status-error);">{loadError}</div>
+  {:else if total === 0 && !initialLoading}
+    <!-- Echter Empty-State: gar keine Jobs in der DB. Cinematic-Glyph
+         + Editorial-Copy + Action-Row zur Library. -->
+    <EmptyState
+      glyph="queue"
+      eyebrow={$t('empty.queue.eyebrow')}
+      title={$t('empty.queue.title')}
+      body={$t('empty.queue.body')}
+      tip={$t('empty.queue.tip')}
+    >
+      {#snippet actions()}
+        <a
+          href="{base}/"
+          class="inline-flex items-center transition-transform"
+          style="
+            padding: 11px 22px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            background: {accent};
+            color: #0a0a0c;
+            text-decoration: none;
+            box-shadow: 0 8px 24px {accent}40;
+          "
+        >
+          {$t('empty.queue.cta_search')}
+        </a>
+      {/snippet}
+    </EmptyState>
   {:else if filtered.length === 0 && !featuredJob}
+    <!-- Filter-empty (es gibt Jobs, nur nicht im aktiven Filter). Kompakter
+         Hinweis statt full-page EmptyState — der User soll den Filter
+         wechseln können, nicht zur Library wandern. -->
     <div
       class="text-center"
       style="

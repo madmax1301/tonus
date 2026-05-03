@@ -65,6 +65,22 @@ export const strings = {
     'library.empty.no_query':
       'Tipp: Suchbegriff eingeben und ↵ drücken, oder einfach 320 ms tippen.',
     'library.provider.default_suffix': 'Default',
+    'empty.library.eyebrow': 'Kein Album bisher',
+    'empty.library.title': 'Deine Bibliothek\nwartet auf den ersten Track.',
+    'empty.library.body':
+      'Suche einen Song, importiere eine CSV mit gelikten Tracks oder lade direkt eine YouTube-URL — Tonus übernimmt den Rest.',
+    'empty.library.cta_search': 'Track suchen',
+    'empty.library.cta_csv': 'CSV importieren',
+    'empty.library.tip':
+      'Tonus indexiert Tracks bei Bedarf — kein Hintergrund-Sync, keine Quota.',
+    'empty.queue.eyebrow': 'Warteschlange leer',
+    'empty.queue.title': 'Nichts läuft.\nNichts wartet.',
+    'empty.queue.body':
+      'Pack einen Track in die Queue — Tonus matcht die beste verfügbare Quelle und legt ihn in deine Bibliothek.',
+    'empty.queue.cta_search': 'Track suchen',
+    'empty.queue.cta_library': 'Zur Bibliothek',
+    'empty.queue.tip':
+      'Du erkennst aktive Jobs am Queue-Vinyl unten rechts — die Zahl zählt nur live + queued + Fehler.',
 
     // ── Album-Detail ────────────────────────────────────
     'album.back': 'Zurück',
@@ -288,6 +304,21 @@ export const strings = {
     'library.empty.no_query':
       'Tip: type a query and press ↵, or just type for 320 ms.',
     'library.provider.default_suffix': 'Default',
+    'empty.library.eyebrow': 'No album yet',
+    'empty.library.title': 'Your library\nis waiting for the first track.',
+    'empty.library.body':
+      'Search a song, import a CSV with liked tracks or drop in a YouTube URL — Tonus does the rest.',
+    'empty.library.cta_search': 'Search tracks',
+    'empty.library.cta_csv': 'Import CSV',
+    'empty.library.tip': 'Tonus indexes on-demand — no background sync, no quota.',
+    'empty.queue.eyebrow': 'Queue is empty',
+    'empty.queue.title': 'Nothing running.\nNothing waiting.',
+    'empty.queue.body':
+      'Drop a track into the queue — Tonus picks the best source available and lands it in your library.',
+    'empty.queue.cta_search': 'Search tracks',
+    'empty.queue.cta_library': 'Open library',
+    'empty.queue.tip':
+      'Active jobs show up on the queue vinyl bottom-right — the counter shows live + queued + errored only.',
 
     // ── Album-Detail ────────────────────────────────────
     'album.back': 'Back',

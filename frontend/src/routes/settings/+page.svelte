@@ -266,6 +266,7 @@
             {providers?.default ? `(${providers.default})` : ''}
           </button>
           {#if providers}
+            <!-- Konfigurierte Provider: voll auswählbar als Pill. -->
             {#each providers.providers.filter((p) => p.configured) as p}
               <button
                 onclick={() => defaultProvider.set(p.id)}
@@ -275,8 +276,66 @@
                 {p.label}
               </button>
             {/each}
+            <!-- Nicht-konfigurierte Provider: angedeutete Pill mit
+                 dashed-border, disabled, Tooltip erklärt was fehlt.
+                 Damit sieht der User auch Spotify auch wenn er noch
+                 nicht eingerichtet ist — als Hinweis "geht auch, brauchst
+                 nur Client-ID + Secret in backend/.env". -->
+            {#each providers.providers.filter((p) => !p.configured) as p}
+              <button
+                disabled
+                title="In backend/.env konfigurieren ({p.id.toUpperCase()}_CLIENT_ID + _CLIENT_SECRET) und Backend neu starten"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] cursor-not-allowed"
+                style="
+                  background: rgba(255, 255, 255, 0.02);
+                  color: var(--color-fg-tertiary);
+                  border: 1px dashed rgba(255, 255, 255, 0.18);
+                  opacity: 0.7;
+                "
+              >
+                {p.label}
+                <span
+                  style="
+                    font-size: 9.5px;
+                    letter-spacing: 0.12em;
+                    text-transform: uppercase;
+                    color: var(--color-fg-tertiary);
+                    border: 1px solid var(--color-border-soft);
+                    padding: 1px 6px;
+                    border-radius: 999px;
+                    margin-left: 2px;
+                  "
+                >
+                  setup
+                </span>
+              </button>
+            {/each}
           {/if}
         </div>
+        {#if providers && providers.providers.some((p) => !p.configured)}
+          <p
+            class="mt-2"
+            style="
+              font-size: 11px;
+              color: var(--color-fg-tertiary);
+              line-height: 1.6;
+              max-width: 560px;
+            "
+          >
+            Provider mit dashed-Outline brauchen
+            <code style="font-family: var(--font-mono); color: {accent}; font-size: 10.5px;"
+              >&lt;PROVIDER&gt;_CLIENT_ID</code
+            >
+            +
+            <code style="font-family: var(--font-mono); color: {accent}; font-size: 10.5px;"
+              >&lt;PROVIDER&gt;_CLIENT_SECRET</code
+            >
+            in
+            <code style="font-family: var(--font-mono); color: var(--color-fg-secondary); font-size: 10.5px;"
+              >backend/.env</code
+            > und einen Backend-Restart. Tonus liest die Werte beim Start.
+          </p>
+        {/if}
       </div>
 
       <!-- Location -->

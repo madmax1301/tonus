@@ -20,6 +20,7 @@
   import { tint, DEFAULT_HUE } from '$lib/accent';
   import { t } from '$lib/i18n';
   import { flyToQueue } from '$lib/fly-to-queue';
+  import EmptyState from '$lib/components/EmptyState.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import GlassCard from '$lib/components/GlassCard.svelte';
@@ -31,6 +32,10 @@
 
   let query = $state('');
   let mode = $state<Mode>('tracks');
+  // Bind aufs Search-Input — Empty-State CTA "Track suchen" focused dieses
+  // Element via .focus(), damit der User direkt tippen kann ohne den
+  // Search-Bar erst manuell anzuklicken.
+  let searchInput = $state<HTMLInputElement | null>(null);
   let provider = $state<string>('');
   let providersData = $state<MetadataProvidersResponse | null>(null);
   let trackResults = $state<Track[]>([]);
@@ -482,6 +487,7 @@
         <path d="M21 21l-4.3-4.3" />
       </svg>
       <input
+        bind:this={searchInput}
         bind:value={query}
         oninput={onInput}
         onkeydown={(e) => e.key === 'Enter' && runSearch()}
@@ -821,11 +827,61 @@
 
   <!-- Empty states -->
   {:else if (mode === 'tracks' || mode === 'albums') && query && !searching}
+    <!-- Aktive Suche, kein Treffer — kompakter Hinweis statt Full-Page-State.
+         Der User soll die Query refinen, nicht zur Onboarding-Seite springen. -->
     <p style="font-size: 12px; color: var(--color-fg-tertiary);">{$t('common.no_results')}</p>
   {:else if (mode === 'tracks' || mode === 'albums') && !query}
-    <p style="font-size: 12px; color: var(--color-fg-tertiary);">
-      {$t('library.empty.no_query')}
-    </p>
+    <!-- Library-Onboarding-Empty-State: Hero-Crate-Glyph + Editorial-Copy
+         + Tipp-Footer. Wird gezeigt sobald der User auf Tracks/Alben-Mode
+         ist und nichts in der Suchleiste steht — typisch direkt nach
+         dem ersten Login. -->
+    <EmptyState
+      glyph="library"
+      eyebrow={$t('empty.library.eyebrow')}
+      title={$t('empty.library.title')}
+      body={$t('empty.library.body')}
+      tip={$t('empty.library.tip')}
+    >
+      {#snippet actions()}
+        <button
+          type="button"
+          onclick={() => searchInput?.focus()}
+          class="inline-flex items-center transition-transform"
+          style="
+            padding: 11px 22px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            background: {accent};
+            color: #0a0a0c;
+            border: none;
+            box-shadow: 0 8px 24px {accent}40;
+            cursor: pointer;
+          "
+        >
+          {$t('empty.library.cta_search')}
+        </button>
+        <a
+          href="{base}/import"
+          class="inline-flex items-center transition-colors"
+          style="
+            padding: 11px 22px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--color-fg-primary);
+            border: 1px solid var(--color-border-soft);
+            text-decoration: none;
+          "
+        >
+          {$t('empty.library.cta_csv')}
+        </a>
+      {/snippet}
+    </EmptyState>
   {/if}
 </section>
 
