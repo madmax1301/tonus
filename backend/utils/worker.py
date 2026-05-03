@@ -463,10 +463,11 @@ class JobWorker(threading.Thread):
                         lane_failover_in[lane_used] += 1
 
                 if completed_unique % _CSV_PROGRESS_EVERY == 0:
-                    # Geschätzter Gesamtfortschritt: Anteil der gemappten
-                    # Unique-Keys, hochgerechnet auf alle Rows. Endgültiger
-                    # Wert kommt im Final-Flush unten.
-                    est_processed = int(completed_unique * total / max(1, unique_total))
+                    # Phase-Weighting für die Progress-Bar: Initial belegt
+                    # 70 % der Bar, Recovery (falls vorhanden) belegt 25 %,
+                    # die DB-Materialisierung-Phase 5 %. Damit hängt die Bar
+                    # nicht auf 100 %, während Recovery noch 90 s rennt.
+                    est_processed = int(0.70 * total * completed_unique / max(1, unique_total))
                     if _VPN_SPLIT_ENABLED:
                         lane_str = (
                             f" (lane A: {lane_served.get('a', 0)}, "
@@ -496,13 +497,18 @@ class JobWorker(threading.Thread):
         # zwischen Calls hält uns weit unter Deezer's Soft-Limit.
         recovery_keys = [k for k in unique_keys if cache.get(k) is None]
         recovery_recovered = 0
+        # Phase-Weighting: Initial endet bei 70 %, kein Recovery → 95 %,
+        # mit Recovery wandert die Bar von 70 % → 95 % über die Recovery-
+        # Calls. Phase 3 (DB-write) zieht final auf 100 %.
+        phase2_end = int(0.70 * total)
+        no_recovery_end = int(0.95 * total)
         if recovery_keys:
             cooldown_s = 15
             upsert_csv_job(
                 job_id,
                 status="processing",
                 total=total,
-                processed=min(int(completed_unique * total / max(1, unique_total)), total),
+                processed=phase2_end,
                 message=(
                     f"Recovery-Phase: {len(recovery_keys)} Initial-Misses werden "
                     f"nach {cooldown_s} s Cooldown sequenziell nochmal probiert..."
@@ -517,6 +523,7 @@ class JobWorker(threading.Thread):
 
             # Single-thread, default lane (kein Splitting), 0.4 s zwischen Calls.
             # Bei 100 Recovery-Keys → ~40 s Phase-Dauer, akzeptabel.
+            recovery_total = len(recovery_keys)
             for idx, k in enumerate(recovery_keys):
                 if self._stop.is_set():
                     upsert_csv_job(job_id, status="error", message="Interrupted")
@@ -529,17 +536,30 @@ class JobWorker(threading.Thread):
                     cache[k] = result
                     recovery_recovered += 1
                 time.sleep(0.4)
-                if (idx + 1) % 10 == 0:
+                if (idx + 1) % 5 == 0:
+                    # Recovery-Anteil: 25 % der Bar zwischen Phase-2-Ende und
+                    # 95 %, linear über alle Recovery-Calls verteilt.
+                    recovery_share = int(0.25 * total * (idx + 1) / recovery_total)
                     upsert_csv_job(
                         job_id,
                         status="processing",
                         total=total,
-                        processed=min(int(completed_unique * total / max(1, unique_total)), total),
+                        processed=min(phase2_end + recovery_share, no_recovery_end),
                         message=(
-                            f"Recovery: {idx + 1}/{len(recovery_keys)} re-checked, "
+                            f"Recovery: {idx + 1}/{recovery_total} re-checked, "
                             f"+{recovery_recovered} zusätzlich gefunden..."
                         ),
                     )
+        else:
+            # Kein Recovery nötig — direkt zur 95 %-Marke springen, Phase 3
+            # erledigt den letzten Schritt zu 100 %.
+            upsert_csv_job(
+                job_id,
+                status="processing",
+                total=total,
+                processed=no_recovery_end,
+                message=f"Initial-Pass clean, materialisiere {total} Rows...",
+            )
 
         # ---- Phase 3: Materialisieren + DB-Inserts ------------------------
         batch_matched: list = []
