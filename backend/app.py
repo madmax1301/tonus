@@ -1249,13 +1249,17 @@ async def reverse_download(request: ReverseDownloadRequest, background_tasks: Ba
     if not track_for_queue:
         track_for_queue = {"id": job_id, "name": request.youtube_url, "artist": "YouTube", "album": "", "album_art": ""}
 
+    # status="processing" (siehe URL-Download-Endpoint): JobWorker darf den
+    # Job nicht parallel als normalen Spotify/Deezer-Download dispatchen,
+    # während die BackgroundTask reverse_download_and_process läuft.
     upsert_job(
         job_id,
-        status="queued",
+        status="processing",
         message=f"Reverse download queued for {location_msg}",
         progress=0,
         stage="queued",
         payload={
+            "kind": "reverse",
             "provider": provider,
             "record_track_id": request.spotify_track_id,
             "track": track_for_queue,
@@ -2273,9 +2277,15 @@ async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTask
         "album_art": "",
     }
 
+    # WICHTIG: status="processing" (nicht "queued") — sonst pickt der
+    # JobWorker-Loop den Job zusätzlich auf und ruft download_and_process()
+    # mit Deezer-Lookup → "Invalid query" weil track_id eine URL ist.
+    # URL-Downloads umgehen die Match-Pipeline komplett, deshalb gehört
+    # die ganze Verarbeitung in url_download_and_process (BackgroundTask)
+    # und der Worker darf den Job nicht parallel anfassen.
     upsert_job(
         job_id,
-        status="queued",
+        status="processing",
         message=f"URL queued for {'local downloads folder' if location == 'local' else 'Navidrome server'}",
         stage="queued",
         progress=0,
