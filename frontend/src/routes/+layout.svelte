@@ -1,9 +1,14 @@
 <script lang="ts">
   import '../app.css';
+  import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { base } from '$app/paths';
   import { apiToken, challengeAuth } from '$lib/auth';
   import TokenSheet from '$lib/components/TokenSheet.svelte';
+  import VinylPuck from '$lib/components/VinylPuck.svelte';
+  import FlyingCover from '$lib/components/FlyingCover.svelte';
+  import { flyingCovers, setQueueCount } from '$lib/fly-to-queue';
+  import { queueApi, ApiError } from '$lib/api';
   import { t } from '$lib/i18n';
   import type { StringKey } from '$lib/i18n/strings';
   import { KeyRound } from 'lucide-svelte';
@@ -25,6 +30,37 @@
   let { children } = $props();
 
   const hasToken = $derived(!!$apiToken);
+
+  // Queue-Count im Vinyl-Puck unten rechts synchron mit dem Backend halten.
+  // Polling-Intervall: 5 s — der Puck ist Status-Indikator, nicht der
+  // Queue-Page mit Live-Updates. Längeres Intervall spart Roundtrips.
+  // Bei Token-Fehler: Polling stoppen statt 401-Loop.
+  let queuePollTimer: ReturnType<typeof setInterval> | null = null;
+  async function refreshQueueCount() {
+    try {
+      const r = await queueApi.list();
+      // Aktive Jobs = noch nicht durch (queued/processing) + error (User
+      // sieht im Puck "noch nicht erledigt"). Completed werden NICHT
+      // gezählt, sonst würde der Counter unendlich wachsen.
+      const total =
+        (r.status_counts?.queued ?? 0) +
+        (r.status_counts?.processing ?? 0) +
+        (r.status_counts?.error ?? 0);
+      setQueueCount(total);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        if (queuePollTimer) clearInterval(queuePollTimer);
+        queuePollTimer = null;
+      }
+    }
+  }
+  onMount(() => {
+    refreshQueueCount();
+    queuePollTimer = setInterval(refreshQueueCount, 5000);
+  });
+  onDestroy(() => {
+    if (queuePollTimer) clearInterval(queuePollTimer);
+  });
 </script>
 
 <div class="min-h-screen flex flex-col relative">
@@ -124,6 +160,27 @@
   <main class="flex-1 relative">
     {@render children()}
   </main>
+
+  <!-- Fly-to-Queue: Klone der gerade animierenden Cover. Werden vom
+       fly-to-queue.ts-Store via flyingCovers gefüttert; offset-Math nimmt
+       document.body als Anchor, deshalb können sie hier ohne eigenen
+       relative-Container mounten. -->
+  {#each $flyingCovers as cover (cover.id)}
+    <FlyingCover
+      src={cover.src}
+      accent={cover.accent}
+      size={cover.size}
+      from={cover.from}
+      to={cover.to}
+    />
+  {/each}
+
+  <!-- Vinyl-Puck = bottom-right Floating-Indicator + Queue-Shortcut.
+       Hat data-vinyl-puck-Attribut, das fly-to-queue.ts via querySelector
+       findet, um die Ziel-Position der Cover-Klone zu berechnen. -->
+  {#if hasToken}
+    <VinylPuck />
+  {/if}
 
   <TokenSheet />
 </div>

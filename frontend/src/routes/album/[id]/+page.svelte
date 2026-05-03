@@ -12,6 +12,7 @@
   import { defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import { tint, DEFAULT_HUE } from '$lib/accent';
   import { t } from '$lib/i18n';
+  import { flyToQueue } from '$lib/fly-to-queue';
   import { get } from 'svelte/store';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
@@ -89,6 +90,14 @@
     }
   }
 
+  // Cover-Source für Fly-to-Queue: alle Tracks im Album-Detail teilen
+  // sich das Hero-Cover (Vinyl mit Album-Art). Track-Rows haben kein
+  // eigenes Cover — wir lassen also das große Album-Cover zur Puck
+  // fliegen. Bei Album-Queue ebenso.
+  function getAlbumCoverEl(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('[data-album-cover]');
+  }
+
   async function queueTrack(track: Track) {
     setQueueState(track.id, { kind: 'queued' });
     try {
@@ -99,6 +108,15 @@
         quality: $defaultQuality || undefined
       });
       setQueueState(track.id, { kind: 'done' });
+      const coverEl = getAlbumCoverEl();
+      if (coverEl && album) {
+        flyToQueue(
+          coverEl,
+          album.cover ?? album.album_art ?? null,
+          accent,
+          coverEl.offsetWidth
+        );
+      }
     } catch (err) {
       handleError(track.id, err);
     }
@@ -120,6 +138,15 @@
         kind: 'done',
         message: skipped > 0 ? `${queued} queued, ${skipped} schon da` : `${queued} queued`
       };
+      const coverEl = getAlbumCoverEl();
+      if (coverEl && queued > 0) {
+        flyToQueue(
+          coverEl,
+          album.cover ?? album.album_art ?? null,
+          accent,
+          coverEl.offsetWidth
+        );
+      }
     } catch (err) {
       handleError(null, err, true);
     }
@@ -185,15 +212,17 @@
       class="grid items-center"
       style="grid-template-columns: auto 1fr; gap: 56px; margin-bottom: 48px;"
     >
-      <VinylWithCover
-        src={album.cover ?? album.album_art ?? null}
-        alt={album.name}
-        artist={album.artist}
-        year={album.release_date?.slice(0, 4) ?? ''}
-        size={280}
-        spinning
-        onhue={(h) => (albumHue = h)}
-      />
+      <div data-album-cover>
+        <VinylWithCover
+          src={album.cover ?? album.album_art ?? null}
+          alt={album.name}
+          artist={album.artist}
+          year={album.release_date?.slice(0, 4) ?? ''}
+          size={280}
+          spinning
+          onhue={(h) => (albumHue = h)}
+        />
+      </div>
 
       <div class="min-w-0">
         <div

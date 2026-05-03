@@ -19,6 +19,7 @@
   import { get } from 'svelte/store';
   import { tint, DEFAULT_HUE } from '$lib/accent';
   import { t } from '$lib/i18n';
+  import { flyToQueue } from '$lib/fly-to-queue';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import GlassCard from '$lib/components/GlassCard.svelte';
@@ -315,8 +316,18 @@
     }
   }
 
-  async function queueTrack(track: Track) {
+  async function queueTrack(track: Track, ev?: MouseEvent) {
     setQueueState(track.id, { kind: 'queued' });
+    // Cover-Klon für Fly-Animation. Findet das nächste data-track-row
+    // (gesetzt via JSX), greift den data-cover-Wrapper. Animation startet
+    // erst nach erfolgreichem queue-API-Call — sonst fliegt der Cover
+    // auch bei Fehler, was verwirrend ist.
+    let coverEl: HTMLElement | null = null;
+    if (ev) {
+      const btn = ev.currentTarget as HTMLElement;
+      const row = btn.closest<HTMLElement>('[data-track-row]');
+      coverEl = row?.querySelector<HTMLElement>('[data-cover]') ?? null;
+    }
     try {
       await downloadApi.start(track.id, {
         location: $defaultLocation,
@@ -325,6 +336,9 @@
         quality: $defaultQuality || undefined
       });
       setQueueState(track.id, { kind: 'done' });
+      if (coverEl) {
+        flyToQueue(coverEl, track.album_art ?? null, accent, coverEl.offsetWidth);
+      }
     } catch (err) {
       handleDownloadError(track.id, err);
     }
@@ -599,10 +613,12 @@
       {#each trackResults as track (track.id)}
         {@const state = queuedIds[track.id]}
         {@const loading = state?.kind === 'queued'}
-        <div class="relative" class:skeleton-card={loading}>
+        <div class="relative" class:skeleton-card={loading} data-track-row>
           <GlassCard padding="sm" interactive>
             <div class="flex items-center gap-4" class:opacity-60={loading}>
-              <AlbumArt src={track.album_art} alt={track.album} size="md" />
+              <div data-cover>
+                <AlbumArt src={track.album_art} alt={track.album} size="md" />
+              </div>
               <div class="flex-1 min-w-0">
                 <div class="font-medium text-[15px] truncate" style="color: var(--color-fg-primary);">
                   {track.name}
@@ -621,7 +637,7 @@
                 {fmtDuration(track.duration_ms)}
               </div>
               <button
-                onclick={() => queueTrack(track)}
+                onclick={(e) => queueTrack(track, e)}
                 disabled={loading || state?.kind === 'done' || state?.kind === 'exists'}
                 title={state?.message ?? ''}
                 class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:cursor-default"

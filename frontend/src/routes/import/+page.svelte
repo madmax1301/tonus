@@ -830,8 +830,8 @@
       </div>
 
       <ProgressLine
-        value={csvProgress > 0 ? csvProgress : undefined}
-        pareto={csvProgress === 0}
+        value={csvProgress}
+        pareto={false}
         height={3}
         color={accent}
         glow
