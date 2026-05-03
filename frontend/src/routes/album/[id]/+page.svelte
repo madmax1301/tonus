@@ -11,6 +11,8 @@
   } from '$lib/api';
   import { defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { t } from '$lib/i18n';
+  import { get } from 'svelte/store';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import { ArrowLeft, Download, Loader2, Check } from 'lucide-svelte';
@@ -39,7 +41,8 @@
       album = await albumApi.get(albumId ?? '', provider || undefined);
     } catch (err) {
       if (!(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
-        loadError = err instanceof Error ? err.message : 'Album konnte nicht geladen werden';
+        loadError =
+          err instanceof Error ? err.message : get(t)('album.error.load_failed');
       }
     } finally {
       loading = false;
@@ -169,11 +172,11 @@
     onmouseleave={(e) => (e.currentTarget.style.color = 'var(--color-fg-secondary)')}
   >
     <ArrowLeft size={13} strokeWidth={1.5} />
-    Bibliothek
+    {$t('nav.library')}
   </button>
 
   {#if loading}
-    <div class="text-sm" style="color: var(--color-fg-tertiary);">lade Album …</div>
+    <div class="text-sm" style="color: var(--color-fg-tertiary);">{$t('common.loading')}</div>
   {:else if loadError}
     <div class="text-sm" style="color: var(--color-status-error);">{loadError}</div>
   {:else if album}
@@ -209,7 +212,7 @@
             · {album.genres[0]}
           {/if}
           {#if album.tracks?.length}
-            · {album.tracks.length} Tracks
+            · {$t('album.tracks_count', { count: album.tracks.length })}
             {#if totalDuration(album.tracks)}
               · {totalDuration(album.tracks)}
             {/if}
@@ -270,18 +273,18 @@
           >
             {#if albumState?.kind === 'queued'}
               <Loader2 size={13} strokeWidth={2.4} class="animate-spin" />
-              <span class="skeleton-text">wird gequeued …</span>
+              <span class="skeleton-text">{$t('album.button.queueing')}</span>
             {:else if albumState?.kind === 'done'}
               <Check size={14} strokeWidth={2.4} />
               {albumState.message}
             {:else if albumState?.kind === 'exists'}
               <Check size={14} strokeWidth={2} />
-              vorhanden
+              {$t('album.button.exists')}
             {:else if albumState?.kind === 'error'}
-              Fehler — erneut versuchen
+              {$t('album.button.error')}
             {:else}
               <Download size={14} strokeWidth={2.2} />
-              Komplettes Album · {album.tracks.length} Tracks
+              {$t('album.button.full_album', { count: album.tracks.length })}
             {/if}
           </button>
 
@@ -303,7 +306,7 @@
                 text-decoration: none;
               "
             >
-              Bei Quelle öffnen
+              {$t('album.open_source')}
             </a>
           {/if}
         </div>
@@ -435,18 +438,18 @@
             "
           >
             {#if tLoading}
-              <span class="skeleton-text">queue …</span>
+              <span class="skeleton-text">{$t('common.queueing')}</span>
             {:else if state?.kind === 'done'}
               <Check size={11} strokeWidth={2.4} />
-              in Library
+              {$t('album.row.in_library')}
             {:else if state?.kind === 'exists'}
               <Check size={11} strokeWidth={1.8} />
-              vorhanden
+              {$t('album.button.exists')}
             {:else if state?.kind === 'error'}
-              Fehler
+              {$t('common.error')}
             {:else}
               <Download size={11} strokeWidth={1.8} />
-              Track
+              {$t('album.row.track')}
             {/if}
           </button>
         </div>
