@@ -3,17 +3,22 @@
   import {
     importApi,
     providersApi,
+    searchApi,
+    downloadApi,
+    ApiError,
     type CsvImportStatus,
     type CsvImportResult,
-    type MetadataProvidersResponse
+    type MetadataProvidersResponse,
+    type Track
   } from '$lib/api';
-  import { defaultProvider, defaultLocation } from '$lib/preferences';
+  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import { get } from 'svelte/store';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import ProgressLine from '$lib/components/ProgressLine.svelte';
+  import AlbumArt from '$lib/components/AlbumArt.svelte';
   import { tint, DEFAULT_HUE } from '$lib/accent';
-  import { Upload, Loader2, Download, FileText, X } from 'lucide-svelte';
+  import { Upload, Loader2, Download, FileText, X, Search } from 'lucide-svelte';
 
   // ── Provider ────────────────────────────────────────────
   let provider = $state<string>('');
@@ -202,6 +207,83 @@
     if (!f) return;
     csvText = await f.text();
     input.value = '';
+  }
+
+  // ── Per-Row Re-Check für Unmatched ──────────────────────
+  // Sucht den Track mit derselben /api/search-Funktion wie der Library-Screen.
+  // Wenn ein Treffer kommt → CSV-Match-Worker hat ihn übersehen (Bug oder
+  // Query-Format-Drift). Wenn 0 Treffer → echter Deezer-Miss.
+  type RecheckState = {
+    loading: boolean;
+    results?: Track[];
+    error?: string;
+    queueState?: Record<string, 'queued' | 'done' | 'exists' | 'error'>;
+  };
+  let recheck = $state<Record<number, RecheckState>>({});
+
+  async function recheckRow(index: number, artist: string, title: string) {
+    const query = `${artist} ${title}`.trim();
+    if (!query) return;
+    recheck = { ...recheck, [index]: { loading: true, queueState: {} } };
+    try {
+      const results = await searchApi.tracks(query, provider || undefined, 5);
+      recheck = {
+        ...recheck,
+        [index]: { loading: false, results, queueState: {} }
+      };
+    } catch (err) {
+      recheck = {
+        ...recheck,
+        [index]: {
+          loading: false,
+          results: [],
+          error: err instanceof Error ? err.message : 'Suche fehlgeschlagen',
+          queueState: {}
+        }
+      };
+    }
+  }
+
+  async function queueRecheckTrack(index: number, track: Track) {
+    const cur = recheck[index];
+    if (!cur) return;
+    const qs = { ...(cur.queueState ?? {}), [track.id]: 'queued' as const };
+    recheck = { ...recheck, [index]: { ...cur, queueState: qs } };
+    try {
+      await downloadApi.start(track.id, {
+        location: $defaultLocation,
+        provider: provider || undefined,
+        format: $defaultFormat || undefined,
+        quality: $defaultQuality || undefined
+      });
+      const cur2 = recheck[index];
+      if (!cur2) return;
+      recheck = {
+        ...recheck,
+        [index]: {
+          ...cur2,
+          queueState: { ...(cur2.queueState ?? {}), [track.id]: 'done' }
+        }
+      };
+    } catch (err) {
+      const cur2 = recheck[index];
+      if (!cur2) return;
+      const kind: 'exists' | 'error' =
+        err instanceof ApiError && err.status === 409 ? 'exists' : 'error';
+      recheck = {
+        ...recheck,
+        [index]: {
+          ...cur2,
+          queueState: { ...(cur2.queueState ?? {}), [track.id]: kind }
+        }
+      };
+    }
+  }
+
+  function fmtDur(ms: number): string {
+    if (!ms) return '';
+    const s = Math.round(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 
   // ── Drag & Drop ──────────────────────────────────────────
@@ -817,8 +899,9 @@
 
       <div class="space-y-1.5">
         {#each csvResult.unmatched as u, i}
+          {@const r = recheck[i]}
           <div
-            class="flex items-center justify-between gap-3 px-4 py-2.5 transition-colors"
+            class="px-4 py-2.5 transition-colors"
             style="
               background: rgba(20, 20, 24, 0.4);
               backdrop-filter: blur(20px);
@@ -827,22 +910,145 @@
               border-radius: 12px;
             "
           >
-            <div class="flex items-center gap-3 min-w-0 flex-1">
-              <span
-                class="text-[10.5px] tabular-nums flex-shrink-0"
-                style="color: var(--color-fg-tertiary); font-family: var(--font-mono); width: 36px;"
-              >
-                {String(i + 1).padStart(3, '0')}
-              </span>
-              <div class="text-[13px] truncate" style="color: var(--color-fg-secondary);">
-                <span style="color: var(--color-fg-primary);"
-                  >{u.requested_artist || u.original || '?'}</span
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <span
+                  class="text-[10.5px] tabular-nums flex-shrink-0"
+                  style="color: var(--color-fg-tertiary); font-family: var(--font-mono); width: 36px;"
                 >
-                {#if u.requested_title}
-                  <span style="color: var(--color-fg-tertiary);"> · {u.requested_title}</span>
+                  {String(i + 1).padStart(3, '0')}
+                </span>
+                <div class="text-[13px] truncate" style="color: var(--color-fg-secondary);">
+                  <span style="color: var(--color-fg-primary);"
+                    >{u.requested_artist || u.original || '?'}</span
+                  >
+                  {#if u.requested_title}
+                    <span style="color: var(--color-fg-tertiary);"> · {u.requested_title}</span>
+                  {/if}
+                </div>
+              </div>
+              <button
+                type="button"
+                onclick={() =>
+                  recheckRow(i, u.requested_artist ?? '', u.requested_title ?? '')}
+                disabled={r?.loading}
+                class="inline-flex items-center gap-1 transition-colors disabled:opacity-50 flex-shrink-0"
+                style="
+                  background: rgba(255, 255, 255, 0.04);
+                  border: 1px solid var(--color-border-soft);
+                  color: var(--color-fg-secondary);
+                  padding: 4px 10px;
+                  border-radius: 999px;
+                  font-size: 10.5px;
+                "
+                aria-label="Bei Deezer nachprüfen"
+              >
+                {#if r?.loading}
+                  <Loader2 size={10} class="animate-spin" />
+                  prüfe …
+                {:else if r?.results}
+                  <Search size={10} strokeWidth={1.8} />
+                  erneut
+                {:else}
+                  <Search size={10} strokeWidth={1.8} />
+                  nachprüfen
+                {/if}
+              </button>
+            </div>
+
+            {#if r && !r.loading}
+              <div
+                class="mt-3 pt-3 space-y-1.5"
+                style="border-top: 1px solid var(--color-border-soft);"
+              >
+                {#if r.error}
+                  <div class="text-[11px]" style="color: var(--color-status-error);">
+                    {r.error}
+                  </div>
+                {:else if r.results && r.results.length === 0}
+                  <div class="text-[11px]" style="color: var(--color-fg-tertiary);">
+                    Deezer liefert auch jetzt 0 Treffer — der Track ist tatsächlich nicht im
+                    Provider-Katalog (nicht ein Match-Bug).
+                  </div>
+                {:else if r.results}
+                  <div
+                    class="text-[10.5px] uppercase mb-1"
+                    style="
+                      color: {accent};
+                      letter-spacing: 0.18em;
+                      font-weight: 600;
+                    "
+                  >
+                    Live-Treffer · {r.results.length}
+                  </div>
+                  {#each r.results as t (t.id)}
+                    {@const qs = r.queueState?.[t.id]}
+                    <div
+                      class="flex items-center gap-3 px-2.5 py-1.5 rounded-md"
+                      style="background: rgba(0, 0, 0, 0.25);"
+                    >
+                      <AlbumArt src={t.album_art} alt={t.album} size="sm" />
+                      <div class="flex-1 min-w-0">
+                        <div
+                          class="text-[12px] truncate"
+                          style="color: var(--color-fg-primary); font-weight: 500;"
+                        >
+                          {t.name}
+                        </div>
+                        <div
+                          class="text-[10.5px] truncate"
+                          style="color: var(--color-fg-tertiary);"
+                        >
+                          {t.artist}
+                          {#if t.album} · {t.album}{/if}
+                        </div>
+                      </div>
+                      <div
+                        class="text-[10px] tabular-nums flex-shrink-0"
+                        style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
+                      >
+                        {fmtDur(t.duration_ms)}
+                      </div>
+                      <button
+                        type="button"
+                        onclick={() => queueRecheckTrack(i, t)}
+                        disabled={qs === 'queued' || qs === 'done' || qs === 'exists'}
+                        class="inline-flex items-center gap-1 transition-colors disabled:cursor-default flex-shrink-0"
+                        style="
+                          background: {qs === 'done'
+                          ? 'var(--color-status-done)'
+                          : qs === 'exists'
+                            ? 'var(--color-surface-3)'
+                            : qs === 'error'
+                              ? 'var(--color-status-error)'
+                              : accentSoft};
+                          color: {qs === 'exists' ? 'var(--color-fg-secondary)' : '#1a1410'};
+                          padding: 3px 9px;
+                          border-radius: 999px;
+                          font-size: 10px;
+                          font-weight: 600;
+                          letter-spacing: 0.04em;
+                          text-transform: uppercase;
+                        "
+                      >
+                        {#if qs === 'queued'}
+                          <Loader2 size={10} class="animate-spin" />
+                        {:else if qs === 'done'}
+                          ✓ queued
+                        {:else if qs === 'exists'}
+                          ✓ vorhanden
+                        {:else if qs === 'error'}
+                          fehler
+                        {:else}
+                          <Download size={10} strokeWidth={2} />
+                          queuen
+                        {/if}
+                      </button>
+                    </div>
+                  {/each}
                 {/if}
               </div>
-            </div>
+            {/if}
           </div>
         {/each}
       </div>
