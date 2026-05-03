@@ -18,6 +18,7 @@
   import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import { get } from 'svelte/store';
   import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { t } from '$lib/i18n';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import GlassCard from '$lib/components/GlassCard.svelte';
@@ -380,7 +381,7 @@
           margin-bottom: 14px;
         "
       >
-        Bibliothek
+        {$t('library.eyebrow')}
       </div>
       <h1
         class="font-semibold m-0"
@@ -392,8 +393,10 @@
           letter-spacing: -0.035em;
         "
       >
-        Was hörst du<br />
-        <em style="color: {accent}; font-weight: 400; font-style: italic;">heute Abend</em>?
+        {$t('library.title.before')}<br />
+        <em style="color: {accent}; font-weight: 400; font-style: italic;"
+          >{$t('library.title.italic')}</em
+        >{$t('library.title.after')}
       </h1>
       <p
         style="
@@ -404,8 +407,7 @@
           line-height: 1.6;
         "
       >
-        Suche über Deezer, Spotify und YouTube — Tonus matcht Tags und legt
-        den Track sauber in deine Bibliothek.
+        {$t('library.description')}
       </p>
     </div>
     <div class="flex justify-center">
@@ -446,7 +448,9 @@
         oninput={onInput}
         onkeydown={(e) => e.key === 'Enter' && runSearch()}
         type="text"
-        placeholder={mode === 'tracks' ? 'Track, Artist oder Album …' : 'Album oder Artist …'}
+        placeholder={mode === 'tracks'
+          ? $t('library.placeholder.tracks')
+          : $t('library.placeholder.albums')}
         class="flex-1 bg-transparent outline-none"
         style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary);"
         autocomplete="off"
@@ -456,11 +460,11 @@
         <Loader2 size={16} class="animate-spin" style="color: var(--color-fg-tertiary);" />
       {:else if mode === 'tracks' && trackResults.length > 0}
         <span class="uppercase" style="font-size: 11px; color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.04em;">
-          {trackResults.length} Treffer
+          {trackResults.length} {$t('common.matches')}
         </span>
       {:else if mode === 'albums' && albumResults.length > 0}
         <span class="uppercase" style="font-size: 11px; color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.04em;">
-          {albumResults.length} Treffer
+          {albumResults.length} {$t('common.matches')}
         </span>
       {/if}
     {:else if mode === 'url'}
@@ -469,7 +473,7 @@
         type="url"
         bind:value={urlInput}
         onkeydown={(e) => e.key === 'Enter' && submitUrl()}
-        placeholder="https:// — YouTube, SoundCloud, Bandcamp, Vimeo …"
+        placeholder={$t('library.placeholder.url')}
         spellcheck="false"
         autocomplete="off"
         class="flex-1 bg-transparent outline-none"
@@ -486,7 +490,7 @@
         {:else}
           <Download size={11} strokeWidth={2} />
         {/if}
-        In Queue
+        {$t('library.url.queue_button')}
       </button>
     {:else if mode === 'reverse'}
       <Youtube size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
@@ -494,7 +498,7 @@
         type="url"
         bind:value={revUrl}
         onkeydown={(e) => e.key === 'Enter' && submitReverse()}
-        placeholder="https://www.youtube.com/watch?v=…"
+        placeholder={$t('library.placeholder.youtube')}
         spellcheck="false"
         autocomplete="off"
         class="flex-1 bg-transparent outline-none"
@@ -509,7 +513,7 @@
         {#if revBusy}
           <Loader2 size={11} class="animate-spin" />
         {:else}
-          Match suchen
+          {$t('library.youtube.search_button')}
         {/if}
       </button>
     {/if}
@@ -527,10 +531,10 @@
     "
   >
     {#each [
-      { id: 'tracks' as Mode, label: 'Tracks', count: trackResults.length, icon: null },
-      { id: 'albums' as Mode, label: 'Alben', count: albumResults.length, icon: null },
-      { id: 'url' as Mode, label: 'URL', count: null, icon: Link2 },
-      { id: 'reverse' as Mode, label: 'YouTube-Match', count: null, icon: Youtube }
+      { id: 'tracks' as Mode, labelKey: 'library.mode.tracks' as const, count: trackResults.length, icon: null },
+      { id: 'albums' as Mode, labelKey: 'library.mode.albums' as const, count: albumResults.length, icon: null },
+      { id: 'url' as Mode, labelKey: 'library.mode.url' as const, count: null, icon: Link2 },
+      { id: 'reverse' as Mode, labelKey: 'library.mode.youtube_match' as const, count: null, icon: Youtube }
     ] as m}
       {@const active = mode === m.id}
       <button
@@ -547,7 +551,7 @@
         {#if m.icon}
           <svelte:component this={m.icon} size={13} strokeWidth={1.5} />
         {/if}
-        {m.label}
+        {$t(m.labelKey)}
         {#if m.count !== null && m.count > 0}
           <span style="color: var(--color-fg-tertiary);"> · {m.count}</span>
         {/if}
@@ -564,7 +568,7 @@
         "
       >
         {#each providersData.providers.filter((p) => p.configured) as p}
-          <option value={p.id}>{p.label} · Default</option>
+          <option value={p.id}>{p.label} · {$t('library.provider.default_suffix')}</option>
         {/each}
       </select>
     {/if}
@@ -636,16 +640,16 @@
                   : 'none'}; min-width: 110px; justify-content: center;"
               >
                 {#if loading}
-                  <span class="skeleton-text">queue …</span>
+                  <span class="skeleton-text">{$t('common.queueing')}</span>
                 {:else if state?.kind === 'done'}
-                  ✓ in Queue
+                  {$t('common.in_queue')}
                 {:else if state?.kind === 'exists'}
-                  ✓ vorhanden
+                  {$t('common.exists')}
                 {:else if state?.kind === 'error'}
-                  Fehler
+                  {$t('common.error')}
                 {:else}
                   <Download size={13} strokeWidth={1.8} />
-                  Download
+                  {$t('common.download')}
                 {/if}
               </button>
             </div>
@@ -667,8 +671,7 @@
       </div>
     {/if}
     <p style="font-size: 12px; color: var(--color-fg-tertiary);">
-      Lädt direkt via yt-dlp ohne Metadata-Match. Title und Artist-Tag bleiben so wie auf der
-      Quelle. Brauchst du saubere Tags, nutze stattdessen <strong>YouTube-Match</strong>.
+      {$t('library.url.hint')}
     </p>
 
   <!-- ─── YouTube-Match: Hint + Direct-Action + Lookup-Results ─── -->
@@ -680,7 +683,7 @@
           class="inline-flex items-center gap-2 transition-colors"
           style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary); padding: 6px 14px; border-radius: 999px; font-size: 11.5px;"
         >
-          Direkt laden ohne Match
+          {$t('library.youtube.direct_button')}
         </button>
         {#if revError}
           <span style="color: var(--color-status-error);">{revError}</span>
@@ -689,9 +692,7 @@
     {/if}
     {#if !revLookup}
       <p style="font-size: 12px; color: var(--color-fg-tertiary);">
-        Sucht den Track aus dem YouTube-Video im gewählten Provider (Deezer/Spotify) und lädt ihn
-        von dort mit sauberen Tags + Cover. Bei keinem Match-Treffer kannst du immer noch direkt
-        laden.
+        {$t('library.youtube.hint')}
       </p>
     {/if}
 
@@ -699,7 +700,7 @@
       <div class="space-y-3 mt-4">
         {#if revLookup.youtube?.title}
           <div class="text-[13px]" style="color: var(--color-fg-secondary);">
-            <span style="color: var(--color-fg-tertiary);">YouTube:</span>
+            <span style="color: var(--color-fg-tertiary);">{$t('library.youtube.label')}</span>
             <span style="color: var(--color-fg-primary);" class="font-medium">
               {revLookup.youtube.title}
             </span>
@@ -707,7 +708,9 @@
           </div>
         {/if}
         <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
-          {revLookup.spotify_candidates.length} mögliche Treffer · wähle einen für Tags + Cover
+          {$t('library.youtube.candidates_hint', {
+            count: revLookup.spotify_candidates.length
+          })}
         </div>
         <div class="space-y-2">
           {#each revLookup.spotify_candidates as c (c.id)}
@@ -754,16 +757,16 @@
                       : 'none'}; min-width: 110px; justify-content: center;"
                   >
                     {#if rLoading}
-                      <span class="skeleton-text">queue …</span>
+                      <span class="skeleton-text">{$t('common.queueing')}</span>
                     {:else if state?.kind === 'done'}
-                      ✓ in Queue
+                      {$t('common.in_queue')}
                     {:else if state?.kind === 'exists'}
-                      ✓ vorhanden
+                      {$t('common.exists')}
                     {:else if state?.kind === 'error'}
-                      Fehler
+                      {$t('common.error')}
                     {:else}
                       <Download size={13} strokeWidth={1.8} />
-                      Diesen Match
+                      {$t('library.button.this_match')}
                     {/if}
                   </button>
                 </div>
@@ -776,10 +779,10 @@
 
   <!-- Empty states -->
   {:else if (mode === 'tracks' || mode === 'albums') && query && !searching}
-    <p style="font-size: 12px; color: var(--color-fg-tertiary);">Keine Treffer.</p>
+    <p style="font-size: 12px; color: var(--color-fg-tertiary);">{$t('common.no_results')}</p>
   {:else if (mode === 'tracks' || mode === 'albums') && !query}
     <p style="font-size: 12px; color: var(--color-fg-tertiary);">
-      Tipp: Suchbegriff eingeben und ↵ drücken, oder einfach 320&nbsp;ms tippen.
+      {$t('library.empty.no_query')}
     </p>
   {/if}
 </section>
