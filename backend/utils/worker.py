@@ -293,19 +293,24 @@ class JobWorker(threading.Thread):
             return
 
         # ---- Phase 1: Dedup ------------------------------------------------
-        # Key = (artist_lc, title_lc). Leere Artists landen als ("", title_lc),
-        # was korrekt ist — verschiedene Songs mit gleichem Titel teilen sich
-        # dann nur den Lookup wenn Artist gleich (oder beide leer) ist.
+        # Key = (artist_lc, title_lc) für Dedup-Stabilität. Leere Artists
+        # landen als ("", title_lc), was korrekt ist — verschiedene Songs
+        # mit gleichem Titel teilen sich dann nur den Lookup wenn Artist
+        # gleich (oder beide leer) ist.
+        # Parallel halten wir ein Mapping zur original-case-Version, weil
+        # der Provider-Search mit Mixed-Case oft bessere Treffer liefert
+        # als mit lowercased Strings (siehe field-based search unten).
         unique_keys: List[Tuple[str, str]] = []
         seen: Dict[Tuple[str, str], None] = {}
+        key_to_original: Dict[Tuple[str, str], Tuple[str, str]] = {}
         for row in pending:
-            key = (
-                (row["requested_artist"] or "").strip().lower(),
-                (row["requested_title"] or "").strip().lower(),
-            )
+            artist_orig = (row["requested_artist"] or "").strip()
+            title_orig = (row["requested_title"] or "").strip()
+            key = (artist_orig.lower(), title_orig.lower())
             if key not in seen:
                 seen[key] = None
                 unique_keys.append(key)
+                key_to_original[key] = (artist_orig, title_orig)
 
         unique_total = len(unique_keys)
         upsert_csv_job(
@@ -343,27 +348,55 @@ class JobWorker(threading.Thread):
         def _do_search(
             key: Tuple[str, str], lane: str = "default"
         ) -> Tuple[Tuple[str, str], Optional[Dict[str, Any]], str, bool]:
-            """Sucht einen einzelnen Track.
+            """Sucht einen einzelnen Track mit zweistufiger Match-Strategie.
 
-            Strategie bei transient errors:
-            - Dual-Lane (lane in {a,b}): einmalig auf die andere Lane retried
-              (Failover). was_failover=True dokumentiert den Lane-Wechsel.
-              Andere Lane hat eigene Source-IP, sitzt nicht im selben
-              Rate-Limit-Bucket — also kein Backoff nötig.
-            - Single-Lane (lane == "default"): keine Alternativ-Lane, also
-              exponential-backoff in-place via _CSV_429_RETRY_DELAYS.
+            Stufe 1 (Field-Search): Wenn artist UND title vorhanden sind,
+            nutzt Deezers field-syntax `artist:"X" track:"Y"`. Das ist ein
+            präziser Match — Deezer filtert auf exakten Artist + Title-Match
+            statt Free-Text-Relevance-Roulette. Trifft den richtigen Track
+            auch wenn er textlich verschüttet wäre. Mixed-Case (nicht
+            lowercased) liefert empirisch bessere Treffer als alles-klein.
 
-            Permanent-Fehler (4xx außer 429, malformed response, leeres
-            results-Array) → sofort als unmatched. Nur dann ist's wirklich
-            ein "Track existiert nicht"-Signal.
+            Stufe 2 (Free-Text-Fallback): Wenn Field-Search 0 Treffer liefert
+            (z.B. weil der Artist im CSV anders geschrieben ist als bei
+            Deezer — "Beatles" vs "The Beatles"), fallback auf Free-Text mit
+            höherem Limit. Ranking ist dann Deezers Job.
+
+            Failure-Handling bei transient errors:
+            - Dual-Lane: einmalig auf die andere Lane retried (Failover,
+              andere Source-IP, kein Backoff)
+            - Single-Lane: exponential-backoff via _CSV_429_RETRY_DELAYS
+
+            Permanent-Fehler (4xx außer 429, malformed response, beide
+            Stufen 0 Treffer) → unmatched.
 
             Returnt (key, result, lane_used, was_failover).
             """
-            artist_lc, title_lc = key
-            query = f"{artist_lc} {title_lc}".strip() if artist_lc else title_lc
+            artist_orig, title_orig = key_to_original.get(key, ("", ""))
 
             def _attempt(this_lane: str) -> Optional[Dict[str, Any]]:
-                results = svc.search_tracks(query, limit=search_limit, source=this_lane)
+                # Stufe 1: Field-Search wenn beide Felder da sind. Limit 5
+                # reicht — Deezer rankt bei field-search nach exact-match.
+                if artist_orig and title_orig:
+                    field_q = f'artist:"{artist_orig}" track:"{title_orig}"'
+                    results = svc.search_tracks(field_q, limit=5, source=this_lane)
+                    if results:
+                        return results[0]
+                # Stufe 2: Free-Text-Fallback. Höheres Limit weil Deezer
+                # bei Free-Text Tracks mit ähnlichem Titel hochrankt — der
+                # gewünschte Treffer kann auf Position 5-15 liegen wenn
+                # der Artist-Name nicht-Standard ist.
+                if artist_orig and title_orig:
+                    free_q = f"{artist_orig} {title_orig}"
+                elif title_orig:
+                    free_q = title_orig
+                else:
+                    free_q = artist_orig
+                if not free_q.strip():
+                    return None
+                results = svc.search_tracks(
+                    free_q, limit=max(search_limit, 15), source=this_lane
+                )
                 return results[0] if results else None
 
             try:
