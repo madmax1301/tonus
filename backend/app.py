@@ -377,6 +377,9 @@ class CsvImportRequest(BaseModel):
     csv_text: str
     provider: Optional[str] = None
     limit: Optional[int] = 5  # Deezer search results per track, max 5
+    # Optional: original-Filename für UI-Anzeige (Tab zeigt sonst nur job_id).
+    # Liefert das Frontend bei File-Upload mit; bei Text-Paste bleibt's null.
+    filename: Optional[str] = None
 
 
 class URLDownloadRequest(BaseModel):
@@ -1865,11 +1868,20 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     finally:
         conn.close()
 
+    # Worker-Payload: provider + search_limit als sauberes JSON in eigener
+    # Spalte (vorher: Hijack des `message`-Felds als "provider|limit|pending_raw"-
+    # String, was bei verzögertem Worker-Pickup als Status-Message in der UI
+    # auftauchte). Filename optional für UI-Anzeige.
+    payload = json.dumps({"provider": provider, "search_limit": search_limit})
+    fname = (request.filename or "").strip() or None
+
     upsert_csv_job(
         job_id,
         status="queued",
         total=len(parsed),
-        message=f"Processing {len(parsed)} tracks...",
+        message=f"Queued — waiting for worker ({len(parsed)} tracks)",
+        filename=fname,
+        payload_json=payload,
     )
 
     # Store parsed items in a temp table so the worker can read them
@@ -1879,18 +1891,7 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
         for p in parsed
     ])
 
-    # Add payload to csv_import_jobs so worker knows provider + search_limit
-    conn = _csv_db()
-    try:
-        conn.execute(
-            "UPDATE csv_import_jobs SET message = ? WHERE job_id = ?",
-            (f"{provider}|{search_limit}|pending_raw", job_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    return {"status": "queued", "job_id": job_id, "total": len(parsed)}
+    return {"status": "queued", "job_id": job_id, "total": len(parsed), "filename": fname}
 
 
 @app.get("/api/import/csv/status/{job_id}")
@@ -1906,6 +1907,7 @@ async def csv_import_status(job_id: str):
         "found": job["found"],
         "not_found": job["not_found"],
         "message": job.get("message", ""),
+        "filename": job.get("filename"),
     }
 
 

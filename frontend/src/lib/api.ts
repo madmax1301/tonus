@@ -244,6 +244,8 @@ export interface CsvImportStatus {
   found: number;
   not_found: number;
   message?: string;
+  /** Original-Filename (CSV-Upload), oder null bei Text-Paste. */
+  filename?: string | null;
 }
 
 export interface CsvMatched {
@@ -275,11 +277,12 @@ export interface CsvImportResult {
 }
 
 export const importApi = {
-  startCsv: (csvText: string, provider?: string, limit?: number) =>
+  startCsv: (csvText: string, provider?: string, limit?: number, filename?: string) =>
     api.post<CsvImportStartResponse>('/api/import/csv', {
       csv_text: csvText,
       provider,
-      limit
+      limit,
+      filename
     }),
   status: (jobId: string) => api.get<CsvImportStatus>(`/api/import/csv/status/${jobId}`),
   result: (jobId: string, offset = 0, limit = 200) =>

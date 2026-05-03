@@ -73,10 +73,17 @@ def init_jobs_db() -> None:
             found INTEGER NOT NULL DEFAULT 0,
             not_found INTEGER NOT NULL DEFAULT 0,
             message TEXT,
+            filename TEXT,
+            payload_json TEXT,
             created_at_ms INTEGER NOT NULL,
             updated_at_ms INTEGER NOT NULL
         )
         """)
+        # Bestehende DBs nachziehen — vor diesen Spalten lebte der Worker mit
+        # einem `message`-Feld-Hijack ("provider|limit|pending_raw"), der
+        # zwei Zwecke vermischte: User-Status-Anzeige + Job-Payload. Trennen.
+        _ensure_column(conn, "csv_import_jobs", "filename", "TEXT")
+        _ensure_column(conn, "csv_import_jobs", "payload_json", "TEXT")
 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS csv_import_results (
@@ -327,30 +334,62 @@ def get_album_aggregate(album_id: str, *, exclude_job_id: Optional[str] = None) 
 def upsert_csv_job(
     job_id: str,
     *,
-    status: str,
-    total: int = 0,
-    processed: int = 0,
-    found: int = 0,
-    not_found: int = 0,
-    message: str = "",
+    status: Optional[str] = None,
+    total: Optional[int] = None,
+    processed: Optional[int] = None,
+    found: Optional[int] = None,
+    not_found: Optional[int] = None,
+    message: Optional[str] = None,
+    filename: Optional[str] = None,
+    payload_json: Optional[str] = None,
 ) -> None:
+    """
+    Partial upsert: nur Felder mit non-None werden im Update-Pfad
+    überschrieben. Dahinter steckt die Lehre aus dem alten "found=0"-
+    Bug — wenn der Worker während Phase 2 nur `processed` und `message`
+    übergab, wurden `found`/`not_found` stillschweigend auf den default
+    (0) zurückgesetzt. Mit COALESCE(excluded.x, table.x) bleibt der
+    bisherige DB-Wert stehen, wenn der Caller das Feld nicht explizit
+    setzt — semantisch genau das, was Caller erwarten.
+
+    Der Insert-Pfad (erster Aufruf für eine neue job_id) füllt fehlende
+    Felder pragmatisch mit sinnvollen Defaults via COALESCE auf der
+    VALUES-Seite — sonst gäbe es NOT-NULL-Verletzungen.
+    """
     now = _now_ms()
     conn = _db()
     try:
         conn.execute(
             """
-            INSERT INTO csv_import_jobs (job_id, status, total, processed, found, not_found, message, created_at_ms, updated_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO csv_import_jobs (
+                job_id, status, total, processed, found, not_found,
+                message, filename, payload_json, created_at_ms, updated_at_ms
+            )
+            VALUES (
+                ?,
+                COALESCE(?, 'queued'),
+                COALESCE(?, 0),
+                COALESCE(?, 0),
+                COALESCE(?, 0),
+                COALESCE(?, 0),
+                COALESCE(?, ''),
+                ?, ?, ?, ?
+            )
             ON CONFLICT(job_id) DO UPDATE SET
-                status=excluded.status,
-                total=excluded.total,
-                processed=excluded.processed,
-                found=excluded.found,
-                not_found=excluded.not_found,
-                message=excluded.message,
-                updated_at_ms=excluded.updated_at_ms
+                status        = COALESCE(excluded.status,       csv_import_jobs.status),
+                total         = COALESCE(excluded.total,        csv_import_jobs.total),
+                processed     = COALESCE(excluded.processed,    csv_import_jobs.processed),
+                found         = COALESCE(excluded.found,        csv_import_jobs.found),
+                not_found     = COALESCE(excluded.not_found,    csv_import_jobs.not_found),
+                message       = COALESCE(excluded.message,      csv_import_jobs.message),
+                filename      = COALESCE(excluded.filename,     csv_import_jobs.filename),
+                payload_json  = COALESCE(excluded.payload_json, csv_import_jobs.payload_json),
+                updated_at_ms = excluded.updated_at_ms
             """,
-            (job_id, status, total, processed, found, not_found, message, now, now),
+            (
+                job_id, status, total, processed, found, not_found,
+                message, filename, payload_json, now, now,
+            ),
         )
         conn.commit()
     finally:

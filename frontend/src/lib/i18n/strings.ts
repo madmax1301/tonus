@@ -157,7 +157,7 @@ export const strings = {
     'import.recheck.checking': 'prüfe …',
     'import.recheck.live_hits': 'Live-Treffer · {count}',
     'import.recheck.no_hits':
-      'Deezer liefert auch jetzt 0 Treffer — der Track ist tatsächlich nicht im Provider-Katalog (nicht ein Match-Bug).',
+      'Deezer liefert auch jetzt 0 Treffer — der Track ist tatsächlich nicht im Provider-Katalog.',
     'import.queueing': 'Queue …',
 
     // ── Settings ────────────────────────────────────────
@@ -380,7 +380,7 @@ export const strings = {
     'import.recheck.checking': 'checking …',
     'import.recheck.live_hits': 'Live hits · {count}',
     'import.recheck.no_hits':
-      'Deezer also returns 0 results now — the track is genuinely not in the provider catalog (not a match bug).',
+      'Deezer also returns 0 results now — the track is genuinely not in the provider catalog.',
     'import.queueing': 'queue …',
 
     // ── Settings ────────────────────────────────────────

@@ -41,7 +41,9 @@ _COOLDOWN_429 = (300, 600)          # 5–10 min nach erkanntem 429
 _VPN_SPLIT_ENABLED = os.environ.get("VPN_SPLIT_ENABLED", "").strip().lower() == "true"
 _CSV_SEARCH_CONCURRENCY = 8 if _VPN_SPLIT_ENABLED else 2
 _CSV_FLUSH_BATCH = 500
-_CSV_PROGRESS_EVERY = 50            # alle N abgeschlossene Unique-Suchen Status updaten
+_CSV_PROGRESS_EVERY = 5             # alle N abgeschlossene Unique-Suchen Status updaten —
+                                    # 5 statt 50, damit das Frontend mit svelte/motion `tweened`
+                                    # echten Counter-Verlauf bekommt statt 0→34→65-Sprünge.
 
 # Bei einem 429 ohne Failover-Möglichkeit (single-lane) versuchen wir es mit
 # exponential backoff erneut. 1.5 s → 3 s → aufgeben. Hält uns über schwankende
@@ -204,7 +206,7 @@ class JobWorker(threading.Thread):
         try:
             row = conn.execute(
                 """
-                SELECT job_id, message, total
+                SELECT job_id, payload_json, message, total
                 FROM csv_import_jobs
                 WHERE status = 'queued'
                 ORDER BY created_at_ms ASC
@@ -220,16 +222,31 @@ class JobWorker(threading.Thread):
             )
             conn.commit()
 
+            # Provider/search_limit aus payload_json (sauberer Weg, seit
+            # Schema-Migration). Fallback auf den alten message-Hijack
+            # ("provider|limit|pending_raw") für Jobs aus der Übergangs-
+            # phase, die noch vor dem Schema-Upgrade angelegt wurden.
             provider = "deezer"
             search_limit = 3
-            msg = row["message"] or ""
-            parts = msg.split("|")
-            if len(parts) >= 2:
-                provider = parts[0]
+            payload_raw = row["payload_json"]
+            if payload_raw:
                 try:
-                    search_limit = int(parts[1])
-                except ValueError:
+                    payload = json.loads(payload_raw)
+                    if isinstance(payload.get("provider"), str):
+                        provider = payload["provider"]
+                    if isinstance(payload.get("search_limit"), int):
+                        search_limit = payload["search_limit"]
+                except (json.JSONDecodeError, TypeError):
                     pass
+            else:
+                msg = row["message"] or ""
+                parts = msg.split("|")
+                if len(parts) >= 2 and parts[-1] == "pending_raw":
+                    provider = parts[0]
+                    try:
+                        search_limit = int(parts[1])
+                    except ValueError:
+                        pass
 
             return {
                 "job_id": row["job_id"],
@@ -468,6 +485,18 @@ class JobWorker(threading.Thread):
                     # die DB-Materialisierung-Phase 5 %. Damit hängt die Bar
                     # nicht auf 100 %, während Recovery noch 90 s rennt.
                     est_processed = int(0.70 * total * completed_unique / max(1, unique_total))
+                    # Live-Counter: cache hat alle bisherigen Lookup-Ergebnisse
+                    # (None = nichts gefunden, dict = Treffer). Auf row-count
+                    # skalieren, weil die UI matched/not_found als "von total"
+                    # interpretiert. Bei perfekter Dedup-Rate stimmt das
+                    # exakt überein, sonst ist es eine knappe Estimate, die
+                    # in Phase 3 (Materialisierung) auf den echten Row-Count
+                    # korrigiert wird.
+                    matched_unique = sum(1 for v in cache.values() if v is not None)
+                    unmatched_unique = completed_unique - matched_unique
+                    scale = total / max(1, unique_total)
+                    est_found = int(matched_unique * scale)
+                    est_not_found = int(unmatched_unique * scale)
                     if _VPN_SPLIT_ENABLED:
                         lane_str = (
                             f" (lane A: {lane_served.get('a', 0)}, "
@@ -481,6 +510,8 @@ class JobWorker(threading.Thread):
                         status="processing",
                         total=total,
                         processed=min(est_processed, total),
+                        found=est_found,
+                        not_found=est_not_found,
                         message=f"Matched {completed_unique}/{unique_total} unique tracks{lane_str}...",
                     )
 
@@ -540,11 +571,18 @@ class JobWorker(threading.Thread):
                     # Recovery-Anteil: 25 % der Bar zwischen Phase-2-Ende und
                     # 95 %, linear über alle Recovery-Calls verteilt.
                     recovery_share = int(0.25 * total * (idx + 1) / recovery_total)
+                    # Live-Counter weiter pflegen — pro Recovery-Treffer steigt
+                    # `found` um eins (skaliert), `not_found` sinkt entsprechend.
+                    matched_unique = sum(1 for v in cache.values() if v is not None)
+                    unmatched_unique = unique_total - matched_unique
+                    scale = total / max(1, unique_total)
                     upsert_csv_job(
                         job_id,
                         status="processing",
                         total=total,
                         processed=min(phase2_end + recovery_share, no_recovery_end),
+                        found=int(matched_unique * scale),
+                        not_found=int(unmatched_unique * scale),
                         message=(
                             f"Recovery: {idx + 1}/{recovery_total} re-checked, "
                             f"+{recovery_recovered} zusätzlich gefunden..."

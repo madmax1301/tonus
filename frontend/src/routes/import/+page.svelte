@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { browser } from '$app/environment';
+  import { tweened } from 'svelte/motion';
+  import { cubicOut } from 'svelte/easing';
   import {
     importApi,
     providersApi,
@@ -21,6 +24,14 @@
   import { t } from '$lib/i18n';
   import { Upload, Loader2, Download, FileText, X, Search } from 'lucide-svelte';
 
+  // localStorage-Key für die Job-Resume-Logik. Wenn der User reloadet,
+  // ein neues Tab öffnet oder Tonus für 5 Min schließt, wird der laufende
+  // Import-Job hier referenziert und beim Mount wieder aufgenommen. Der
+  // eigentliche Job läuft persistent im Backend (SQLite + Worker-Thread)
+  // — der localStorage-Key sagt dem Frontend nur, *welchen* Job es
+  // beobachten soll. Verschwindet nach Job-Abschluss / Reset.
+  const ACTIVE_CSV_KEY = 'tonus_csv_active_job';
+
   // ── Provider ────────────────────────────────────────────
   let provider = $state<string>('');
   let providersData = $state<MetadataProvidersResponse | null>(null);
@@ -38,6 +49,9 @@
   // ── CSV ──────────────────────────────────────────────────
   let csvText = $state('');
   let csvJobId = $state<string | null>(null);
+  // Original-Filename, wenn der User eine Datei gedroppt hat. Bei Text-Paste
+  // bleibt's null und wir fallen zurück auf "Job · csv-1234" als Tab-Label.
+  let csvFilename = $state<string | null>(null);
   let csvStatus = $state<CsvImportStatus | null>(null);
   let csvResult = $state<CsvImportResult | null>(null);
   let csvBusy = $state(false);
@@ -48,6 +62,16 @@
   let csvExportBusy = $state(false);
   let csvExportProgress = $state<{ loaded: number; total: number } | null>(null);
   const PAGE_SIZE = 200;
+
+  // Smooth-Counter mit svelte/motion `tweened` — Backend liefert alle 5 Calls
+  // einen Status-Update, das Frontend pollt alle 1500 ms. Ohne Easing wären
+  // das visuelle Sprünge (0 → 34 → 65 → 105). Tweened interpoliert zwischen
+  // den Snapshots in 800 ms cubicOut, sodass die Zahlen sichtbar hochlaufen.
+  // tweenProcessed: für die "X / 777"-Anzeige + Bar-Progress.
+  // tweenFound / tweenNotFound: für die grüne/rote Live-Counter unten.
+  const tweenProcessed = tweened(0, { duration: 800, easing: cubicOut });
+  const tweenFound = tweened(0, { duration: 800, easing: cubicOut });
+  const tweenNotFound = tweened(0, { duration: 800, easing: cubicOut });
 
   let csvPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -65,8 +89,19 @@
     csvError = null;
     csvResult = null;
     csvQueueAllResult = null;
+    // Tweens hart zurücksetzen — `set` ohne 2. Arg animiert nicht, sondern
+    // springt direkt auf 0. Sonst sieht der User noch die alte Match-Rate
+    // vom vorigen Job durchschimmern, bis das erste Polling-Update kommt.
+    tweenProcessed.set(0, { duration: 0 });
+    tweenFound.set(0, { duration: 0 });
+    tweenNotFound.set(0, { duration: 0 });
     try {
-      const r = await importApi.startCsv(csvText, provider || undefined);
+      const r = await importApi.startCsv(
+        csvText,
+        provider || undefined,
+        undefined,
+        csvFilename || undefined
+      );
       csvJobId = r.job_id;
       csvStatus = {
         status: 'queued',
@@ -74,8 +109,18 @@
         processed: 0,
         found: 0,
         not_found: 0,
-        message: r.message
+        message: r.message,
+        filename: csvFilename
       };
+      // Job-ID in localStorage hinterlegen, damit ein Page-Reload den
+      // Import-Status weiterbeobachten kann statt ihn zu vergessen.
+      if (browser) {
+        try {
+          localStorage.setItem(ACTIVE_CSV_KEY, r.job_id);
+        } catch {
+          /* private mode / quota — silent */
+        }
+      }
       pollCsv();
     } catch (err) {
       csvError = err instanceof Error ? err.message : 'CSV-Import fehlgeschlagen';
@@ -92,20 +137,118 @@
       try {
         const s = await importApi.status(csvJobId);
         csvStatus = s;
+        // Tweens auf neue Backend-Werte schicken — animiert smooth dorthin
+        // (cubicOut, 800 ms). Setzt csvFilename auf den Backend-Wert sobald
+        // verfügbar, damit nach einem Reload der Tab-Title stimmt.
+        tweenProcessed.set(s.processed);
+        tweenFound.set(s.found);
+        tweenNotFound.set(s.not_found);
+        if (s.filename && !csvFilename) {
+          csvFilename = s.filename;
+        }
         if (s.status === 'completed') {
           stopCsvPoll();
           csvResult = await importApi.result(csvJobId, 0, PAGE_SIZE);
+          // Job ist durch — localStorage kann gelöscht werden, der nächste
+          // Reload landet sauber im Drop-Zone-Zustand.
+          if (browser) {
+            try {
+              localStorage.removeItem(ACTIVE_CSV_KEY);
+            } catch {
+              /* noop */
+            }
+          }
         } else if (s.status === 'error') {
           stopCsvPoll();
           csvError = s.message ?? 'CSV-Import-Fehler';
+          if (browser) {
+            try {
+              localStorage.removeItem(ACTIVE_CSV_KEY);
+            } catch {
+              /* noop */
+            }
+          }
         }
-      } catch {
-        /* keep polling */
+      } catch (err) {
+        // 404 = Job-ID aus localStorage zeigt auf einen Job, der nicht mehr
+        // existiert (Backend-DB-Reset, manuelles cleanup). Sauber abbrechen
+        // statt ewig dagegen zu pollen.
+        if (err instanceof ApiError && err.status === 404) {
+          stopCsvPoll();
+          csvJobId = null;
+          csvStatus = null;
+          csvFilename = null;
+          if (browser) {
+            try {
+              localStorage.removeItem(ACTIVE_CSV_KEY);
+            } catch {
+              /* noop */
+            }
+          }
+        }
+        /* sonst: Netzwerk-Glitch o.ä. — weiterpollen */
       }
     };
     tick();
     csvPollTimer = setInterval(tick, 1500);
   }
+
+  // ── Resume-On-Reload ─────────────────────────────────────
+  // Beim Page-Mount: prüfen ob ein Job in localStorage hängt und ggf.
+  // den Status sofort fetchen. Wenn der Job noch processing/queued ist,
+  // pollen wir weiter. Wenn er schon completed ist, laden wir das Result
+  // und zeigen dem User die fertige Liste — er sieht also sofort wo der
+  // letzte Stand war, statt einen leeren Drop-Zone-Screen.
+  onMount(async () => {
+    if (!browser) return;
+    let resumeId: string | null = null;
+    try {
+      resumeId = localStorage.getItem(ACTIVE_CSV_KEY);
+    } catch {
+      return;
+    }
+    if (!resumeId) return;
+    try {
+      const s = await importApi.status(resumeId);
+      csvJobId = resumeId;
+      csvStatus = s;
+      if (s.filename) csvFilename = s.filename;
+      // Tweens direkt auf den Resume-Wert setzen (kein Animations-Sprung
+      // von 0 → 700, das wäre verwirrend).
+      tweenProcessed.set(s.processed, { duration: 0 });
+      tweenFound.set(s.found, { duration: 0 });
+      tweenNotFound.set(s.not_found, { duration: 0 });
+      if (s.status === 'completed') {
+        csvResult = await importApi.result(resumeId, 0, PAGE_SIZE);
+        try {
+          localStorage.removeItem(ACTIVE_CSV_KEY);
+        } catch {
+          /* noop */
+        }
+      } else if (s.status === 'error') {
+        csvError = s.message ?? 'CSV-Import-Fehler';
+        try {
+          localStorage.removeItem(ACTIVE_CSV_KEY);
+        } catch {
+          /* noop */
+        }
+      } else {
+        // queued/processing → weiterpollen
+        pollCsv();
+      }
+    } catch (err) {
+      // 404 = Job ist weg (Backend-Reset etc.) — Local-Reference löschen
+      // und auf neue Eingabe warten.
+      if (err instanceof ApiError && err.status === 404) {
+        try {
+          localStorage.removeItem(ACTIVE_CSV_KEY);
+        } catch {
+          /* noop */
+        }
+      }
+      /* andere Fehler: ignorieren, beim nächsten Versuch geht's vielleicht */
+    }
+  });
 
   async function queueAllMatched() {
     if (!csvJobId) return;
@@ -194,12 +337,23 @@
   function resetCsv() {
     stopCsvPoll();
     csvJobId = null;
+    csvFilename = null;
     csvStatus = null;
     csvResult = null;
     csvError = null;
     csvText = '';
     csvQueueAllResult = null;
     csvExportProgress = null;
+    tweenProcessed.set(0, { duration: 0 });
+    tweenFound.set(0, { duration: 0 });
+    tweenNotFound.set(0, { duration: 0 });
+    if (browser) {
+      try {
+        localStorage.removeItem(ACTIVE_CSV_KEY);
+      } catch {
+        /* noop */
+      }
+    }
   }
 
   async function onCsvFile(e: Event) {
@@ -207,6 +361,9 @@
     const f = input.files?.[0];
     if (!f) return;
     csvText = await f.text();
+    // Filename merken — wird beim startCsv mit ans Backend geschickt und
+    // landet als Tab-Label "playlist.csv" statt "Job · csv-1234".
+    csvFilename = f.name;
     input.value = '';
   }
 
@@ -316,9 +473,11 @@
     csvText = await f.text();
   }
 
+  // Bar-Progress aus dem tweened processed-Counter — damit die Bar
+  // synchron zum smooth Counter läuft, nicht zu den Backend-Snapshots.
   const csvProgress = $derived(
     csvStatus && csvStatus.total
-      ? Math.round((csvStatus.processed / csvStatus.total) * 100)
+      ? Math.round(($tweenProcessed / csvStatus.total) * 100)
       : 0
   );
 
@@ -412,8 +571,12 @@
       CSV
     </div>
     {#if csvJobId}
-      <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
-        Job · <span class="font-mono" style="font-family: var(--font-mono);">{csvJobId.slice(0, 8)}</span>
+      <div class="text-[12px] truncate" style="color: var(--color-fg-tertiary); max-width: 360px;">
+        {#if csvFilename}
+          <span title={csvFilename}>{csvFilename}</span>
+        {:else}
+          Job · <span class="font-mono" style="font-family: var(--font-mono);">{csvJobId.slice(0, 8)}</span>
+        {/if}
       </div>
     {/if}
     {#if providersData}
@@ -650,7 +813,7 @@
           color: var(--color-fg-primary);
         "
       >
-        <span class="tabular-nums">{csvStatus.processed.toLocaleString('de-DE')}</span>
+        <span class="tabular-nums">{Math.round($tweenProcessed).toLocaleString('de-DE')}</span>
         <span style="color: var(--color-fg-tertiary); font-weight: 300;"> / </span>
         <span class="tabular-nums" style="color: var(--color-fg-secondary);">{csvStatus.total.toLocaleString('de-DE')}</span>
         <span
@@ -678,13 +841,13 @@
         <div>
           <span style="color: var(--color-fg-tertiary);">{$t('import.live.matched')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-done);"
-            >{csvStatus.found.toLocaleString('de-DE')}</span
+            >{Math.round($tweenFound).toLocaleString('de-DE')}</span
           >
         </div>
         <div>
           <span style="color: var(--color-fg-tertiary);">{$t('import.live.not_found')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-error);"
-            >{csvStatus.not_found.toLocaleString('de-DE')}</span
+            >{Math.round($tweenNotFound).toLocaleString('de-DE')}</span
           >
         </div>
         {#if csvStatus.message}
