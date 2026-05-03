@@ -14,6 +14,7 @@
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import { tint, DEFAULT_HUE } from '$lib/accent';
   import { t, lang, type Lang } from '$lib/i18n';
+  import { showConfirm } from '$lib/confirm';
   import {
     KeyRound,
     Server,
@@ -60,8 +61,14 @@
 
   // Cache-Reset
   let cacheCleared = $state(false);
-  function clearLocalCache() {
-    if (!confirm($t('settings.local.confirm'))) return;
+  async function clearLocalCache() {
+    const ok = await showConfirm({
+      title: 'Lokale Daten löschen',
+      message: $t('settings.local.confirm'),
+      confirmLabel: 'Löschen',
+      destructive: true
+    });
+    if (!ok) return;
     const keys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);

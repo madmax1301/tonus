@@ -1,7 +1,19 @@
 <script lang="ts">
+  /**
+   * Cinematic Token-Sheet — Glass-Center-Modal statt Bottom-Sheet.
+   * Stilkonsistent mit ConfirmDialog: Backdrop blur(20px), Glass-Card mit
+   * Editorial-Eyebrow ("BEARER · backend/.env"), Display-Title, accent-
+   * gold Save-Button mit Glow.
+   *
+   * Verwendet bits-ui Dialog für Portal/A11y, aber das visuelle Styling
+   * matcht ConfirmDialog/Settings/Library pixelgenau.
+   */
   import { Dialog } from 'bits-ui';
   import { apiToken, authChallengeOpen, dismissChallenge } from '$lib/auth';
-  import { X } from 'lucide-svelte';
+  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { Check, X, KeyRound } from 'lucide-svelte';
+
+  const accent = tint(DEFAULT_HUE);
 
   let value = $state('');
   let saved = $state(false);
@@ -31,54 +43,115 @@
 <Dialog.Root bind:open={$authChallengeOpen}>
   <Dialog.Portal>
     <Dialog.Overlay
-      class="fixed inset-0 z-40"
-      style="background: rgba(0,0,0,0.55); backdrop-filter: blur(8px);"
+      class="fixed inset-0 z-[90] tonus-token-overlay"
+      style="
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(20px) saturate(0.8);
+        -webkit-backdrop-filter: blur(20px) saturate(0.8);
+      "
     />
-    <Dialog.Content
-      class="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-xl px-6 pb-6 sheet-anim"
-    >
+    <Dialog.Content class="tonus-token-sheet">
       <div
-        class="rounded-[var(--radius-xl)] p-6"
-        style="background: var(--color-surface-2); border: 1px solid var(--color-border-firm); backdrop-filter: blur(var(--blur-modal));"
+        style="
+          position: relative;
+          padding: 32px 34px 28px;
+          border-radius: 22px;
+          background: rgba(20, 20, 24, 0.85);
+          backdrop-filter: blur(40px) saturate(1.2);
+          -webkit-backdrop-filter: blur(40px) saturate(1.2);
+          border: 1px solid var(--color-border-soft);
+          box-shadow:
+            0 32px 80px rgba(0, 0, 0, 0.6),
+            0 0 0 1px rgba(255, 255, 255, 0.04),
+            inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        "
       >
-        <header class="flex items-start justify-between mb-5">
-          <div>
-            <Dialog.Title
-              class="text-lg font-semibold tracking-tight"
-              style="color: var(--color-fg-primary);"
+        <button
+          type="button"
+          onclick={close}
+          aria-label="Schließen"
+          class="absolute transition-colors"
+          style="
+            top: 16px;
+            right: 16px;
+            padding: 8px;
+            border-radius: 999px;
+            background: transparent;
+            border: none;
+            color: var(--color-fg-secondary);
+            cursor: pointer;
+          "
+          onmouseenter={(e) =>
+            (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)')}
+          onmouseleave={(e) => (e.currentTarget.style.background = 'transparent')}
+        >
+          <X size={14} strokeWidth={1.5} />
+        </button>
+
+        <div class="flex items-center gap-2 mb-2">
+          <KeyRound size={13} strokeWidth={1.5} style="color: {accent};" />
+          <Dialog.Title>
+            {#snippet child({ props }: { props: Record<string, unknown> })}
+              <div
+                {...props}
+                class="font-semibold uppercase"
+                style="font-size: 11px; letter-spacing: 0.24em; color: {accent};"
+              >
+                Authentifizieren
+              </div>
+            {/snippet}
+          </Dialog.Title>
+        </div>
+
+        <Dialog.Description>
+          {#snippet child({ props }: { props: Record<string, unknown> })}
+            <div
+              {...props}
+              style="
+                font-family: var(--font-display);
+                font-size: 22px;
+                font-weight: 500;
+                letter-spacing: -0.015em;
+                color: var(--color-fg-primary);
+                line-height: 1.2;
+                margin-bottom: 6px;
+              "
             >
-              Authentifizieren
-            </Dialog.Title>
-            <Dialog.Description
-              class="text-[13px] mt-1"
-              style="color: var(--color-fg-secondary);"
-            >
-              Bearer-Token aus <code style="color: var(--color-accent);">backend/.env</code>
-            </Dialog.Description>
-          </div>
-          <button
-            onclick={close}
-            aria-label="Schließen"
-            class="rounded-md p-1.5 transition-colors"
-            style="color: var(--color-fg-secondary);"
-            onmouseenter={(e) => (e.currentTarget.style.background = 'var(--color-surface-3)')}
-            onmouseleave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            <X size={16} strokeWidth={1.5} />
-          </button>
-        </header>
+              Browser ↔ Backend
+            </div>
+          {/snippet}
+        </Dialog.Description>
+
+        <p
+          style="
+            font-size: 12.5px;
+            color: var(--color-fg-secondary);
+            line-height: 1.55;
+            margin: 0 0 20px;
+          "
+        >
+          Bearer-Token aus
+          <code
+            style="font-family: var(--font-mono); color: {accent}; font-size: 12px;"
+            >backend/.env</code
+          >. Bleibt in deinem Browser, wird nie ans Backend zurückgespiegelt.
+        </p>
 
         <form
           onsubmit={(e) => {
             e.preventDefault();
             save();
           }}
-          class="space-y-2"
         >
           <label
             for="tonus-token-sheet-input"
-            class="block text-[12px] font-medium"
-            style="color: var(--color-fg-secondary);"
+            class="block uppercase"
+            style="
+              font-size: 10.5px;
+              letter-spacing: 0.18em;
+              color: var(--color-fg-tertiary);
+              margin-bottom: 8px;
+            "
           >
             API-Token
           </label>
@@ -89,21 +162,53 @@
             bind:value
             autocomplete="current-password"
             spellcheck="false"
-            class="w-full px-3 py-2.5 rounded-md text-sm font-mono outline-none focus:border-[var(--color-accent)] transition-colors"
-            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
+            class="w-full outline-none transition-colors"
+            style="
+              background: rgba(0, 0, 0, 0.3);
+              border: 1px solid var(--color-border-soft);
+              border-radius: 14px;
+              color: var(--color-fg-primary);
+              font-family: var(--font-mono);
+              font-size: 13px;
+              padding: 12px 16px;
+              letter-spacing: 0.04em;
+            "
             placeholder="ttkn_•••••••••••••••••••••••••"
           />
 
-          <div class="flex items-center gap-3 mt-5">
+          <div class="flex items-center gap-3 mt-6">
             <button
               type="submit"
               disabled={!value.trim()}
-              class="px-4 py-2 rounded-md text-sm font-medium transition-opacity disabled:opacity-40"
-              style="background: var(--color-accent); color: #1a1410;"
+              class="inline-flex items-center gap-1.5 transition-transform disabled:opacity-40"
+              style="
+                padding: 10px 22px;
+                border-radius: 999px;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                background: {accent};
+                color: #0a0a0c;
+                border: none;
+                box-shadow: 0 8px 24px {accent}40;
+              "
             >
-              {saved ? '✓ Gespeichert' : 'Speichern'}
+              {#if saved}
+                <Check size={13} strokeWidth={2} />
+                gespeichert
+              {:else}
+                speichern
+              {/if}
             </button>
-            <span class="text-[12px]" style="color: var(--color-fg-tertiary);">
+            <span
+              style="
+                font-size: 11px;
+                color: var(--color-fg-tertiary);
+                font-family: var(--font-mono);
+                letter-spacing: 0.04em;
+              "
+            >
               ↵ zum Speichern · Esc zum Schließen
             </span>
           </div>
@@ -114,30 +219,63 @@
 </Dialog.Root>
 
 <style>
-  :global(.sheet-anim[data-state='open']) {
-    animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  :global(.tonus-token-overlay[data-state='open']) {
+    animation: tonus-token-fade-in 0.2s ease-out;
   }
-  :global(.sheet-anim[data-state='closed']) {
-    animation: slide-down 0.2s ease-in;
+  :global(.tonus-token-sheet) {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: none;
   }
-  @keyframes slide-up {
+  :global(.tonus-token-sheet > div) {
+    pointer-events: auto;
+    max-width: 520px;
+    width: 100%;
+  }
+  :global(.tonus-token-sheet[data-state='open']) {
+    animation: tonus-token-rise 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  :global(.tonus-token-sheet[data-state='closed']) {
+    animation: tonus-token-fall 0.2s ease-in;
+  }
+  @keyframes tonus-token-fade-in {
     from {
-      transform: translateY(100%);
       opacity: 0;
     }
     to {
-      transform: translateY(0);
       opacity: 1;
     }
   }
-  @keyframes slide-down {
+  @keyframes tonus-token-rise {
     from {
-      transform: translateY(0);
-      opacity: 1;
+      opacity: 0;
+      transform: translateY(12px) scale(0.98);
     }
     to {
-      transform: translateY(100%);
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes tonus-token-fall {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
       opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :global(.tonus-token-overlay[data-state='open']),
+    :global(.tonus-token-sheet[data-state='open']),
+    :global(.tonus-token-sheet[data-state='closed']) {
+      animation: none;
     }
   }
 </style>

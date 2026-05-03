@@ -9,6 +9,7 @@
   } from '$lib/api';
   import { tint, extractHue, DEFAULT_HUE } from '$lib/accent';
   import { t } from '$lib/i18n';
+  import { showConfirm } from '$lib/confirm';
   import { get } from 'svelte/store';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import CoverArt from '$lib/components/CoverArt.svelte';
@@ -206,8 +207,14 @@
   }
 
   async function clearAll() {
-    if (!confirm('Wirklich die komplette Queue leeren? Laufende Downloads bleiben erhalten.'))
-      return;
+    const ok = await showConfirm({
+      title: 'Queue leeren',
+      message:
+        'Wirklich die komplette Queue leeren? Laufende Downloads bleiben erhalten — nur queued + completed + error werden entfernt.',
+      confirmLabel: 'Leeren',
+      destructive: true
+    });
+    if (!ok) return;
     busy = { ...busy, clearAll: true };
     try {
       const r = await queueApi.clear('all');

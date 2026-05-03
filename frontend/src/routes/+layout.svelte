@@ -7,6 +7,7 @@
   import TokenSheet from '$lib/components/TokenSheet.svelte';
   import VinylPuck from '$lib/components/VinylPuck.svelte';
   import FlyingCover from '$lib/components/FlyingCover.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import { flyingCovers, setQueueCount } from '$lib/fly-to-queue';
   import { queueApi, ApiError } from '$lib/api';
   import { t } from '$lib/i18n';
@@ -183,4 +184,5 @@
   {/if}
 
   <TokenSheet />
+  <ConfirmDialog />
 </div>
