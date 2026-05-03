@@ -3721,6 +3721,10 @@ class UserCreateRequest(BaseModel):
 class UserPatchRequest(BaseModel):
     is_admin: Optional[bool] = None
     password: Optional[str] = None
+    # Pflichtfeld bei Self-Password-Change. Bei Admin-Reset auf einen
+    # anderen User wird es ignoriert (Admin-Privileg). Backend entscheidet
+    # anhand user_id == me.id ob es required ist.
+    current_password: Optional[str] = None
 
 
 def _public_user_record(u: Dict[str, Any]) -> Dict[str, Any]:
@@ -3805,6 +3809,20 @@ async def auth_users_patch(user_id: int, req: UserPatchRequest, request: Request
         au.set_user_admin(user_id, req.is_admin)
 
     if req.password is not None:
+        # Self-Password-Change verlangt Re-Verify mit current_password —
+        # Defense gegen Session-Hijack, ein gestohlener Access-Token soll
+        # nicht direkt das Master-Credential ändern können. Admin-Reset
+        # auf einen anderen User braucht das nicht (Admin-Privileg).
+        me = request.state.user
+        is_self = int(me.get("id", 0)) == user_id
+        if is_self:
+            if not req.current_password:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Aktuelles Passwort ist erforderlich für eigene Passwort-Änderung.",
+                )
+            if not au.verify_password(req.current_password, target["password_hash"]):
+                raise HTTPException(status_code=401, detail="Aktuelles Passwort ist falsch.")
         try:
             au.update_user_password(user_id, req.password)
         except ValueError as e:

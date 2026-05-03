@@ -251,6 +251,10 @@ export const strings = {
     'settings.users.delete.confirm_label': 'Löschen',
     'settings.users.reset_password.modal_title': 'Passwort für {username} setzen',
     'settings.users.reset_password.label': 'Neues Passwort',
+    'settings.users.reset_password.current_label': 'Aktuelles Passwort',
+    'settings.users.reset_password.error_current_required':
+      'Bitte aktuelles Passwort eingeben.',
+    'settings.users.reset_password.error_current_wrong': 'Aktuelles Passwort ist falsch.',
     'settings.users.reset_password.submit': 'Übernehmen',
     'settings.users.reset_password.submitting': 'speichere …',
     'settings.users.reset_password.cancel': 'Abbrechen',
@@ -670,6 +674,10 @@ export const strings = {
     'settings.users.delete.confirm_label': 'Delete',
     'settings.users.reset_password.modal_title': 'Set password for {username}',
     'settings.users.reset_password.label': 'New password',
+    'settings.users.reset_password.current_label': 'Current password',
+    'settings.users.reset_password.error_current_required':
+      'Please enter your current password.',
+    'settings.users.reset_password.error_current_wrong': 'Current password is wrong.',
     'settings.users.reset_password.submit': 'Apply',
     'settings.users.reset_password.submitting': 'saving …',
     'settings.users.reset_password.cancel': 'Cancel',

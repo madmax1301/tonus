@@ -224,8 +224,13 @@ export const authApi = {
   /** Admin-only — Hard-Delete (cascades PATs + refresh_tokens). */
   usersDelete: (user_id: number) =>
     request<{ ok: boolean }>(`/api/auth/users/${user_id}`, { method: 'DELETE' }),
-  /** Admin-only — Toggle is_admin oder reset Password. */
-  usersPatch: (user_id: number, body: { is_admin?: boolean; password?: string }) =>
+  /** Admin-only — Toggle is_admin oder reset Password.
+   *  Bei Self-Password-Change ist current_password Pflicht (Re-Verify
+   *  gegen Session-Hijack); Admin-Reset auf andere User ignoriert es. */
+  usersPatch: (
+    user_id: number,
+    body: { is_admin?: boolean; password?: string; current_password?: string }
+  ) =>
     request<{ ok: boolean }>(`/api/auth/users/${user_id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

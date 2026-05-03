@@ -386,6 +386,9 @@
   // Reset-Password-Modal
   let resetTarget = $state<ManagedUser | null>(null);
   let resetPasswordValue = $state('');
+  // Bei Self-Reset (resetTarget.id === me.id) Pflichtfeld — Re-Verify
+  // gegen Session-Hijack. Bei Admin-Reset auf andere User wird's ignoriert.
+  let resetCurrentPassword = $state('');
   let resetBusy = $state(false);
   let resetError = $state<string | null>(null);
 
@@ -500,6 +503,7 @@
   function openResetPassword(u: ManagedUser) {
     resetTarget = u;
     resetPasswordValue = '';
+    resetCurrentPassword = '';
     resetError = null;
   }
 
@@ -509,14 +513,27 @@
       resetError = $t('settings.users.create.error_password');
       return;
     }
+    const isSelfReset = me?.id === resetTarget.id;
+    if (isSelfReset && !resetCurrentPassword) {
+      resetError = $t('settings.users.reset_password.error_current_required');
+      return;
+    }
     resetBusy = true;
     resetError = null;
     try {
-      await authApi.usersPatch(resetTarget.id, { password: resetPasswordValue });
+      await authApi.usersPatch(resetTarget.id, {
+        password: resetPasswordValue,
+        ...(isSelfReset ? { current_password: resetCurrentPassword } : {})
+      });
       resetTarget = null;
       resetPasswordValue = '';
-    } catch {
-      resetError = $t('settings.users.error_action');
+      resetCurrentPassword = '';
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        resetError = $t('settings.users.reset_password.error_current_wrong');
+      } else {
+        resetError = $t('settings.users.error_action');
+      }
     } finally {
       resetBusy = false;
     }
@@ -783,14 +800,16 @@
                  nur Client-ID + Secret in backend/.env". -->
             {#each providers.providers.filter((p) => !p.configured) as p}
               <button
-                disabled
-                title="In backend/.env konfigurieren ({p.id.toUpperCase()}_CLIENT_ID + _CLIENT_SECRET) und Backend neu starten"
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] cursor-not-allowed"
+                type="button"
+                onclick={() => (section = 'connections')}
+                title="In Settings → Verbindungen konfigurieren"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] transition-colors"
                 style="
                   background: rgba(255, 255, 255, 0.02);
                   color: var(--color-fg-tertiary);
                   border: 1px dashed rgba(255, 255, 255, 0.18);
-                  opacity: 0.7;
+                  opacity: 0.85;
+                  cursor: pointer;
                 "
               >
                 {p.label}
@@ -822,18 +841,16 @@
               max-width: 560px;
             "
           >
-            Provider mit dashed-Outline brauchen
-            <code style="font-family: var(--font-mono); color: {accent}; font-size: 10.5px;"
-              >&lt;PROVIDER&gt;_CLIENT_ID</code
+            Provider mit dashed-Outline kannst du unter
+            <button
+              type="button"
+              onclick={() => (section = 'connections')}
+              class="inline-flex items-center"
+              style="background: none; border: none; padding: 0; color: {accent}; font-size: 11px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;"
             >
-            +
-            <code style="font-family: var(--font-mono); color: {accent}; font-size: 10.5px;"
-              >&lt;PROVIDER&gt;_CLIENT_SECRET</code
-            >
-            in
-            <code style="font-family: var(--font-mono); color: var(--color-fg-secondary); font-size: 10.5px;"
-              >backend/.env</code
-            > und einen Backend-Restart. Tonus liest die Werte beim Start.
+              Settings → Verbindungen
+            </button>
+            einrichten — Client-ID + Secret eintragen, Container-Restart, fertig.
           </p>
         {/if}
       </div>
@@ -1681,6 +1698,28 @@
           >
             {$t('settings.users.reset_password.modal_title', { username: resetTarget.username })}
           </div>
+          {#if me?.id === resetTarget.id}
+            <!-- Self-Reset: aktuelles Passwort vorher abfragen.
+                 Defense gegen Session-Hijack — gestohlener Access-Token soll
+                 nicht direkt das Master-Credential ändern können. -->
+            <label class="flex flex-col gap-1.5" for="usr-reset-current-pw">
+              <span
+                class="uppercase"
+                style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+              >
+                {$t('settings.users.reset_password.current_label')}
+              </span>
+              <input
+                id="usr-reset-current-pw"
+                type="password"
+                autocomplete="current-password"
+                spellcheck="false"
+                bind:value={resetCurrentPassword}
+                class="outline-none"
+                style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 12px 16px; letter-spacing: 0.04em;"
+              />
+            </label>
+          {/if}
           <label class="flex flex-col gap-1.5" for="usr-reset-pw">
             <span
               class="uppercase"
