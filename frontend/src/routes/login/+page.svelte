@@ -122,6 +122,24 @@
   let onboardingForm = $state<Record<string, Record<string, string>>>({});
   let onboardingSavingName = $state<string | null>(null);
   let onboardingSavedNames = $state<Set<string>>(new Set());
+  // null ⇒ Provider-Liste; gesetzt ⇒ Detail-Form für diesen Provider.
+  let selectedProvider = $state<string | null>(null);
+
+  // Provider-Decor, am Mock orientiert: Avatar-Color + Type-Tag. Tag
+  // beschreibt was der User für den Setup hinterlegen muss (API Key,
+  // Cookies, Login-Daten). Apple Music = "Soon", non-clickable.
+  const PROVIDER_DECOR: Record<
+    string,
+    { color: string; tag: string; primary?: boolean }
+  > = {
+    spotify: { color: '#1ed760', tag: 'API Key', primary: true },
+    navidrome: { color: '#22d3ee', tag: 'URL + Login' },
+    youtube: { color: '#ff4040', tag: 'Cookies' }
+  };
+  // Coming-soon-Stub-Cards (visuelle Konsistenz mit dem Mock).
+  const COMING_SOON_PROVIDERS = [
+    { name: 'apple', label: 'Apple Music', tag: 'Soon' }
+  ];
 
   async function loadOnboardingProviders() {
     onboardingError = null;
@@ -231,6 +249,260 @@
 
 <CinemaBackdrop hue={DEFAULT_HUE} intensity={0.8} />
 
+{#if mode === 'onboarding'}
+  <!-- ─── Onboarding 2-Column-Layout (Brand-Stage links, Card rechts) ─── -->
+  <section
+    class="relative z-10 mx-auto"
+    style="max-width: 1180px; width: calc(100% - 48px); padding: 60px 0;"
+  >
+    <div
+      class="grid"
+      style="grid-template-columns: 1.1fr 1fr; gap: 48px; align-items: center; min-height: calc(100vh - 120px);"
+    >
+      <!-- Left: Brand stage -->
+      <div
+        class="flex flex-col"
+        style="justify-content: space-between; min-height: 540px; padding: 12px 0;"
+      >
+        <div class="flex items-center" style="gap: 11px;">
+          <div
+            style="width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, {accent}, oklch(35% 0.15 30)); position: relative;"
+          >
+            <div
+              style="position: absolute; inset: 32%; border-radius: 50%; background: #0a0a0c;"
+            ></div>
+          </div>
+          <span
+            style="font-family: var(--font-display); font-size: 22px; font-weight: 600; letter-spacing: -0.02em;"
+            >Tonus</span
+          >
+        </div>
+
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 11px; letter-spacing: 0.24em; color: {accent}; font-weight: 600; margin-bottom: 14px;"
+          >
+            Discovery → Library
+          </div>
+          <h1
+            class="m-0"
+            style="font-family: var(--font-display); font-size: 64px; font-weight: 600; line-height: 0.95; letter-spacing: -0.04em;"
+          >
+            Sammeln, was<br />du <span style="color: {accent};">hörst.</span>
+          </h1>
+          <p
+            style="font-size: 16px; color: var(--color-fg-secondary); max-width: 480px; margin-top: 18px; line-height: 1.55; font-weight: 300;"
+          >
+            Verbinde Spotify und Tonus zieht jeden Track, den du likest, automatisch in deine
+            eigene Bibliothek. Lokal. Verlustfrei. Für immer dein.
+          </p>
+        </div>
+
+        <div
+          class="flex flex-wrap"
+          style="gap: 14px; font-size: 11px; color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase;"
+        >
+          <span>● Self-hosted</span>
+          <span>● No telemetry</span>
+          <span>● FLAC default</span>
+        </div>
+      </div>
+
+      <!-- Right: Auth card -->
+      <div class="flex" style="align-items: center;">
+        <div
+          class="w-full"
+          style="max-width: 420px; background: rgba(20, 20, 24, 0.6); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 20px; padding: 32px 32px 28px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);"
+        >
+          {#if selectedProvider}
+            {@const p = onboardingProviders.find((x) => x.name === selectedProvider)}
+            {#if p}
+              {@const decor = PROVIDER_DECOR[p.name] ?? { color: 'rgba(255,255,255,0.08)', tag: '' }}
+              <button
+                type="button"
+                onclick={() => (selectedProvider = null)}
+                class="inline-flex items-center transition-opacity"
+                style="background: none; border: none; padding: 0; color: var(--color-fg-secondary); font-size: 12px; cursor: pointer; margin-bottom: 14px; gap: 6px;"
+              >
+                ← Zurück zur Liste
+              </button>
+              <div class="flex items-center" style="gap: 12px; margin-bottom: 14px;">
+                <div
+                  class="flex items-center justify-center"
+                  style="width: 30px; height: 30px; border-radius: 7px; background: {decor.color}; font-family: var(--font-display); font-weight: 700; font-size: 14px; color: #0a0a0c;"
+                >
+                  {p.label[0]}
+                </div>
+                <div
+                  style="font-family: var(--font-display); font-size: 22px; font-weight: 600; letter-spacing: -0.02em;"
+                >
+                  {p.label}
+                </div>
+              </div>
+              <div class="flex flex-col" style="gap: 10px;">
+                {#each p.fields as f (f.key)}
+                  <label class="flex flex-col gap-1.5" for="onb-{p.name}-{f.key}">
+                    <span
+                      class="uppercase"
+                      style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+                    >
+                      {f.label}
+                    </span>
+                    <input
+                      id="onb-{p.name}-{f.key}"
+                      type={f.secret ? 'password' : 'text'}
+                      autocomplete={f.secret ? 'new-password' : 'off'}
+                      spellcheck="false"
+                      bind:value={onboardingForm[p.name][f.key]}
+                      placeholder={f.secret && f.is_set
+                        ? $t('settings.connections.secret_placeholder')
+                        : ''}
+                      class="outline-none"
+                      style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 12px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 12.5px; padding: 10px 14px; letter-spacing: 0.04em;"
+                    />
+                  </label>
+                {/each}
+                <div class="flex items-center" style="gap: 10px; margin-top: 6px;">
+                  <button
+                    type="button"
+                    disabled={onboardingSavingName === p.name}
+                    onclick={async () => {
+                      await saveOnboardingProvider(p);
+                      selectedProvider = null;
+                    }}
+                    class="inline-flex items-center justify-center transition-opacity"
+                    style="background: {accent}; color: #0a0a0c; padding: 10px 18px; border-radius: 999px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 6px 16px {accent}30; opacity: {onboardingSavingName === p.name ? 0.6 : 1}; cursor: {onboardingSavingName === p.name ? 'wait' : 'pointer'};"
+                  >
+                    {onboardingSavingName === p.name
+                      ? $t('settings.connections.saving')
+                      : $t('settings.connections.save')}
+                  </button>
+                </div>
+              </div>
+            {/if}
+          {:else}
+            <div
+              class="font-semibold uppercase"
+              style="font-size: 11px; color: var(--color-fg-tertiary); letter-spacing: 0.16em; font-weight: 600;"
+            >
+              {$t('auth.onboarding.eyebrow')}
+            </div>
+            <div
+              style="font-family: var(--font-display); font-size: 26px; font-weight: 600; margin-top: 8px; letter-spacing: -0.025em;"
+            >
+              Provider auswählen
+            </div>
+            <div
+              style="font-size: 13px; color: var(--color-fg-secondary); margin-top: 6px; line-height: 1.55;"
+            >
+              {$t('auth.onboarding.body')}
+            </div>
+
+            {#if !onboardingLoaded}
+              <p
+                style="margin-top: 22px; font-size: 12px; color: var(--color-fg-tertiary);"
+              >…</p>
+            {:else}
+              <div class="flex flex-col" style="gap: 8px; margin-top: 22px;">
+                {#each onboardingProviders as p (p.name)}
+                  {@const decor = PROVIDER_DECOR[p.name] ?? { color: 'rgba(255,255,255,0.08)', tag: '', primary: false }}
+                  {@const saved = onboardingSavedNames.has(p.name)}
+                  <button
+                    type="button"
+                    onclick={() => (selectedProvider = p.name)}
+                    class="flex items-center transition-colors text-left"
+                    style="gap: 12px; padding: 14px 16px; border-radius: 12px; background: {decor.primary ? `${accent}1a` : 'rgba(255,255,255,0.04)'}; border: 1px solid {decor.primary ? `${accent}55` : 'var(--color-border-soft)'}; color: var(--color-fg-primary); cursor: pointer;"
+                  >
+                    <div
+                      class="flex items-center justify-center flex-shrink-0"
+                      style="width: 30px; height: 30px; border-radius: 7px; background: {decor.color}; font-family: var(--font-display); font-weight: 700; font-size: 14px; color: #0a0a0c;"
+                    >
+                      {p.label[0]}
+                    </div>
+                    <div style="flex: 1; min-width: 0;">
+                      <div
+                        style="font-size: 14px; font-weight: 600; letter-spacing: -0.01em;"
+                      >{p.label}</div>
+                      <div
+                        class="uppercase"
+                        style="font-size: 10.5px; color: var(--color-fg-tertiary); margin-top: 2px; font-family: var(--font-mono); letter-spacing: 0.08em;"
+                      >{decor.tag}</div>
+                    </div>
+                    {#if saved}
+                      <Check size={14} strokeWidth={2.4} style="color: rgba(134, 239, 172, 0.95); flex-shrink: 0;" />
+                    {:else}
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={decor.primary ? accent : 'var(--color-fg-secondary)'} stroke-width="2" style="flex-shrink: 0;">
+                        <path d="M9 6l6 6-6 6" />
+                      </svg>
+                    {/if}
+                  </button>
+                {/each}
+                {#each COMING_SOON_PROVIDERS as cs}
+                  <div
+                    class="flex items-center"
+                    style="gap: 12px; padding: 14px 16px; border-radius: 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--color-border-soft); opacity: 0.5; cursor: not-allowed;"
+                  >
+                    <div
+                      class="flex items-center justify-center flex-shrink-0"
+                      style="width: 30px; height: 30px; border-radius: 7px; background: rgba(255,255,255,0.08); font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--color-fg-secondary);"
+                    >
+                      {cs.label[0]}
+                    </div>
+                    <div style="flex: 1;">
+                      <div style="font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: var(--color-fg-secondary);">{cs.label}</div>
+                      <div class="uppercase" style="font-size: 10.5px; color: var(--color-fg-tertiary); margin-top: 2px; font-family: var(--font-mono); letter-spacing: 0.08em;">{cs.tag}</div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+
+              {#if onboardingError}
+                <p style="margin-top: 14px; font-size: 11px; color: #f87171;">{onboardingError}</p>
+              {/if}
+
+              {#if onboardingSavedNames.size > 0}
+                <div
+                  class="inline-flex items-center"
+                  style="margin-top: 18px; padding: 10px 14px; border: 1px solid var(--color-border-soft); border-radius: 8px; font-size: 11.5px; color: var(--color-fg-secondary); line-height: 1.5; gap: 8px;"
+                >
+                  <AlertTriangle size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95); flex-shrink: 0;" />
+                  <span>{$t('auth.onboarding.restart_required')}</span>
+                </div>
+              {:else}
+                <div
+                  style="margin-top: 18px; padding: 10px 14px; border: 1px solid var(--color-border-soft); border-radius: 8px; font-size: 11.5px; color: var(--color-fg-secondary); line-height: 1.5; font-family: var(--font-mono); letter-spacing: 0.02em;"
+                >
+                  <span style="color: var(--color-fg-tertiary);">$</span> tonus auth — Provider wählen oder
+                  überspringen
+                </div>
+              {/if}
+
+              <div class="flex items-center flex-wrap" style="gap: 10px; margin-top: 20px;">
+                <button
+                  type="button"
+                  onclick={finishOnboarding}
+                  class="inline-flex items-center transition-opacity"
+                  style="padding: 11px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; background: {accent}; color: #0a0a0c; border: none; box-shadow: 0 8px 24px {accent}40; cursor: pointer;"
+                >
+                  {$t('auth.onboarding.continue')}
+                </button>
+                <button
+                  type="button"
+                  onclick={finishOnboarding}
+                  class="inline-flex items-center transition-colors"
+                  style="padding: 11px 20px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; background: transparent; color: var(--color-fg-secondary); border: 1px solid var(--color-border-soft);"
+                >
+                  {$t('auth.onboarding.skip')}
+                </button>
+              </div>
+            {/if}
+          {/if}
+        </div>
+      </div>
+    </div>
+  </section>
+{:else}
 <section
   class="relative z-10 mx-auto"
   style="max-width: 460px; width: calc(100% - 48px); padding: 80px 0 60px;"
@@ -377,137 +649,6 @@
           {$t('auth.totp_qr.continue')}
         </button>
       </form>
-    {:else if mode === 'onboarding'}
-      <!-- ── Schritt 2/2: Provider verbinden ──────────────────────── -->
-      <div
-        class="font-semibold uppercase"
-        style="font-size: 11px; letter-spacing: 0.24em; color: {accent}; font-weight: 600;"
-      >
-        {$t('auth.onboarding.eyebrow')}
-      </div>
-      <h1
-        class="m-0"
-        style="font-family: var(--font-display); font-size: 36px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; color: var(--color-fg-primary);"
-      >
-        {$t('auth.onboarding.title')}
-      </h1>
-      <p
-        style="font-size: 14px; color: var(--color-fg-secondary); line-height: 1.55; max-width: 440px; margin: 0;"
-      >
-        {$t('auth.onboarding.body')}
-      </p>
-
-      {#if !onboardingLoaded}
-        <p style="font-size: 12px; color: var(--color-fg-tertiary); margin: 0;">…</p>
-      {:else if onboardingError && onboardingProviders.length === 0}
-        <p style="font-size: 12px; color: #f87171; margin: 0;">{onboardingError}</p>
-      {:else}
-        <div class="flex flex-col w-full" style="gap: 12px; max-width: 460px;">
-          {#each onboardingProviders as p (p.name)}
-            {@const saved = onboardingSavedNames.has(p.name)}
-            <details
-              class="tonus-onboarding-card"
-              style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--color-border-soft); border-radius: 14px; overflow: hidden;"
-            >
-              <summary
-                class="flex items-center justify-between gap-3 cursor-pointer"
-                style="padding: 14px 18px; list-style: none;"
-              >
-                <div class="flex items-center gap-3">
-                  <Plug size={14} strokeWidth={1.8} style="color: var(--color-fg-secondary);" />
-                  <span
-                    style="font-family: var(--font-display); font-size: 16px; font-weight: 500; color: var(--color-fg-primary);"
-                    >{p.label}</span
-                  >
-                </div>
-                {#if saved}
-                  <span
-                    class="inline-flex items-center gap-1 uppercase"
-                    style="font-size: 9.5px; letter-spacing: 0.16em; color: rgba(134, 239, 172, 0.95); background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.3); padding: 3px 9px; border-radius: 999px;"
-                  >
-                    <Check size={10} strokeWidth={2.2} />
-                    {$t('auth.onboarding.status_saved')}
-                  </span>
-                {:else}
-                  <span
-                    style="font-size: 11px; color: var(--color-fg-tertiary);"
-                    >+</span
-                  >
-                {/if}
-              </summary>
-              <div class="flex flex-col" style="gap: 10px; padding: 0 18px 18px;">
-                {#each p.fields as f (f.key)}
-                  <label class="flex flex-col gap-1.5" for="onb-{p.name}-{f.key}">
-                    <span
-                      class="uppercase"
-                      style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
-                    >
-                      {f.label}
-                    </span>
-                    <input
-                      id="onb-{p.name}-{f.key}"
-                      type={f.secret ? 'password' : 'text'}
-                      autocomplete={f.secret ? 'new-password' : 'off'}
-                      spellcheck="false"
-                      bind:value={onboardingForm[p.name][f.key]}
-                      placeholder={f.secret && f.is_set
-                        ? $t('settings.connections.secret_placeholder')
-                        : ''}
-                      class="outline-none"
-                      style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 12px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 12.5px; padding: 10px 14px; letter-spacing: 0.04em;"
-                    />
-                  </label>
-                {/each}
-                <button
-                  type="button"
-                  disabled={onboardingSavingName === p.name}
-                  onclick={() => saveOnboardingProvider(p)}
-                  class="inline-flex items-center justify-center transition-opacity"
-                  style="margin-top: 4px; background: {accent}; color: #1a1410; padding: 9px 16px; border-radius: 999px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 6px 16px {accent}30; opacity: {onboardingSavingName === p.name ? 0.6 : 1}; cursor: {onboardingSavingName === p.name ? 'wait' : 'pointer'};"
-                >
-                  {onboardingSavingName === p.name
-                    ? $t('settings.connections.saving')
-                    : $t('settings.connections.save')}
-                </button>
-              </div>
-            </details>
-          {/each}
-        </div>
-
-        {#if onboardingError && onboardingProviders.length > 0}
-          <p style="font-size: 11px; color: #f87171; margin: 0;">{onboardingError}</p>
-        {/if}
-
-        {#if onboardingSavedNames.size > 0}
-          <div
-            class="inline-flex items-center gap-1.5"
-            style="font-size: 11.5px; color: var(--color-fg-secondary); max-width: 460px;"
-          >
-            <AlertTriangle size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95);" />
-            <span>{$t('auth.onboarding.restart_required')}</span>
-          </div>
-        {/if}
-
-        <div class="flex items-center gap-3 flex-wrap" style="margin-top: 4px;">
-          <button
-            type="button"
-            onclick={finishOnboarding}
-            class="inline-flex items-center gap-2 transition-opacity"
-            style="padding: 12px 26px; border-radius: 999px; font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; background: {accent}; color: #0a0a0c; border: none; box-shadow: 0 8px 24px {accent}40; cursor: pointer;"
-          >
-            <ShieldCheck size={13} strokeWidth={2} />
-            {$t('auth.onboarding.continue')}
-          </button>
-          <button
-            type="button"
-            onclick={finishOnboarding}
-            class="inline-flex items-center transition-colors"
-            style="padding: 12px 22px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; background: transparent; color: var(--color-fg-secondary); border: 1px solid var(--color-border-soft);"
-          >
-            {$t('auth.onboarding.skip')}
-          </button>
-        </div>
-      {/if}
     {:else}
       <div
         class="font-semibold uppercase"
@@ -716,3 +857,4 @@
     {/if}
   </div>
 </section>
+{/if}
