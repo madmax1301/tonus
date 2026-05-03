@@ -185,7 +185,6 @@ export const strings = {
 
     'settings.section.defaults': 'Standard-Verhalten',
     'settings.section.backend': 'Backend-Info',
-    'settings.section.local': 'Lokale Daten',
     'settings.section.language': 'Sprache',
     'settings.section.pats': 'API-Tokens',
     'settings.section.security': 'Sicherheit',
@@ -293,18 +292,6 @@ export const strings = {
     'settings.backend.field.available_formats': 'Verfügbare Formate',
     'settings.backend.field.navidrome_path': 'Navidrome-Pfad',
     'settings.backend.libraries.title': 'Navidrome-Bibliotheken · {count}',
-
-    // Local section
-    'settings.local.eyebrow': 'Browser-Storage',
-    'settings.local.title': 'Reset auf Werkseinstellungen',
-    'settings.local.description.prefix': 'Löscht alle',
-    'settings.local.description.key': 'tonus_*',
-    'settings.local.description.suffix':
-      '-Schlüssel im Browser-localStorage — Token, Defaults, Queue-Snapshot. Anschließend lädt die Seite neu und alle Defaults springen auf die Backend-Werte zurück.',
-    'settings.local.confirm':
-      'Alle lokalen Tonus-Einstellungen löschen? Token, Provider, Location, etc.',
-    'settings.local.button': 'Lokale Daten löschen',
-    'settings.local.cleared': 'geleert · lade neu',
 
     // Language section
     'settings.language.eyebrow': 'Display',
@@ -637,18 +624,6 @@ export const strings = {
     'settings.backend.field.available_formats': 'Available formats',
     'settings.backend.field.navidrome_path': 'Navidrome path',
     'settings.backend.libraries.title': 'Navidrome libraries · {count}',
-
-    // Local section
-    'settings.local.eyebrow': 'Browser storage',
-    'settings.local.title': 'Reset to factory defaults',
-    'settings.local.description.prefix': 'Removes all',
-    'settings.local.description.key': 'tonus_*',
-    'settings.local.description.suffix':
-      ' keys from the browser localStorage — token, defaults, queue snapshot. The page reloads afterwards and all defaults snap back to the backend values.',
-    'settings.local.confirm':
-      'Delete all local Tonus settings? Token, provider, location, etc.',
-    'settings.local.button': 'Delete local data',
-    'settings.local.cleared': 'cleared · reloading',
 
     // Language section
     'settings.language.eyebrow': 'Display',

@@ -24,7 +24,6 @@
     Trash2,
     Check,
     Sliders,
-    Database,
     Globe,
     ShieldCheck,
     KeyRound,
@@ -32,7 +31,7 @@
     AlertTriangle
   } from 'lucide-svelte';
 
-  type Section = 'defaults' | 'backend' | 'local' | 'language' | 'pats' | 'security';
+  type Section = 'defaults' | 'backend' | 'language' | 'pats' | 'security';
   let section = $state<Section>('defaults');
 
   // Backend-Info (read-only)
@@ -299,26 +298,6 @@
     }
   });
 
-  // Cache-Reset
-  let cacheCleared = $state(false);
-  async function clearLocalCache() {
-    const ok = await showConfirm({
-      title: 'Lokale Daten löschen',
-      message: $t('settings.local.confirm'),
-      confirmLabel: 'Löschen',
-      destructive: true
-    });
-    if (!ok) return;
-    const keys: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith('tonus_')) keys.push(k);
-    }
-    keys.forEach((k) => localStorage.removeItem(k));
-    cacheCleared = true;
-    setTimeout(() => location.reload(), 800);
-  }
-
   const effectiveProvider = $derived($defaultProvider || providers?.default || '');
   const accent = $derived(tint(DEFAULT_HUE));
 
@@ -385,7 +364,6 @@
     {#each [
       { id: 'defaults' as Section, key: 'settings.section.defaults' as const, icon: Sliders },
       { id: 'backend' as Section, key: 'settings.section.backend' as const, icon: Server },
-      { id: 'local' as Section, key: 'settings.section.local' as const, icon: Database },
       { id: 'language' as Section, key: 'settings.section.language' as const, icon: Globe },
       { id: 'pats' as Section, key: 'settings.section.pats' as const, icon: KeyRound },
       { id: 'security' as Section, key: 'settings.section.security' as const, icon: ShieldCheck }
@@ -763,48 +741,6 @@
           </div>
         </div>
       {/if}
-    </div>
-  {/if}
-
-  <!-- ─── Section: Local ──────────────────────────────────── -->
-  {#if section === 'local'}
-    <div
-      class="tonus-fadein"
-      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
-    >
-      <div
-        class="font-semibold uppercase"
-        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
-      >
-        {$t('settings.local.eyebrow')}
-      </div>
-      <div
-        style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 18px;"
-      >
-        {$t('settings.local.title')}
-      </div>
-      <p
-        style="font-size: 13px; color: var(--color-fg-secondary); line-height: 1.55; max-width: 560px; margin-bottom: 22px;"
-      >
-        {$t('settings.local.description.prefix')}
-        <code style="font-family: var(--font-mono); color: {accent}; font-size: 12px;"
-          >{$t('settings.local.description.key')}</code
-        >{$t('settings.local.description.suffix')}
-      </p>
-      <button
-        onclick={clearLocalCache}
-        disabled={cacheCleared}
-        class="inline-flex items-center gap-2 transition-colors disabled:opacity-60"
-        style="background: rgba(255, 69, 58, 0.08); border: 1px solid var(--color-status-error); color: var(--color-status-error); padding: 10px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;"
-      >
-        {#if cacheCleared}
-          <Check size={13} strokeWidth={2} />
-          {$t('settings.local.cleared')}
-        {:else}
-          <Trash2 size={13} strokeWidth={1.8} />
-          {$t('settings.local.button')}
-        {/if}
-      </button>
     </div>
   {/if}
 
