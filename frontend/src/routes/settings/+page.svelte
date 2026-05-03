@@ -13,9 +13,19 @@
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import { tint, DEFAULT_HUE } from '$lib/accent';
-  import { KeyRound, Server, Library, Trash2, Check, Sliders, Database } from 'lucide-svelte';
+  import { t, lang, type Lang } from '$lib/i18n';
+  import {
+    KeyRound,
+    Server,
+    Library,
+    Trash2,
+    Check,
+    Sliders,
+    Database,
+    Globe
+  } from 'lucide-svelte';
 
-  type Section = 'auth' | 'defaults' | 'backend' | 'local';
+  type Section = 'auth' | 'defaults' | 'backend' | 'local' | 'language';
   let section = $state<Section>('auth');
 
   // Token
@@ -43,7 +53,7 @@
       ]);
     } catch (err) {
       if (!(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
-        infoError = err instanceof Error ? err.message : 'Backend nicht erreichbar';
+        infoError = err instanceof Error ? err.message : 'Backend not reachable';
       }
     }
   });
@@ -51,8 +61,7 @@
   // Cache-Reset
   let cacheCleared = $state(false);
   function clearLocalCache() {
-    if (!confirm('Alle lokalen Tonus-Einstellungen löschen? Token, Provider, Location, etc.'))
-      return;
+    if (!confirm($t('settings.local.confirm'))) return;
     const keys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
@@ -65,11 +74,7 @@
 
   const effectiveProvider = $derived($defaultProvider || providers?.default || '');
   const accent = $derived(tint(DEFAULT_HUE));
-  const accentSoft = $derived(tint(DEFAULT_HUE, 0.95));
 
-  // Pill-Helper: gibt einen kompletten Style-String zurück, abhängig davon ob
-  // dieser Pill aktiv ist oder nicht. Vereinfacht das per-Pill-Inline-Style-
-  // Geschnipsel das vorher mit verschachtelten Ternaries gebaut wurde.
   function pillStyle(active: boolean): string {
     if (active) {
       return `background: ${accent}; color: #1a1410; border: 1px solid transparent; box-shadow: 0 4px 12px rgba(200, 169, 106, 0.25);`;
@@ -89,42 +94,28 @@
     <div>
       <div
         class="font-semibold uppercase"
-        style="
-          font-size: 11px;
-          letter-spacing: 0.24em;
-          color: {accent};
-          margin-bottom: 14px;
-        "
+        style="font-size: 11px; letter-spacing: 0.24em; color: {accent}; margin-bottom: 14px;"
       >
-        Setup
+        {$t('settings.eyebrow')}
       </div>
       <h1
         class="font-semibold m-0"
-        style="
-          font-family: var(--font-display);
-          font-size: 48px;
-          font-weight: 600;
-          line-height: 0.95;
-          letter-spacing: -0.035em;
-        "
+        style="font-family: var(--font-display); font-size: 48px; font-weight: 600; line-height: 0.95; letter-spacing: -0.035em;"
       >
-        Deine<br />
-        <em style="color: {accent}; font-weight: 400; font-style: italic;">Konfiguration</em>.
+        {$t('settings.title.before')}<br />
+        <em style="color: {accent}; font-weight: 400; font-style: italic;"
+          >{$t('settings.title.italic')}</em
+        >{$t('settings.title.after')}
       </h1>
       <p
-        style="
-          font-size: 14px;
-          color: var(--color-fg-secondary);
-          max-width: 440px;
-          margin-top: 18px;
-          line-height: 1.6;
-        "
+        style="font-size: 14px; color: var(--color-fg-secondary); max-width: 440px; margin-top: 18px; line-height: 1.6;"
       >
-        Browser-Defaults und Backend-Übersicht. Lokale Einstellungen leben im
-        localStorage, Backend-Konfiguration kommt aus <code
+        {$t('settings.description.prefix')}
+        <code
           style="font-family: var(--font-mono); color: var(--color-fg-secondary); font-size: 12.5px;"
-          >backend/.env</code
-        > und ist read-only sichtbar.
+          >{$t('settings.description.env')}</code
+        >
+        {$t('settings.description.suffix')}
       </p>
     </div>
     <div class="flex justify-center">
@@ -142,35 +133,23 @@
   <!-- ─── Section-Strip ─────────────────────────────────────── -->
   <div
     class="flex items-center"
-    style="
-      gap: 24px;
-      font-size: 13px;
-      margin-bottom: 24px;
-      border-bottom: 1px solid var(--color-border-soft);
-      padding-bottom: 14px;
-      flex-wrap: wrap;
-    "
+    style="gap: 24px; font-size: 13px; margin-bottom: 24px; border-bottom: 1px solid var(--color-border-soft); padding-bottom: 14px; flex-wrap: wrap;"
   >
     {#each [
-      { id: 'auth' as Section, label: 'Authentifizierung', icon: KeyRound },
-      { id: 'defaults' as Section, label: 'Standard-Verhalten', icon: Sliders },
-      { id: 'backend' as Section, label: 'Backend-Info', icon: Server },
-      { id: 'local' as Section, label: 'Lokale Daten', icon: Database }
+      { id: 'auth' as Section, key: 'settings.section.auth' as const, icon: KeyRound },
+      { id: 'defaults' as Section, key: 'settings.section.defaults' as const, icon: Sliders },
+      { id: 'backend' as Section, key: 'settings.section.backend' as const, icon: Server },
+      { id: 'local' as Section, key: 'settings.section.local' as const, icon: Database },
+      { id: 'language' as Section, key: 'settings.section.language' as const, icon: Globe }
     ] as s}
       {@const active = section === s.id}
       <button
         onclick={() => (section = s.id)}
         class="relative inline-flex items-center gap-1.5 transition-colors"
-        style="
-          color: {active ? 'var(--color-fg-primary)' : 'var(--color-fg-secondary)'};
-          font-weight: {active ? 500 : 400};
-          padding-bottom: 14px;
-          margin-bottom: -14px;
-          border-bottom: 2px solid {active ? accent : 'transparent'};
-        "
+        style="color: {active ? 'var(--color-fg-primary)' : 'var(--color-fg-secondary)'}; font-weight: {active ? 500 : 400}; padding-bottom: 14px; margin-bottom: -14px; border-bottom: 2px solid {active ? accent : 'transparent'};"
       >
         <svelte:component this={s.icon} size={13} strokeWidth={1.5} />
-        {s.label}
+        {$t(s.key)}
       </button>
     {/each}
   </div>
@@ -179,49 +158,31 @@
   {#if section === 'auth'}
     <div
       class="tonus-fadein"
-      style="
-        background: rgba(20, 20, 24, 0.5);
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
-        border: 1px solid var(--color-border-soft);
-        border-radius: 22px;
-        padding: 32px;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      "
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
     >
       <div
         class="font-semibold uppercase"
         style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
       >
-        API-Token
+        {$t('settings.auth.eyebrow')}
       </div>
       <div
-        style="
-          font-family: var(--font-display);
-          font-size: 22px;
-          font-weight: 500;
-          letter-spacing: -0.015em;
-          color: var(--color-fg-primary);
-          margin-bottom: 18px;
-        "
+        style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 18px;"
       >
-        Browser ↔ Backend
+        {$t('settings.auth.title')}
       </div>
       <p
-        style="
-          font-size: 13px;
-          color: var(--color-fg-secondary);
-          margin-bottom: 18px;
-          line-height: 1.55;
-          max-width: 560px;
-        "
+        style="font-size: 13px; color: var(--color-fg-secondary); margin-bottom: 18px; line-height: 1.55; max-width: 560px;"
       >
-        Muss exakt mit
+        {$t('settings.auth.description.prefix')}
         <code style="font-family: var(--font-mono); color: {accent}; font-size: 12px;"
-          >TONUS_API_TOKEN</code
+          >{$t('settings.auth.description.env_var')}</code
         >
-        in <code style="font-family: var(--font-mono); color: var(--color-fg-tertiary); font-size: 12px;">backend/.env</code
-        > übereinstimmen. Bleibt nur in deinem Browser, wird nicht ans Backend zurückgespiegelt.
+        {$t('settings.auth.description.middle')}
+        <code
+          style="font-family: var(--font-mono); color: var(--color-fg-tertiary); font-size: 12px;"
+          >{$t('settings.auth.description.env_file')}</code
+        >{$t('settings.auth.description.suffix')}
       </p>
 
       <form
@@ -239,38 +200,19 @@
           spellcheck="false"
           autocomplete="current-password"
           class="flex-1 outline-none"
-          style="
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid var(--color-border-soft);
-            border-radius: 14px;
-            color: var(--color-fg-primary);
-            font-family: var(--font-mono);
-            font-size: 13px;
-            padding: 12px 16px;
-            letter-spacing: 0.04em;
-          "
+          style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 12px 16px; letter-spacing: 0.04em;"
           placeholder="ttkn_•••••••••••••••••••••••••"
         />
         <button
           type="submit"
           class="inline-flex items-center gap-1.5 transition-opacity"
-          style="
-            background: {accent};
-            color: #1a1410;
-            padding: 12px 24px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: 600;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
-          "
+          style="background: {accent}; color: #1a1410; padding: 12px 24px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);"
         >
           {#if tokenSaved}
             <Check size={13} strokeWidth={2} />
-            gespeichert
+            {$t('common.saved')}
           {:else}
-            speichern
+            {$t('common.save')}
           {/if}
         </button>
       </form>
@@ -282,15 +224,7 @@
     <div class="tonus-fadein space-y-5">
       <!-- Provider -->
       <div
-        style="
-          background: rgba(20, 20, 24, 0.5);
-          backdrop-filter: blur(40px) saturate(1.2);
-          -webkit-backdrop-filter: blur(40px) saturate(1.2);
-          border: 1px solid var(--color-border-soft);
-          border-radius: 22px;
-          padding: 28px;
-          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        "
+        style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 28px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
       >
         <div class="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
           <div>
@@ -298,25 +232,21 @@
               class="font-semibold uppercase"
               style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
             >
-              Standard-Provider
+              {$t('settings.defaults.provider.eyebrow')}
             </div>
             <div
               class="mt-1"
-              style="
-                font-family: var(--font-display);
-                font-size: 18px;
-                font-weight: 500;
-                color: var(--color-fg-primary);
-              "
+              style="font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--color-fg-primary);"
             >
-              Suche & Reverse-Lookup
+              {$t('settings.defaults.provider.title')}
             </div>
           </div>
           <div
             class="text-[11px] tabular-nums"
             style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
           >
-            aktiv: <span style="color: {accent};">{effectiveProvider || '—'}</span>
+            {$t('settings.defaults.provider.active')}
+            <span style="color: {accent};">{effectiveProvider || '—'}</span>
           </div>
         </div>
         <div class="flex items-center gap-1.5 flex-wrap">
@@ -325,7 +255,8 @@
             class="px-3 py-1.5 rounded-full text-[12px] transition-all"
             style={pillStyle(!$defaultProvider)}
           >
-            Backend-Default {providers?.default ? `(${providers.default})` : ''}
+            {$t('settings.defaults.provider.backend_default')}
+            {providers?.default ? `(${providers.default})` : ''}
           </button>
           {#if providers}
             {#each providers.providers.filter((p) => p.configured) as p}
@@ -343,41 +274,28 @@
 
       <!-- Location -->
       <div
-        style="
-          background: rgba(20, 20, 24, 0.5);
-          backdrop-filter: blur(40px) saturate(1.2);
-          -webkit-backdrop-filter: blur(40px) saturate(1.2);
-          border: 1px solid var(--color-border-soft);
-          border-radius: 22px;
-          padding: 28px;
-          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        "
+        style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 28px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
       >
         <div
           class="font-semibold uppercase"
           style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
         >
-          Download-Ziel
+          {$t('settings.defaults.location.eyebrow')}
         </div>
         <div
           class="mt-1 mb-3"
-          style="
-            font-family: var(--font-display);
-            font-size: 18px;
-            font-weight: 500;
-            color: var(--color-fg-primary);
-          "
+          style="font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--color-fg-primary);"
         >
-          Wo Tracks landen
+          {$t('settings.defaults.location.title')}
         </div>
         <div class="flex items-center gap-1.5 flex-wrap">
-          {#each [{ id: 'navidrome' as const, label: 'Navidrome (in Bibliothek)' }, { id: 'local' as const, label: 'Local (downloads/)' }] as opt}
+          {#each [{ id: 'navidrome' as const, key: 'settings.defaults.location.navidrome' as const }, { id: 'local' as const, key: 'settings.defaults.location.local' as const }] as opt}
             <button
               onclick={() => defaultLocation.set(opt.id)}
               class="px-3 py-1.5 rounded-full text-[12px] transition-all"
               style={pillStyle($defaultLocation === opt.id)}
             >
-              {opt.label}
+              {$t(opt.key)}
             </button>
           {/each}
         </div>
@@ -385,39 +303,26 @@
 
       <!-- Format & Quality -->
       <div
-        style="
-          background: rgba(20, 20, 24, 0.5);
-          backdrop-filter: blur(40px) saturate(1.2);
-          -webkit-backdrop-filter: blur(40px) saturate(1.2);
-          border: 1px solid var(--color-border-soft);
-          border-radius: 22px;
-          padding: 28px;
-          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        "
+        style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 28px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
       >
         <div
           class="font-semibold uppercase"
           style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
         >
-          Audio-Codec
+          {$t('settings.defaults.audio.eyebrow')}
         </div>
         <div
           class="mt-1 mb-3"
-          style="
-            font-family: var(--font-display);
-            font-size: 18px;
-            font-weight: 500;
-            color: var(--color-fg-primary);
-          "
+          style="font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--color-fg-primary);"
         >
-          Format & Bitrate
+          {$t('settings.defaults.audio.title')}
         </div>
 
         <div
           class="text-[11px] uppercase mb-2"
           style="color: var(--color-fg-tertiary); letter-spacing: 0.12em;"
         >
-          Format
+          {$t('settings.defaults.audio.format_label')}
         </div>
         <div class="flex items-center gap-1.5 flex-wrap mb-4">
           <button
@@ -425,7 +330,8 @@
             class="px-3 py-1.5 rounded-full text-[12px] transition-all"
             style={pillStyle(!$defaultFormat)}
           >
-            Backend-Default {formats?.default_format ? `(${formats.default_format})` : ''}
+            {$t('settings.defaults.provider.backend_default')}
+            {formats?.default_format ? `(${formats.default_format})` : ''}
           </button>
           {#if formats}
             {#each formats.formats as f}
@@ -445,7 +351,7 @@
           class="text-[11px] uppercase mb-2"
           style="color: var(--color-fg-tertiary); letter-spacing: 0.12em;"
         >
-          Bitrate
+          {$t('settings.defaults.audio.bitrate_label')}
         </div>
         <div class="flex items-center gap-1.5 flex-wrap">
           <button
@@ -453,7 +359,8 @@
             class="px-3 py-1.5 rounded-full text-[12px] transition-all"
             style={pillStyle(!$defaultQuality)}
           >
-            Backend-Default {formats?.default_quality ? `(${formats.default_quality})` : ''}
+            {$t('settings.defaults.provider.backend_default')}
+            {formats?.default_quality ? `(${formats.default_quality})` : ''}
           </button>
           {#if formats}
             {#each formats.qualities as q}
@@ -468,12 +375,8 @@
             {/each}
           {/if}
         </div>
-        <p
-          class="mt-3 text-[11px]"
-          style="color: var(--color-fg-tertiary); line-height: 1.55;"
-        >
-          FLAC ignoriert die Bitrate (lossless). Opus & OGG mappen auf andere Skalen — der
-          Backend-Wert wird passend übersetzt.
+        <p class="mt-3 text-[11px]" style="color: var(--color-fg-tertiary); line-height: 1.55;">
+          {$t('settings.defaults.audio.note')}
         </p>
       </div>
     </div>
@@ -483,15 +386,7 @@
   {#if section === 'backend'}
     <div
       class="tonus-fadein"
-      style="
-        background: rgba(20, 20, 24, 0.5);
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
-        border: 1px solid var(--color-border-soft);
-        border-radius: 22px;
-        padding: 32px;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      "
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
     >
       {#if infoError}
         <div class="text-[13px]" style="color: var(--color-status-error);">{infoError}</div>
@@ -500,19 +395,12 @@
           class="font-semibold uppercase"
           style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
         >
-          Read-Only · backend/.env
+          {$t('settings.backend.eyebrow')}
         </div>
         <div
-          style="
-            font-family: var(--font-display);
-            font-size: 22px;
-            font-weight: 500;
-            letter-spacing: -0.015em;
-            color: var(--color-fg-primary);
-            margin-bottom: 22px;
-          "
+          style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 22px;"
         >
-          Was das Backend gerade nutzt
+          {$t('settings.backend.title')}
         </div>
 
         <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5 text-[13px]">
@@ -521,7 +409,7 @@
               class="text-[10.5px] uppercase tracking-widest"
               style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
             >
-              Default-Provider
+              {$t('settings.backend.field.default_provider')}
             </dt>
             <dd
               class="mt-1"
@@ -535,7 +423,7 @@
               class="text-[10.5px] uppercase tracking-widest"
               style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
             >
-              Konfigurierte Provider
+              {$t('settings.backend.field.configured_providers')}
             </dt>
             <dd class="mt-1" style="color: var(--color-fg-primary);">
               {providers?.providers
@@ -544,7 +432,8 @@
                 .join(', ') ?? '—'}
               {#if providers && providers.providers.some((p) => !p.configured)}
                 <div class="mt-1 text-[11px]" style="color: var(--color-fg-tertiary);">
-                  fehlt: {providers.providers
+                  {$t('settings.backend.field.missing_providers')}
+                  {providers.providers
                     .filter((p) => !p.configured)
                     .map((p) => p.label)
                     .join(', ')}
@@ -557,7 +446,7 @@
               class="text-[10.5px] uppercase tracking-widest"
               style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
             >
-              Default-Format
+              {$t('settings.backend.field.default_format')}
             </dt>
             <dd
               class="mt-1"
@@ -574,7 +463,7 @@
               class="text-[10.5px] uppercase tracking-widest"
               style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
             >
-              Verfügbare Formate
+              {$t('settings.backend.field.available_formats')}
             </dt>
             <dd class="mt-1" style="color: var(--color-fg-primary);">
               {formats?.formats.map((f) => f.label).join(', ') ?? '—'}
@@ -586,7 +475,7 @@
                 class="text-[10.5px] uppercase tracking-widest"
                 style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
               >
-                Navidrome-Pfad
+                {$t('settings.backend.field.navidrome_path')}
               </dt>
               <dd
                 class="mt-1"
@@ -600,17 +489,16 @@
       {/if}
 
       {#if health?.navidrome_libraries && health.navidrome_libraries.length > 0}
-        <div
-          class="mt-6 pt-6"
-          style="border-top: 1px solid var(--color-border-soft);"
-        >
+        <div class="mt-6 pt-6" style="border-top: 1px solid var(--color-border-soft);">
           <div class="flex items-center gap-2 mb-3">
             <Library size={14} strokeWidth={1.5} style="color: {accent};" />
             <div
               class="font-semibold uppercase"
               style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
             >
-              Navidrome-Bibliotheken · {health.navidrome_libraries.length}
+              {$t('settings.backend.libraries.title', {
+                count: health.navidrome_libraries.length
+              })}
             </div>
           </div>
           <div class="space-y-1.5">
@@ -619,9 +507,8 @@
                 class="flex items-center justify-between gap-3 px-4 py-2.5 rounded-md"
                 style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--color-border-soft);"
               >
-                <span
-                  class="font-medium text-[13px]"
-                  style="color: var(--color-fg-primary);">{lib.label ?? '—'}</span
+                <span class="font-medium text-[13px]" style="color: var(--color-fg-primary);"
+                  >{lib.label ?? '—'}</span
                 >
                 <span
                   class="text-[11.5px] truncate"
@@ -641,72 +528,77 @@
   {#if section === 'local'}
     <div
       class="tonus-fadein"
-      style="
-        background: rgba(20, 20, 24, 0.5);
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
-        border: 1px solid var(--color-border-soft);
-        border-radius: 22px;
-        padding: 32px;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      "
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
     >
       <div
         class="font-semibold uppercase"
         style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
       >
-        Browser-Storage
+        {$t('settings.local.eyebrow')}
       </div>
       <div
-        style="
-          font-family: var(--font-display);
-          font-size: 22px;
-          font-weight: 500;
-          letter-spacing: -0.015em;
-          color: var(--color-fg-primary);
-          margin-bottom: 18px;
-        "
+        style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 18px;"
       >
-        Reset auf Werkseinstellungen
+        {$t('settings.local.title')}
       </div>
       <p
-        style="
-          font-size: 13px;
-          color: var(--color-fg-secondary);
-          line-height: 1.55;
-          max-width: 560px;
-          margin-bottom: 22px;
-        "
+        style="font-size: 13px; color: var(--color-fg-secondary); line-height: 1.55; max-width: 560px; margin-bottom: 22px;"
       >
-        Löscht alle <code style="font-family: var(--font-mono); color: {accent}; font-size: 12px;"
-          >tonus_*</code
-        >-Schlüssel im Browser-localStorage — Token, Defaults, Queue-Snapshot. Anschließend lädt
-        die Seite neu und alle Defaults springen auf die Backend-Werte zurück.
+        {$t('settings.local.description.prefix')}
+        <code style="font-family: var(--font-mono); color: {accent}; font-size: 12px;"
+          >{$t('settings.local.description.key')}</code
+        >{$t('settings.local.description.suffix')}
       </p>
       <button
         onclick={clearLocalCache}
         disabled={cacheCleared}
         class="inline-flex items-center gap-2 transition-colors disabled:opacity-60"
-        style="
-          background: rgba(255, 69, 58, 0.08);
-          border: 1px solid var(--color-status-error);
-          color: var(--color-status-error);
-          padding: 10px 22px;
-          border-radius: 999px;
-          font-size: 12px;
-          font-weight: 600;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-        "
+        style="background: rgba(255, 69, 58, 0.08); border: 1px solid var(--color-status-error); color: var(--color-status-error); padding: 10px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;"
       >
         {#if cacheCleared}
           <Check size={13} strokeWidth={2} />
-          geleert · lade neu
+          {$t('settings.local.cleared')}
         {:else}
           <Trash2 size={13} strokeWidth={1.8} />
-          Lokale Daten löschen
+          {$t('settings.local.button')}
         {/if}
       </button>
+    </div>
+  {/if}
+
+  <!-- ─── Section: Language ──────────────────────────────── -->
+  {#if section === 'language'}
+    <div
+      class="tonus-fadein"
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
+    >
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+      >
+        {$t('settings.language.eyebrow')}
+      </div>
+      <div
+        style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 18px;"
+      >
+        {$t('settings.language.title')}
+      </div>
+      <p
+        style="font-size: 13px; color: var(--color-fg-secondary); line-height: 1.55; max-width: 560px; margin-bottom: 22px;"
+      >
+        {$t('settings.language.description')}
+      </p>
+      <div class="flex items-center gap-1.5 flex-wrap">
+        {#each [{ id: 'de' as Lang, key: 'settings.language.de' as const }, { id: 'en' as Lang, key: 'settings.language.en' as const }] as opt}
+          <button
+            onclick={() => lang.set(opt.id)}
+            class="px-4 py-2 rounded-full text-[12px] transition-all"
+            style={pillStyle($lang === opt.id)}
+          >
+            {$t(opt.key)}
+          </button>
+        {/each}
+      </div>
     </div>
   {/if}
 </section>

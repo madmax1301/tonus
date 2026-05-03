@@ -4,14 +4,16 @@
   import { base } from '$app/paths';
   import { apiToken, challengeAuth } from '$lib/auth';
   import TokenSheet from '$lib/components/TokenSheet.svelte';
+  import { t } from '$lib/i18n';
+  import type { StringKey } from '$lib/i18n/strings';
   import { KeyRound } from 'lucide-svelte';
 
-  type Tab = { href: string; label: string };
+  type Tab = { href: string; labelKey: StringKey };
   const tabs: Tab[] = [
-    { href: '/', label: 'Bibliothek' },
-    { href: '/queue', label: 'Warteschlange' },
-    { href: '/import', label: 'Import' },
-    { href: '/settings', label: 'Einstellungen' }
+    { href: '/', labelKey: 'nav.library' },
+    { href: '/queue', labelKey: 'nav.queue' },
+    { href: '/import', labelKey: 'nav.import' },
+    { href: '/settings', labelKey: 'nav.settings' }
   ];
 
   function isActive(href: string, current: string): boolean {
@@ -81,7 +83,7 @@
               letter-spacing: 0.01em;
             "
           >
-            {tab.label}
+            {$t(tab.labelKey)}
             {#if active}
               <span
                 class="absolute"
@@ -114,7 +116,7 @@
         aria-label="API-Token verwalten"
       >
         <KeyRound size={11} strokeWidth={1.5} />
-        {hasToken ? 'Token aktiv' : 'Token fehlt'}
+        {hasToken ? $t('nav.token_active') : $t('nav.token_inactive')}
       </button>
     </div>
   </header>
