@@ -1,5 +1,13 @@
 import { base } from '$app/paths';
-import { getToken, challengeAuth } from './auth';
+import { get } from 'svelte/store';
+import {
+  getToken,
+  accessToken,
+  refreshToken,
+  setJwtPair,
+  logoutLocal,
+  challengeAuth
+} from './auth';
 
 export class ApiError extends Error {
   constructor(
@@ -11,7 +19,42 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+// In-flight-Refresh dedupliziert parallele 401s — wenn 5 API-Calls
+// gleichzeitig 401 bekommen, soll nur 1 Refresh-Call laufen, nicht 5.
+let inflightRefresh: Promise<boolean> | null = null;
+
+async function tryRefresh(): Promise<boolean> {
+  const refresh = get(refreshToken);
+  if (!refresh) return false;
+  if (inflightRefresh) return inflightRefresh;
+  inflightRefresh = (async () => {
+    try {
+      const url = `${base}/api/auth/refresh`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refresh })
+      });
+      if (!resp.ok) {
+        // Refresh fehlgeschlagen → komplett ausloggen, Layout-Guard
+        // redirected zu /login.
+        logoutLocal();
+        return false;
+      }
+      const data = (await resp.json()) as { tokens: { access: string; refresh: string } };
+      setJwtPair(data.tokens);
+      return true;
+    } catch {
+      logoutLocal();
+      return false;
+    } finally {
+      inflightRefresh = null;
+    }
+  })();
+  return inflightRefresh;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, _retry = false): Promise<T> {
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token && !headers.has('Authorization')) {
@@ -20,6 +63,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
   const resp = await fetch(url, { ...init, headers });
   if (!resp.ok) {
+    // 401 + Access-Token vorhanden + nicht schon ein Retry → Refresh +
+    // einmal wiederholen. Nur wenn ein Refresh-Token da ist; sonst direkt
+    // durchfallen lassen damit der Layout-Guard zum Login redirected.
+    if (resp.status === 401 && !_retry && get(accessToken) && get(refreshToken)) {
+      const ok = await tryRefresh();
+      if (ok) return request<T>(path, init, true);
+    }
     if (resp.status === 401 || resp.status === 403) {
       challengeAuth();
     }
@@ -50,6 +100,63 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined
     }),
   health: () => request<{ status: string }>('/api/health')
+};
+
+// ── Auth-Endpoints (Phase F.2) ─────────────────────────────────────
+export interface AuthSetupStatus {
+  setup_required: boolean;
+  auth_active: boolean;
+  legacy_token_active: boolean;
+}
+export interface AuthUser {
+  id: number;
+  username: string;
+  is_admin: boolean;
+  totp_enabled: boolean;
+  auth_method?: string;
+  last_login_at_ms?: number | null;
+}
+export interface AuthTokens {
+  access: string;
+  refresh: string;
+  access_expires_at: number;
+  refresh_expires_at: number;
+}
+export interface AuthLoginResponse {
+  user: AuthUser;
+  tokens: AuthTokens;
+}
+export interface AuthSetupResponse extends AuthLoginResponse {
+  totp_secret?: string | null;
+  totp_uri?: string | null;
+}
+
+export const authApi = {
+  /** Public — fetcht ob ein Initial-Setup-Wizard nötig ist. */
+  setupStatus: () => request<AuthSetupStatus>('/api/auth/setup-status'),
+  /** Public — bootstrappt den ersten Admin. */
+  setup: (username: string, password: string, enable_totp = false) =>
+    request<AuthSetupResponse>('/api/auth/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, enable_totp })
+    }),
+  /** Public — Username + Password (+ TOTP) → JWT pair. */
+  login: (username: string, password: string, totp_code?: string) =>
+    request<AuthLoginResponse>('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, totp_code })
+    }),
+  /** Auth — current user info, oder 401 wenn Session expired. */
+  me: () => request<AuthUser>('/api/auth/me'),
+  /** Auth — server-seitig Refresh-Token revoken. */
+  logout: (refresh_token?: string) =>
+    request<{ ok: boolean; revoked: number }>('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token })
+    })
 };
 
 export interface QueueJobPayload {

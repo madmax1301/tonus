@@ -3,16 +3,24 @@
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { base } from '$app/paths';
-  import { apiToken, challengeAuth } from '$lib/auth';
+  import { goto } from '$app/navigation';
+  import {
+    apiToken,
+    accessToken,
+    refreshToken,
+    currentUser,
+    challengeAuth,
+    logoutLocal
+  } from '$lib/auth';
   import TokenSheet from '$lib/components/TokenSheet.svelte';
   import VinylPuck from '$lib/components/VinylPuck.svelte';
   import FlyingCover from '$lib/components/FlyingCover.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import { flyingCovers, setQueueCount } from '$lib/fly-to-queue';
-  import { queueApi, ApiError } from '$lib/api';
+  import { queueApi, authApi, ApiError } from '$lib/api';
   import { t } from '$lib/i18n';
   import type { StringKey } from '$lib/i18n/strings';
-  import { KeyRound } from 'lucide-svelte';
+  import { KeyRound, LogOut } from 'lucide-svelte';
 
   type Tab = { href: string; labelKey: StringKey };
   const tabs: Tab[] = [
@@ -30,7 +38,53 @@
 
   let { children } = $props();
 
-  const hasToken = $derived(!!$apiToken);
+  const hasToken = $derived(!!$apiToken || !!$accessToken);
+  const onLoginRoute = $derived(
+    ($page.url.pathname.replace(base, '') || '/') === '/login'
+  );
+
+  // Routing-Guard: nach Mount prüfen ob die Session valid ist. Bei 401
+  // / Setup-Required → goto /login. Auf der Login-Seite selbst tun wir
+  // nix (sonst Redirect-Loop). Bei aktivem Legacy-API-Token überspringen
+  // wir den /api/auth/me-Call — der würde nur 401en und unnötig zur
+  // Login-Seite redirecten.
+  async function guardSession() {
+    const path = $page.url.pathname.replace(base, '') || '/';
+    if (path === '/login') return;
+    // Nur wenn es eigentlich eine Session sein sollte
+    if (!$accessToken && $apiToken) return; // Legacy/PAT-Pfad — keine /me-Probe
+    try {
+      const status = await authApi.setupStatus();
+      if (status.setup_required) {
+        await goto(`${base}/login`);
+        return;
+      }
+      if (!status.auth_active) return;
+      const me = await authApi.me();
+      currentUser.set({
+        id: me.id,
+        username: me.username,
+        is_admin: me.is_admin,
+        totp_enabled: me.totp_enabled,
+        auth_method: me.auth_method
+      });
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        logoutLocal();
+        await goto(`${base}/login`);
+      }
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await authApi.logout($refreshToken || undefined);
+    } catch {
+      /* network err — local logout always succeeds */
+    }
+    logoutLocal();
+    await goto(`${base}/login`);
+  }
 
   // Queue-Count im Vinyl-Puck unten rechts synchron mit dem Backend halten.
   // Polling-Intervall: 5 s — der Puck ist Status-Indikator, nicht der
@@ -56,6 +110,7 @@
     }
   }
   onMount(() => {
+    guardSession();
     refreshQueueCount();
     queuePollTimer = setInterval(refreshQueueCount, 5000);
   });
@@ -65,6 +120,7 @@
 </script>
 
 <div class="min-h-screen flex flex-col relative">
+  {#if !onLoginRoute}
   <header
     class="sticky top-0 z-30"
     style="
@@ -138,25 +194,62 @@
         {/each}
       </nav>
 
-      <!-- Token-pill (right-aligned) -->
-      <button
-        onclick={challengeAuth}
-        class="ml-auto inline-flex items-center gap-1.5 transition-colors"
-        style="
-          padding: 4px 10px;
-          font-size: 11px;
-          border-radius: 999px;
-          border: 1px solid var(--color-border-soft);
-          background: rgba(255, 255, 255, 0.02);
-          color: {hasToken ? 'var(--color-fg-secondary)' : 'var(--color-status-error)'};
-        "
-        aria-label="API-Token verwalten"
-      >
-        <KeyRound size={11} strokeWidth={1.5} />
-        {hasToken ? $t('nav.token_active') : $t('nav.token_inactive')}
-      </button>
+      <div class="ml-auto flex items-center gap-2">
+        {#if $currentUser}
+          <span
+            class="inline-flex items-center gap-1.5"
+            style="
+              padding: 4px 10px;
+              font-size: 11px;
+              border-radius: 999px;
+              border: 1px solid var(--color-border-soft);
+              background: rgba(255, 255, 255, 0.02);
+              color: var(--color-fg-secondary);
+            "
+            title={$t('auth.user_menu.signed_in_as') + ' ' + $currentUser.username}
+          >
+            <KeyRound size={11} strokeWidth={1.5} />
+            {$currentUser.username}{$currentUser.is_admin ? ' · admin' : ''}
+          </span>
+          <button
+            onclick={handleLogout}
+            class="inline-flex items-center gap-1.5 transition-colors"
+            style="
+              padding: 4px 10px;
+              font-size: 11px;
+              border-radius: 999px;
+              border: 1px solid var(--color-border-soft);
+              background: transparent;
+              color: var(--color-fg-tertiary);
+            "
+            aria-label={$t('auth.logout.button')}
+          >
+            <LogOut size={11} strokeWidth={1.5} />
+            {$t('auth.logout.button')}
+          </button>
+        {:else}
+          <!-- Legacy/PAT-Pfad: TokenSheet öffnen für manuelle Eingabe -->
+          <button
+            onclick={challengeAuth}
+            class="inline-flex items-center gap-1.5 transition-colors"
+            style="
+              padding: 4px 10px;
+              font-size: 11px;
+              border-radius: 999px;
+              border: 1px solid var(--color-border-soft);
+              background: rgba(255, 255, 255, 0.02);
+              color: {hasToken ? 'var(--color-fg-secondary)' : 'var(--color-status-error)'};
+            "
+            aria-label="API-Token verwalten"
+          >
+            <KeyRound size={11} strokeWidth={1.5} />
+            {hasToken ? $t('nav.token_active') : $t('nav.token_inactive')}
+          </button>
+        {/if}
+      </div>
     </div>
   </header>
+  {/if}
 
   <main class="flex-1 relative">
     {@render children()}
@@ -179,7 +272,7 @@
   <!-- Vinyl-Puck = bottom-right Floating-Indicator + Queue-Shortcut.
        Hat data-vinyl-puck-Attribut, das fly-to-queue.ts via querySelector
        findet, um die Ziel-Position der Cover-Klone zu berechnen. -->
-  {#if hasToken}
+  {#if hasToken && !onLoginRoute}
     <VinylPuck />
   {/if}
 

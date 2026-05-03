@@ -249,7 +249,47 @@ export const strings = {
     'settings.language.description':
       'Ändert die UI-Sprache im Browser. Backend-Antworten (Track-Titel, Artist-Namen) bleiben unverändert — die kommen direkt vom Provider.',
     'settings.language.de': 'Deutsch',
-    'settings.language.en': 'English'
+    'settings.language.en': 'English',
+
+    // ── Login / Setup ───────────────────────────────────
+    'auth.login.eyebrow': 'Zugang',
+    'auth.login.title.before': 'Willkommen',
+    'auth.login.title.italic': 'zurück',
+    'auth.login.subtitle':
+      'Melde dich an um deine Bibliothek + Queue zu sehen. Sessions werden 15 min gehalten und automatisch erneuert.',
+    'auth.login.username': 'Benutzername',
+    'auth.login.password': 'Passwort',
+    'auth.login.totp': '2FA-Code',
+    'auth.login.totp_hint':
+      'Sechs-stelliger Code aus deiner Authenticator-App.',
+    'auth.login.submit': 'Anmelden',
+    'auth.login.submitting': 'melde an …',
+    'auth.login.error_invalid': 'Falscher Benutzername oder Passwort',
+    'auth.login.error_totp': '2FA-Code fehlt oder ist falsch',
+    'auth.login.error_rate': 'Zu viele Fehlversuche. Bitte 15 Minuten warten.',
+    'auth.login.error_generic': 'Login fehlgeschlagen — Backend nicht erreichbar?',
+
+    'auth.setup.eyebrow': 'Erst-Einrichtung',
+    'auth.setup.title.before': 'Leg dir',
+    'auth.setup.title.italic': 'einen Zugang an',
+    'auth.setup.subtitle':
+      'Tonus läuft noch ohne User. Der erste Account wird automatisch Admin und kann später weitere User anlegen.',
+    'auth.setup.totp_label': 'Zwei-Faktor-Authentifizierung gleich einrichten',
+    'auth.setup.totp_hint':
+      'Empfohlen. Du bekommst gleich nach dem Login einen QR-Code zum Scannen mit deiner Authenticator-App.',
+    'auth.setup.submit': 'Account anlegen',
+    'auth.setup.submitting': 'lege an …',
+    'auth.setup.password_min': 'Mindestens 8 Zeichen',
+
+    'auth.totp_qr.eyebrow': '2FA aktivieren',
+    'auth.totp_qr.title': 'Code scannen',
+    'auth.totp_qr.body':
+      'Scanne diesen QR-Code mit Authy, 1Password, Aegis oder Google Authenticator. Der Code wird ab dem nächsten Login zusätzlich abgefragt.',
+    'auth.totp_qr.secret_label': 'Manuelles Secret (falls Scan nicht klappt)',
+    'auth.totp_qr.continue': 'Weiter zur Bibliothek',
+
+    'auth.logout.button': 'Abmelden',
+    'auth.user_menu.signed_in_as': 'angemeldet als'
   },
   en: {
     // ── Common ──────────────────────────────────────────
@@ -489,7 +529,46 @@ export const strings = {
     'settings.language.description':
       'Changes the UI language in your browser. Backend responses (track titles, artist names) stay unchanged — those come straight from the provider.',
     'settings.language.de': 'Deutsch',
-    'settings.language.en': 'English'
+    'settings.language.en': 'English',
+
+    // ── Login / Setup ───────────────────────────────────
+    'auth.login.eyebrow': 'Sign in',
+    'auth.login.title.before': 'Welcome',
+    'auth.login.title.italic': 'back',
+    'auth.login.subtitle':
+      'Sign in to access your library and queue. Sessions stay alive for 15 min and refresh automatically.',
+    'auth.login.username': 'Username',
+    'auth.login.password': 'Password',
+    'auth.login.totp': '2FA code',
+    'auth.login.totp_hint': 'Six-digit code from your authenticator app.',
+    'auth.login.submit': 'Sign in',
+    'auth.login.submitting': 'signing in …',
+    'auth.login.error_invalid': 'Wrong username or password',
+    'auth.login.error_totp': '2FA code missing or wrong',
+    'auth.login.error_rate': 'Too many failed attempts. Please wait 15 minutes.',
+    'auth.login.error_generic': 'Login failed — backend not reachable?',
+
+    'auth.setup.eyebrow': 'First-time setup',
+    'auth.setup.title.before': 'Create',
+    'auth.setup.title.italic': 'your access',
+    'auth.setup.subtitle':
+      'Tonus has no users yet. The first account becomes admin and can add more users later.',
+    'auth.setup.totp_label': 'Set up two-factor authentication right away',
+    'auth.setup.totp_hint':
+      'Recommended. You’ll see a QR code right after login to scan with your authenticator app.',
+    'auth.setup.submit': 'Create account',
+    'auth.setup.submitting': 'creating …',
+    'auth.setup.password_min': 'At least 8 characters',
+
+    'auth.totp_qr.eyebrow': 'Enable 2FA',
+    'auth.totp_qr.title': 'Scan the code',
+    'auth.totp_qr.body':
+      'Scan this QR code with Authy, 1Password, Aegis or Google Authenticator. The code will be required at every login from now on.',
+    'auth.totp_qr.secret_label': 'Manual secret (if scanning fails)',
+    'auth.totp_qr.continue': 'Continue to library',
+
+    'auth.logout.button': 'Sign out',
+    'auth.user_menu.signed_in_as': 'signed in as'
   }
 } as const;
 

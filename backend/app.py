@@ -3194,6 +3194,222 @@ async def plugin_finished_tracks(
     }
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Phase F.2 — Auth-Endpoints
+#
+# /api/auth/setup-status  — public, sagt ob noch ein Initial-Setup nötig ist
+# /api/auth/setup         — public, legt den ersten Admin an (nur einmal)
+# /api/auth/login         — public, Username + Password (+ optional TOTP) → JWT pair
+# /api/auth/refresh       — public, Refresh-Token → neues Access-Token
+# /api/auth/logout        — auth, revoke aktuelles Refresh-Token
+# /api/auth/me            — auth, gibt den aktuell auth'd User zurück
+# ──────────────────────────────────────────────────────────────────────
+
+class AuthSetupRequest(BaseModel):
+    username: str
+    password: str
+    enable_totp: bool = False
+
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+    totp_code: Optional[str] = None
+
+
+class AuthRefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class AuthLogoutRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    """Extract client IP from request, falls hinter Reverse-Proxy via
+    X-Forwarded-For / X-Real-IP. Best-effort — null wenn keiner gesetzt."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        # X-Forwarded-For: client, proxy1, proxy2 — wir wollen client
+        return fwd.split(",")[0].strip()
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()
+    return request.client.host if request.client else None
+
+
+@app.get("/api/auth/setup-status")
+async def auth_setup_status():
+    """Public — Frontend nutzt das beim ersten Page-Load um zu erkennen,
+    ob ein Setup-Wizard gezeigt werden muss. Auth-aktiv wenn entweder
+    ein User registriert ist oder Legacy-Token konfiguriert."""
+    from utils import auth_users as au
+    return {
+        "setup_required": au.setup_required(),
+        "auth_active": auth_required(),
+        "legacy_token_active": bool(config.TONUS_API_TOKEN),
+    }
+
+
+@app.post("/api/auth/setup")
+async def auth_setup(req: AuthSetupRequest):
+    """Bootstrap: legt den ersten Admin-User an. Nur einmal aufrufbar —
+    sobald ein User existiert, gibt's 409."""
+    from utils import auth_users as au
+    if not au.setup_required():
+        raise HTTPException(status_code=409, detail="Setup bereits abgeschlossen")
+    try:
+        user = au.create_user(req.username, req.password, is_admin=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Optional: TOTP gleich beim Setup aktivieren — Frontend zeigt
+    # in einem Folge-Step den QR-Code aus dem zurückgegebenen totp_uri.
+    totp_uri: Optional[str] = None
+    totp_secret: Optional[str] = None
+    if req.enable_totp:
+        totp_secret = au.generate_totp_secret()
+        au.set_totp_secret(user["id"], totp_secret)
+        totp_uri = au.totp_provisioning_uri(totp_secret, req.username)
+
+    # Direkt-Login nach Setup — User soll nicht extra einloggen müssen.
+    pair = au.issue_jwt_pair(user["id"], req.username, is_admin=True)
+    au.touch_last_login(user["id"])
+
+    return {
+        "user": {"id": user["id"], "username": req.username, "is_admin": True},
+        "tokens": pair,
+        "totp_secret": totp_secret,  # nur einmal sichtbar
+        "totp_uri": totp_uri,
+    }
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: AuthLoginRequest, request: Request):
+    """Username + Password (+ TOTP wenn aktiv) → JWT pair. Wirft 401 bei
+    falschen Creds. 429 bei Rate-Limit nach 5 Failed-Attempts/15min."""
+    from utils import auth_users as au
+
+    username = req.username.strip()
+    if not username or not req.password:
+        raise HTTPException(status_code=400, detail="Username und Passwort erforderlich")
+
+    if au.is_rate_limited(username):
+        raise HTTPException(
+            status_code=429,
+            detail="Zu viele Fehlversuche. Bitte 15 Minuten warten.",
+        )
+
+    user = au.get_user_by_username(username)
+    ip = _client_ip(request)
+
+    if not user or not au.verify_password(req.password, user["password_hash"]):
+        au.record_login_attempt(username, ip, success=False)
+        raise HTTPException(
+            status_code=401,
+            detail="Falsche Anmeldedaten",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # TOTP-Check wenn aktiviert
+    if user["totp_secret"]:
+        secret = au.get_user_totp_secret(user["id"])
+        if not secret or not au.verify_totp_code(secret, req.totp_code or ""):
+            au.record_login_attempt(username, ip, success=False)
+            raise HTTPException(
+                status_code=401,
+                detail="2FA-Code fehlt oder falsch",
+                headers={"X-Auth-Required-2FA": "true"},
+            )
+
+    pair = au.issue_jwt_pair(user["id"], user["username"], bool(user["is_admin"]))
+    au.touch_last_login(user["id"])
+    au.record_login_attempt(username, ip, success=True)
+
+    return {
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "is_admin": bool(user["is_admin"]),
+            "totp_enabled": bool(user["totp_secret"]),
+        },
+        "tokens": pair,
+    }
+
+
+@app.post("/api/auth/refresh")
+async def auth_refresh(req: AuthRefreshRequest):
+    """Tausche Refresh-Token gegen neues Access-Token (+ rotiertem Refresh).
+    Old refresh wird invalidiert (token-rotation pattern)."""
+    from utils import auth_users as au
+    claims = au.decode_jwt(req.refresh_token, expected_type="refresh")
+    if not claims:
+        raise HTTPException(status_code=401, detail="Refresh-Token ungültig oder abgelaufen")
+
+    user_id = int(claims.get("sub", 0))
+    user = au.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User nicht gefunden")
+
+    # Rotation: altes refresh-jti revoken, neues pair ausstellen.
+    au.revoke_refresh_token(claims["jti"])
+    pair = au.issue_jwt_pair(user["id"], user["username"], bool(user["is_admin"]))
+    return {"tokens": pair}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(req: AuthLogoutRequest, request: Request,
+                      _: None = Depends(require_token)):
+    """Invalidiert das übergebene Refresh-Token. Access-Token läuft sowieso
+    nach JWT_ACCESS_TTL_MIN ab — Logout-Sicherheit kommt vom Refresh-Revoke.
+    Wenn refresh_token nicht im Body: revoke ALLE refresh-tokens des Users
+    (Logout-everywhere)."""
+    from utils import auth_users as au
+    user = request.state.user
+    user_id = int(user.get("id", 0))
+    if user_id <= 0:
+        # Legacy/Setup-Auth → nichts zu logouten
+        return {"ok": True, "revoked": 0}
+
+    if req.refresh_token:
+        claims = au.decode_jwt(req.refresh_token, expected_type="refresh")
+        if claims and claims.get("jti"):
+            au.revoke_refresh_token(claims["jti"])
+            return {"ok": True, "revoked": 1}
+        return {"ok": True, "revoked": 0}
+
+    n = au.revoke_all_user_refresh_tokens(user_id)
+    return {"ok": True, "revoked": n}
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request, _: None = Depends(require_token)):
+    """Currently authenticated user — Frontend nutzt das beim Mount um zu
+    erkennen ob die Session noch valid ist und welche Berechtigungen
+    der User hat."""
+    user = request.state.user
+    if user.get("auth_method") in ("legacy", "setup"):
+        return {
+            "id": user["id"],
+            "username": user["username"],
+            "is_admin": user["is_admin"],
+            "auth_method": user["auth_method"],
+            "totp_enabled": False,
+        }
+    from utils import auth_users as au
+    db_user = au.get_user_by_id(user["id"])
+    if not db_user:
+        raise HTTPException(status_code=401, detail="User nicht mehr gefunden")
+    return {
+        "id": db_user["id"],
+        "username": db_user["username"],
+        "is_admin": bool(db_user["is_admin"]),
+        "auth_method": user["auth_method"],
+        "totp_enabled": bool(db_user["totp_secret"]),
+        "last_login_at_ms": db_user["last_login_at_ms"],
+    }
+
+
 # SPA-Frontend (SvelteKit-Build) — MUSS als letzter Mount stehen, sonst
 # werden alle danach definierten Routes von der StaticFiles-Catch-All
 # verschluckt. html=True liefert index.html für unbekannte Pfade
