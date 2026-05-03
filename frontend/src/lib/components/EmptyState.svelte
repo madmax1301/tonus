@@ -52,47 +52,20 @@
     gap: 24px;
   "
 >
-  {#if glyph === 'library'}
-    <!-- Empty-Crate Glyph: dashed-Kiste mit 3 gestaffelten Album-Silhouetten -->
-    <div
-      class="tonus-empty-glyph-crate"
-      style="
-        position: relative;
-        width: 180px;
-        height: 180px;
-        border: 1.5px dashed rgba(255, 255, 255, 0.18);
-        border-radius: 20px;
-        background: rgba(255, 255, 255, 0.02);
-      "
-    >
-      {#each [0, 1, 2] as i}
-        <div
-          style="
-            position: absolute;
-            top: {30 + i * 4}px;
-            left: {30 + i * 8}px;
-            width: 60px;
-            height: 120px;
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 3px;
-            transform: rotate({(i - 1) * 4}deg);
-            opacity: {0.4 - i * 0.1};
-          "
-        ></div>
-      {/each}
-    </div>
-  {:else if glyph === 'queue'}
-    <!-- Vinyl-Puck-Glyph: 140 px, ohne Counter, pulsiert sanft -->
+  {#if glyph === 'library' || glyph === 'queue'}
+    <!-- Drehendes Solo-Vinyl als Empty-State-Glyph. Identischer Look wie
+         der Library-Hero (VinylWithCover), nur ohne Cover-Karte daneben.
+         tonus-spin-Keyframes sind global in app.css. -->
     <div
       class="tonus-empty-glyph-vinyl"
       style="
-        width: 140px;
-        height: 140px;
+        width: 180px;
+        height: 180px;
         border-radius: 50%;
         background:
-          radial-gradient(circle at 50% 50%, {accent} 0 8px, #18120c 8px 11px, transparent 11px),
-          repeating-radial-gradient(circle at 50% 50%, #0a0a0c 0 1.5px, #161618 1.5px 4.5px),
+          radial-gradient(circle at 50% 50%, {accent} 0 14px, #18120c 14px 18px, transparent 18px),
+          repeating-radial-gradient(circle at 50% 50%, #0a0a0c 0 1px, #161618 1px 3px),
+          radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.08), transparent 50%),
           #0a0a0c;
         box-shadow:
           0 16px 48px rgba(0, 0, 0, 0.55),
@@ -103,9 +76,10 @@
       <span
         style="
           position: absolute;
-          inset: 30%;
+          inset: 33%;
           border-radius: 50%;
-          background: radial-gradient(circle, {tint(DEFAULT_HUE, 0.7)}, oklch(22% 0.05 30));
+          background: radial-gradient(circle, oklch(40% 0.10 {DEFAULT_HUE}), oklch(22% 0.05 {DEFAULT_HUE}));
+          box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
         "
       ></span>
     </div>
@@ -181,23 +155,16 @@
 </section>
 
 <style>
+  /* Drehendes Vinyl. tonus-spin-Keyframes leben global in app.css —
+     dieselbe Animation wie der Library-Hero, damit der Empty-State
+     visuell aus derselben Familie kommt. */
   .tonus-empty-glyph-vinyl {
-    animation: tonus-empty-pulse 2.4s ease-in-out infinite alternate;
-  }
-  @keyframes tonus-empty-pulse {
-    from {
-      opacity: 0.6;
-      transform: scale(1);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1.03);
-    }
+    animation: tonus-spin 12s linear infinite;
+    will-change: transform;
   }
   @media (prefers-reduced-motion: reduce) {
     .tonus-empty-glyph-vinyl {
       animation: none;
-      opacity: 0.85;
     }
   }
 </style>
