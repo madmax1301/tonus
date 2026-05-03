@@ -99,6 +99,87 @@ def init_jobs_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_csv_results_job ON csv_import_results(job_id, result_type)")
 
+        # ── Phase F: Multi-User-Auth ─────────────────────────────
+        # users — registrierte Konten. password_hash = argon2id, totp_secret =
+        # base32 (verschlüsselt mit JWT_SECRET als data-at-rest-Schutz, siehe
+        # auth_users.py). is_admin steuert wer neue User anlegen darf.
+        # last_login_at_ms für Activity-Anzeige in Settings.
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            totp_secret TEXT,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL,
+            last_login_at_ms INTEGER
+        )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+
+        # pats — Personal Access Tokens für Plugin/CLI/MCP. Plain-Token wird
+        # NICHT gespeichert; wir hashen mit sha256 (Tokens sind random-128bit,
+        # kein Bcrypt nötig). prefix = sichtbarer Anfang (z.B. "tonus_pat_aB12") als
+        # ID für den User in der UI. last_used_at_ms für "rotate stale tokens".
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS pats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            prefix TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            scopes TEXT,
+            created_at_ms INTEGER NOT NULL,
+            last_used_at_ms INTEGER,
+            expires_at_ms INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pats_user ON pats(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pats_token_hash ON pats(token_hash)")
+
+        # auth_meta — Server-seitige Auth-Geheimnisse. JWT_SECRET wird beim
+        # ersten Start generiert (siehe auth_users.get_or_init_jwt_secret).
+        # Key-Value-Schema, einfacher als ein einzelner-Row-Tabellen-Hack.
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS auth_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        )
+        """)
+
+        # login_attempts — pro Username + Source-IP, fenster-basiert für das
+        # Rate-Limit aus config.LOGIN_RATE_LIMIT_PER_15MIN. Cleanup beim
+        # Verify-Aufruf (alle Einträge älter als 15 min werden gelöscht).
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            source_ip TEXT,
+            attempted_at_ms INTEGER NOT NULL,
+            success INTEGER NOT NULL DEFAULT 0
+        )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_ts ON login_attempts(username, attempted_at_ms)")
+
+        # refresh_tokens — JWT-Refresh-Tokens werden beim Logout / Rotation
+        # invalidiert. Wir speichern den jti-Claim des Refresh-Tokens hier
+        # mit user_id und expires_at — bei jedem /api/auth/refresh checken
+        # wir ob jti in dieser Tabelle ist UND nicht expired. Logout =
+        # DELETE WHERE jti=...
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            jti TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            issued_at_ms INTEGER NOT NULL,
+            expires_at_ms INTEGER NOT NULL,
+            revoked_at_ms INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)")
+
         conn.commit()
     finally:
         conn.close()
