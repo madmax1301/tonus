@@ -8,11 +8,13 @@
     providersApi,
     urlApi,
     reverseApi,
+    systemApi,
     ApiError,
     type Track,
     type Album,
     type MetadataProvidersResponse,
-    type ReverseLookupResult
+    type ReverseLookupResult,
+    type HealthResponse
   } from '$lib/api';
   import { base } from '$app/paths';
   import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
@@ -38,6 +40,19 @@
   let searchInput = $state<HTMLInputElement | null>(null);
   let provider = $state<string>('');
   let providersData = $state<MetadataProvidersResponse | null>(null);
+  // Health wird non-blocking geladen — ausschließlich für den Empty-State-Link
+  // zum Navidrome-UI. Bei aktiver Suche ist Empty-State eh nie sichtbar, also
+  // kein Render-Block nötig.
+  let health = $state<HealthResponse | null>(null);
+  // Link auf Navidrome-Web-UI nur zeigen, wenn URL gesetzt UND nicht localhost/127.
+  // Default `http://localhost:4533` ist vom Browser eines anderen Hosts (NAS-Setup
+  // ist Standard) nicht erreichbar — toter Link wäre schlechter als kein Link.
+  const navidromeWebUrl = $derived.by(() => {
+    const u = health?.navidrome_api_url;
+    if (!u) return null;
+    if (/(localhost|127\.0\.0\.1|0\.0\.0\.0)/i.test(u)) return null;
+    return u;
+  });
   let trackResults = $state<Track[]>([]);
   let albumResults = $state<Album[]>([]);
   let searching = $state(false);
@@ -229,6 +244,16 @@
     } catch {
       // Auth-Sheet handled in api.ts
     }
+
+    // Health non-blocking — nur für den optionalen Navidrome-Link im Empty-State.
+    systemApi
+      .health()
+      .then((h) => {
+        health = h;
+      })
+      .catch(() => {
+        // Egal — ohne Health zeigen wir den Empty-State ohne Navidrome-Link.
+      });
 
     // URL erneuern damit beide Quellen synchron sind (falls URL leer war)
     syncUrl();
@@ -881,6 +906,27 @@
         >
           {$t('empty.library.cta_csv')}
         </a>
+        {#if navidromeWebUrl}
+          <a
+            href={navidromeWebUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center transition-colors"
+            style="
+              padding: 11px 22px;
+              border-radius: 999px;
+              font-size: 12px;
+              font-weight: 500;
+              letter-spacing: 0.02em;
+              background: transparent;
+              color: var(--color-fg-secondary);
+              border: 1px dashed var(--color-border-soft);
+              text-decoration: none;
+            "
+          >
+            {$t('empty.library.cta_navidrome')} →
+          </a>
+        {/if}
       {/snippet}
     </EmptyState>
   {/if}

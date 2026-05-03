@@ -351,6 +351,7 @@ export interface HealthResponse {
   spotify_configured?: boolean;
   navidrome_path?: string;
   navidrome_libraries?: NavidromeLibrary[];
+  navidrome_api_url?: string;
 }
 
 export const systemApi = {

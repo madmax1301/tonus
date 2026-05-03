@@ -1807,6 +1807,7 @@ async def health_check():
         "spotify_configured": spotify_service is not None,
         "navidrome_path": config.NAVIDROME_MUSIC_PATH,
         "navidrome_libraries": config.navidrome_libraries_public(),
+        "navidrome_api_url": config.NAVIDROME_API_URL,
     }
 
 @app.post("/api/recommendations")

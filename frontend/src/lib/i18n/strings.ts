@@ -66,14 +66,15 @@ export const strings = {
     'library.empty.no_query':
       'Tipp: Suchbegriff eingeben und ↵ drücken, oder einfach 320 ms tippen.',
     'library.provider.default_suffix': 'Default',
-    'empty.library.eyebrow': 'Kein Album bisher',
-    'empty.library.title': 'Deine Bibliothek\nwartet auf den ersten Track.',
+    'empty.library.eyebrow': 'Acquisition-Tool',
+    'empty.library.title': 'Hier landen Tracks\ndie du suchst.',
     'empty.library.body':
-      'Suche einen Song, importiere eine CSV mit gelikten Tracks oder lade direkt eine YouTube-URL — Tonus übernimmt den Rest.',
+      'Tonus indexiert nicht deine bestehende Library — das macht Navidrome. Hier suchst du Tracks, queust sie und lädst sie nach Navidrome. Zum Hören öffnest du Navidrome direkt.',
     'empty.library.cta_search': 'Track suchen',
     'empty.library.cta_csv': 'CSV importieren',
+    'empty.library.cta_navidrome': 'Navidrome öffnen',
     'empty.library.tip':
-      'Tonus indexiert Tracks bei Bedarf — kein Hintergrund-Sync, keine Quota.',
+      'Kein Hintergrund-Sync, keine Quota — Tonus läuft nur, wenn du etwas suchst.',
     'empty.queue.eyebrow': 'Warteschlange leer',
     'empty.queue.title': 'Nichts läuft.\nNichts wartet.',
     'empty.queue.body':
@@ -346,13 +347,14 @@ export const strings = {
     'library.empty.no_query':
       'Tip: type a query and press ↵, or just type for 320 ms.',
     'library.provider.default_suffix': 'Default',
-    'empty.library.eyebrow': 'No album yet',
-    'empty.library.title': 'Your library\nis waiting for the first track.',
+    'empty.library.eyebrow': 'Acquisition tool',
+    'empty.library.title': 'Tracks you find\nland here.',
     'empty.library.body':
-      'Search a song, import a CSV with liked tracks or drop in a YouTube URL — Tonus does the rest.',
+      "Tonus doesn't index your existing library — that's Navidrome's job. Here you search tracks, queue them and ship them to Navidrome. To listen, open Navidrome directly.",
     'empty.library.cta_search': 'Search tracks',
     'empty.library.cta_csv': 'Import CSV',
-    'empty.library.tip': 'Tonus indexes on-demand — no background sync, no quota.',
+    'empty.library.cta_navidrome': 'Open Navidrome',
+    'empty.library.tip': 'No background sync, no quota — Tonus only runs when you ask it to.',
     'empty.queue.eyebrow': 'Queue is empty',
     'empty.queue.title': 'Nothing running.\nNothing waiting.',
     'empty.queue.body':
