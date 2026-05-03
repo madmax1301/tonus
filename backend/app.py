@@ -3308,6 +3308,7 @@ async def auth_setup(req: AuthSetupRequest):
     totp_qr_data_url: Optional[str] = None
     if req.enable_totp:
         import qrcode as _qrcode
+        import qrcode.image.svg as _qrcode_svg
         import base64 as _b64
         from io import BytesIO as _BytesIO
 
@@ -3315,13 +3316,13 @@ async def auth_setup(req: AuthSetupRequest):
         # NICHT au.set_totp_secret hier — erst nach Verify-Step.
         totp_uri = au.totp_provisioning_uri(totp_secret, req.username)
 
-        # QR server-side rendern, statt im Frontend an api.qrserver.com zu
-        # senden. Der otpauth-URI enthält das Klartext-Secret — externer
-        # QR-Service würde ihn mitloggen.
-        _img = _qrcode.make(totp_uri)
+        # QR server-side rendern (SVG, nicht PNG) — vermeidet Pillow-
+        # Dependency, ist scharfer als PNG und kleiner. Der otpauth-URI
+        # enthält das Klartext-Secret, also nicht an externe QR-Services.
+        _img = _qrcode.make(totp_uri, image_factory=_qrcode_svg.SvgImage)
         _buf = _BytesIO()
-        _img.save(_buf, format="PNG")
-        totp_qr_data_url = "data:image/png;base64," + _b64.b64encode(_buf.getvalue()).decode("ascii")
+        _img.save(_buf)
+        totp_qr_data_url = "data:image/svg+xml;base64," + _b64.b64encode(_buf.getvalue()).decode("ascii")
 
     # Direkt-Login nach Setup — User soll nicht extra einloggen müssen.
     pair = au.issue_jwt_pair(user["id"], req.username, is_admin=True)
@@ -3459,13 +3460,14 @@ async def auth_totp_init(request: Request, _: None = Depends(require_token)):
     verifizieren, das aktiviert das Secret dann scharf.
     Verify-First-Activate-Second.
 
-    QR wird hier serverseitig gerendert (qrcode-lib + base64-data-URL), damit
+    QR wird hier serverseitig als SVG gerendert + base64-data-URL, damit
     das Secret nicht an einen externen QR-Service raussickert — der otpauth-URI
-    enthält das Secret im Klartext.
+    enthält das Secret im Klartext. SVG vermeidet Pillow-Dependency.
 
     409 wenn TOTP für den User schon aktiv ist — erst /totp-disable nötig."""
     from utils import auth_users as au
     import qrcode
+    import qrcode.image.svg as qrcode_svg
     import base64
     from io import BytesIO
 
@@ -3484,10 +3486,10 @@ async def auth_totp_init(request: Request, _: None = Depends(require_token)):
     secret = au.generate_totp_secret()
     uri = au.totp_provisioning_uri(secret, db_user["username"])
 
-    img = qrcode.make(uri)
+    img = qrcode.make(uri, image_factory=qrcode_svg.SvgImage)
     buf = BytesIO()
-    img.save(buf, format="PNG")
-    qr_data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    img.save(buf)
+    qr_data_url = "data:image/svg+xml;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
     return {"secret": secret, "uri": uri, "qr_data_url": qr_data_url}
 
