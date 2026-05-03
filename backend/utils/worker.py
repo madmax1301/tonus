@@ -483,6 +483,64 @@ class JobWorker(threading.Thread):
                         message=f"Matched {completed_unique}/{unique_total} unique tracks{lane_str}...",
                     )
 
+        # ---- Phase 2.5: Recovery-Pass ------------------------------------
+        # Deezer (und ähnliche Music-APIs) reagiert auf Burst-Loads NICHT immer
+        # mit 429, sondern oft mit `200 OK + data:[]` als Soft-Throttle. Mein
+        # _is_transient-Check fängt das nicht — leeres Array sieht aus wie
+        # "Track existiert nicht". Empirisch (User-Re-Check zeigt valide
+        # Treffer für Tracks die Phase 2 als unmatched markiert hat) ist das
+        # die Hauptursache für ~30 % "False-Negatives" im Initial-Pass.
+        #
+        # Recovery: Cooldown + sequenzieller Re-Search aller 0-Result-Keys.
+        # Sequenziell weil Throttle-State sich nur ohne Burst auflöst. Delay
+        # zwischen Calls hält uns weit unter Deezer's Soft-Limit.
+        recovery_keys = [k for k in unique_keys if cache.get(k) is None]
+        recovery_recovered = 0
+        if recovery_keys:
+            cooldown_s = 15
+            upsert_csv_job(
+                job_id,
+                status="processing",
+                total=total,
+                processed=min(int(completed_unique * total / max(1, unique_total)), total),
+                message=(
+                    f"Recovery-Phase: {len(recovery_keys)} Initial-Misses werden "
+                    f"nach {cooldown_s} s Cooldown sequenziell nochmal probiert..."
+                ),
+            )
+            # Cooldown in 1s-Chunks damit shutdown reagieren kann.
+            for _ in range(cooldown_s):
+                if self._stop.is_set():
+                    upsert_csv_job(job_id, status="error", message="Interrupted")
+                    return
+                time.sleep(1)
+
+            # Single-thread, default lane (kein Splitting), 0.4 s zwischen Calls.
+            # Bei 100 Recovery-Keys → ~40 s Phase-Dauer, akzeptabel.
+            for idx, k in enumerate(recovery_keys):
+                if self._stop.is_set():
+                    upsert_csv_job(job_id, status="error", message="Interrupted")
+                    return
+                try:
+                    _, result, _, _ = _do_search(k, "default")
+                except Exception:
+                    result = None
+                if result is not None:
+                    cache[k] = result
+                    recovery_recovered += 1
+                time.sleep(0.4)
+                if (idx + 1) % 10 == 0:
+                    upsert_csv_job(
+                        job_id,
+                        status="processing",
+                        total=total,
+                        processed=min(int(completed_unique * total / max(1, unique_total)), total),
+                        message=(
+                            f"Recovery: {idx + 1}/{len(recovery_keys)} re-checked, "
+                            f"+{recovery_recovered} zusätzlich gefunden..."
+                        ),
+                    )
+
         # ---- Phase 3: Materialisieren + DB-Inserts ------------------------
         batch_matched: list = []
         batch_unmatched: list = []
@@ -573,6 +631,17 @@ class JobWorker(threading.Thread):
         else:
             lane_summary = ""
 
+        # Recovery-Aggregat — zeigt wie viel der Burst-Soft-Throttle gekostet
+        # hat. Hohe recovery_recovered-Zahl = Burst-Limit war ein echtes
+        # Problem im initial-Pass; bei 0 = Initial-Pass war sauber.
+        if recovery_keys:
+            recovery_summary = (
+                f" · Recovery: {recovery_recovered}/{len(recovery_keys)} "
+                f"Initial-Misses gerettet"
+            )
+        else:
+            recovery_summary = ""
+
         # Stdout-Log fürs Aggregat — taucht in `docker logs tonus` auf, ist
         # für Post-Mortem von großen Imports nützlich (UI zeigt nur die letzte
         # Status-Message, der Container-Log behält die Historie).
@@ -596,7 +665,7 @@ class JobWorker(threading.Thread):
             message=(
                 f"Done: {matched_count} matched, {unmatched_count} not found "
                 f"({unique_total} unique queries, {total - unique_total} duplicates skipped)"
-                f"{lane_summary}"
+                f"{lane_summary}{recovery_summary}"
             ),
         )
 
