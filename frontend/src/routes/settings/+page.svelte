@@ -9,7 +9,9 @@
     type MetadataProvidersResponse,
     type FormatsInfo,
     type HealthResponse,
-    type AuthUser
+    type AuthUser,
+    type Pat,
+    type PatCreateResponse
   } from '$lib/api';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
@@ -24,10 +26,13 @@
     Sliders,
     Database,
     Globe,
-    ShieldCheck
+    ShieldCheck,
+    KeyRound,
+    Copy,
+    AlertTriangle
   } from 'lucide-svelte';
 
-  type Section = 'defaults' | 'backend' | 'local' | 'language' | 'security';
+  type Section = 'defaults' | 'backend' | 'local' | 'language' | 'pats' | 'security';
   let section = $state<Section>('defaults');
 
   // Backend-Info (read-only)
@@ -38,6 +43,133 @@
 
   // Current user — Quelle für totp_enabled und Re-Render nach TOTP-Mutation.
   let me = $state<AuthUser | null>(null);
+
+  // ── PATs (Personal Access Tokens) ──────────────────────────────────
+  // Liste lädt einmalig beim Section-Open + nach jedem Create/Revoke.
+  let pats = $state<Pat[]>([]);
+  let patsLoaded = $state(false);
+  let patsError = $state<string | null>(null);
+
+  // Create-Modal-State.
+  let createOpen = $state(false);
+  let createName = $state('');
+  // Expiry-Slider: 7 / 30 / 90 / null (= unbegrenzt). Default 30d ist
+  // ein vernünftiger Mittelweg — kurz genug um Stale-Tokens zu verhindern,
+  // lang genug um nicht ständig zu re-issuen.
+  let createExpiry = $state<7 | 30 | 90 | null>(30);
+  let createBusy = $state(false);
+  let createError = $state<string | null>(null);
+
+  // Plain-Token Once-Display: nach erfolgreichem Create wird der Plain-
+  // Token in shownToken gehalten und EINMALIG gerendert. Schließen ⇒ raus.
+  let shownToken = $state<PatCreateResponse | null>(null);
+  let shownCopied = $state(false);
+
+  // Revoke-State: ID des Tokens der gerade widerrufen wird (Spinner).
+  let revokingId = $state<number | null>(null);
+
+  async function loadPats() {
+    patsError = null;
+    try {
+      const res = await authApi.patsList();
+      pats = res.pats;
+      patsLoaded = true;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        // Legacy/Setup-Auth — keine User-bezogenen PATs möglich.
+        pats = [];
+        patsLoaded = true;
+      } else {
+        patsError = $t('settings.pats.create.error_generic');
+      }
+    }
+  }
+
+  async function submitCreatePat() {
+    const name = createName.trim();
+    if (!name || name.length > 64) {
+      createError = $t('settings.pats.create.error_name');
+      return;
+    }
+    createBusy = true;
+    createError = null;
+    try {
+      const res = await authApi.patsCreate(name, createExpiry);
+      // Plain-Token JETZT zeigen, dann Modal schließen + Liste reloaden.
+      shownToken = res;
+      shownCopied = false;
+      createOpen = false;
+      createName = '';
+      createExpiry = 30;
+      await loadPats();
+    } catch (err) {
+      createError =
+        err instanceof ApiError && err.status === 400
+          ? err.message
+          : $t('settings.pats.create.error_generic');
+    } finally {
+      createBusy = false;
+    }
+  }
+
+  async function copyShownToken() {
+    if (!shownToken) return;
+    try {
+      await navigator.clipboard.writeText(shownToken.token);
+      shownCopied = true;
+      setTimeout(() => (shownCopied = false), 1500);
+    } catch {
+      // Clipboard kann in iframes/insecure-contexts blocked sein — kein
+      // großes Drama, User kann den Token immer noch manuell selektieren.
+    }
+  }
+
+  function dismissShownToken() {
+    shownToken = null;
+    shownCopied = false;
+  }
+
+  async function revokePat(pat: Pat) {
+    const ok = await showConfirm({
+      title: $t('settings.pats.revoke.confirm_title'),
+      message: $t('settings.pats.revoke.confirm_message'),
+      confirmLabel: $t('settings.pats.revoke.confirm_label'),
+      destructive: true
+    });
+    if (!ok) return;
+    revokingId = pat.id;
+    try {
+      await authApi.patsRevoke(pat.id);
+      await loadPats();
+    } catch {
+      patsError = $t('settings.pats.revoke.error_generic');
+    } finally {
+      revokingId = null;
+    }
+  }
+
+  // Relative-Zeit-Formatierung — kompakt, ohne externe Lib. Negative Werte
+  // (in der Vergangenheit) zeigen wir als "vor X" via deutscher Lokalisierung
+  // im strings-Format ({when} = "3 Tagen"), positive ("läuft in 5 Tagen ab")
+  // sind ohne Vorzeichen.
+  function formatRelative(diffMs: number): string {
+    const abs = Math.abs(diffMs);
+    const min = 60 * 1000;
+    const hour = 60 * min;
+    const day = 24 * hour;
+    if (abs < hour) return $lang === 'de' ? `${Math.max(1, Math.round(abs / min))} min` : `${Math.max(1, Math.round(abs / min))} min`;
+    if (abs < day) return $lang === 'de' ? `${Math.round(abs / hour)} h` : `${Math.round(abs / hour)} h`;
+    const days = Math.round(abs / day);
+    return $lang === 'de' ? `${days} Tage${days === 1 ? '' : 'n'}` : `${days} day${days === 1 ? '' : 's'}`;
+  }
+
+  // Lazy-Load: PATs nur fetchen, wenn der User die Section tatsächlich öffnet.
+  // Spart einen Roundtrip bei Settings-Open für den 80%-Use-Case.
+  $effect(() => {
+    if (section === 'pats' && !patsLoaded) {
+      loadPats();
+    }
+  });
 
   // TOTP-Setup-Wizard-State (öffnet inline in der Security-Section).
   // initData != null ⇒ Wizard läuft (QR + Code-Eingabe sichtbar).
@@ -255,6 +387,7 @@
       { id: 'backend' as Section, key: 'settings.section.backend' as const, icon: Server },
       { id: 'local' as Section, key: 'settings.section.local' as const, icon: Database },
       { id: 'language' as Section, key: 'settings.section.language' as const, icon: Globe },
+      { id: 'pats' as Section, key: 'settings.section.pats' as const, icon: KeyRound },
       { id: 'security' as Section, key: 'settings.section.security' as const, icon: ShieldCheck }
     ] as s}
       {@const active = section === s.id}
@@ -708,6 +841,286 @@
           </button>
         {/each}
       </div>
+    </div>
+  {/if}
+
+  <!-- ─── Section: PATs (API-Tokens) ─────────────────────── -->
+  {#if section === 'pats'}
+    <div
+      class="tonus-fadein"
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
+    >
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+      >
+        {$t('settings.pats.eyebrow')}
+      </div>
+      <div
+        class="flex items-baseline justify-between flex-wrap gap-3"
+        style="margin-bottom: 18px;"
+      >
+        <div
+          style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary);"
+        >
+          {$t('settings.pats.title')}
+        </div>
+        {#if me?.auth_method !== 'legacy' && me?.auth_method !== 'setup'}
+          <button
+            type="button"
+            onclick={() => {
+              createOpen = true;
+              createError = null;
+              createName = '';
+              createExpiry = 30;
+            }}
+            class="inline-flex items-center gap-1.5 transition-opacity"
+            style="background: {accent}; color: #1a1410; padding: 10px 18px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);"
+          >
+            <KeyRound size={13} strokeWidth={2} />
+            {$t('settings.pats.create.button')}
+          </button>
+        {/if}
+      </div>
+      <p
+        style="font-size: 13px; color: var(--color-fg-secondary); margin-bottom: 22px; line-height: 1.55; max-width: 620px;"
+      >
+        {$t('settings.pats.body')}
+      </p>
+
+      {#if me?.auth_method === 'legacy' || me?.auth_method === 'setup'}
+        <!-- Legacy/Setup-Auth hat keinen User-Account → keine PATs möglich.
+             Hinweis-Card statt Form. -->
+        <div
+          style="background: rgba(248, 195, 113, 0.08); border: 1px dashed rgba(248, 195, 113, 0.35); border-radius: 14px; padding: 16px 20px; color: var(--color-fg-secondary); font-size: 13px; line-height: 1.55;"
+        >
+          <AlertTriangle size={14} strokeWidth={2} style="display: inline; vertical-align: -2px; color: rgba(248, 195, 113, 0.95); margin-right: 6px;" />
+          {$t('settings.pats.legacy_note')}
+        </div>
+      {:else if shownToken}
+        <!-- Plain-Token Once-Display: Backend speichert nur Hash, also gibt
+             es keinen Weg den Klartext später nochmal zu sehen. Inline-Card
+             mit Copy-Button + Warnung. -->
+        <div
+          style="background: rgba(34, 197, 94, 0.06); border: 1px solid rgba(34, 197, 94, 0.32); border-radius: 16px; padding: 22px 24px; margin-bottom: 22px;"
+        >
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 11px; letter-spacing: 0.2em; color: rgba(134, 239, 172, 0.95); margin-bottom: 8px;"
+          >
+            {$t('settings.pats.shown.title')} · {shownToken.name}
+          </div>
+          <p
+            style="font-size: 12.5px; color: var(--color-fg-secondary); line-height: 1.5; margin: 0 0 12px;"
+          >
+            <AlertTriangle size={12} strokeWidth={2} style="display: inline; vertical-align: -2px; color: rgba(248, 195, 113, 0.95); margin-right: 4px;" />
+            {$t('settings.pats.shown.warning')}
+          </p>
+          <div
+            class="flex items-center gap-3"
+            style="background: rgba(0, 0, 0, 0.4); border: 1px solid var(--color-border-soft); border-radius: 12px; padding: 12px 16px; font-family: var(--font-mono); font-size: 13px; color: var(--color-fg-primary); word-break: break-all;"
+          >
+            <code style="flex: 1; letter-spacing: 0.04em;">{shownToken.token}</code>
+            <button
+              type="button"
+              onclick={copyShownToken}
+              class="inline-flex items-center gap-1.5 transition-opacity flex-shrink-0"
+              style="background: rgba(255, 255, 255, 0.06); color: var(--color-fg-primary); padding: 6px 14px; border-radius: 999px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--color-border-soft);"
+            >
+              {#if shownCopied}
+                <Check size={12} strokeWidth={2} />
+                {$t('settings.pats.shown.copied')}
+              {:else}
+                <Copy size={12} strokeWidth={2} />
+                {$t('settings.pats.shown.copy')}
+              {/if}
+            </button>
+          </div>
+          <button
+            type="button"
+            onclick={dismissShownToken}
+            class="inline-flex items-center transition-colors"
+            style="margin-top: 14px; background: transparent; color: var(--color-fg-secondary); padding: 8px 16px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; border: 1px solid var(--color-border-soft);"
+          >
+            {$t('settings.pats.shown.close')}
+          </button>
+        </div>
+      {/if}
+
+      {#if createOpen && me?.auth_method !== 'legacy' && me?.auth_method !== 'setup'}
+        <!-- Create-Form: Name + Expiry. Inline statt Modal — passt zum
+             Glass-Card-Stil und erspart einen Layer. -->
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            submitCreatePat();
+          }}
+          class="flex flex-col gap-3"
+          style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--color-border-soft); border-radius: 16px; padding: 22px 24px; margin-bottom: 22px; max-width: 560px;"
+        >
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 4px;"
+          >
+            {$t('settings.pats.create.modal_title')}
+          </div>
+          <label class="flex flex-col gap-1.5" for="pat-create-name">
+            <span
+              class="uppercase"
+              style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+            >
+              {$t('settings.pats.create.name_label')}
+            </span>
+            <input
+              id="pat-create-name"
+              type="text"
+              maxlength="64"
+              spellcheck="false"
+              bind:value={createName}
+              placeholder={$t('settings.pats.create.name_placeholder')}
+              class="outline-none"
+              style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-size: 13px; padding: 12px 16px;"
+            />
+          </label>
+          <div class="flex flex-col gap-1.5">
+            <span
+              class="uppercase"
+              style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+            >
+              {$t('settings.pats.create.expiry_label')}
+            </span>
+            <div class="flex items-center gap-1.5 flex-wrap">
+              {#each [
+                { val: 7 as const, key: 'settings.pats.create.expiry_7d' as const },
+                { val: 30 as const, key: 'settings.pats.create.expiry_30d' as const },
+                { val: 90 as const, key: 'settings.pats.create.expiry_90d' as const },
+                { val: null, key: 'settings.pats.create.expiry_never' as const }
+              ] as opt}
+                <button
+                  type="button"
+                  onclick={() => (createExpiry = opt.val)}
+                  class="px-4 py-2 rounded-full text-[12px] transition-all"
+                  style={pillStyle(createExpiry === opt.val)}
+                >
+                  {$t(opt.key)}
+                </button>
+              {/each}
+            </div>
+          </div>
+          {#if createError}
+            <p style="font-size: 12px; color: #f87171; margin: 0;">{createError}</p>
+          {/if}
+          <div class="flex items-center gap-3" style="margin-top: 4px;">
+            <button
+              type="submit"
+              disabled={createBusy}
+              class="inline-flex items-center transition-opacity"
+              style="background: {accent}; color: #1a1410; padding: 11px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25); opacity: {createBusy ? 0.6 : 1}; cursor: {createBusy ? 'wait' : 'pointer'};"
+            >
+              {createBusy
+                ? $t('settings.pats.create.submitting')
+                : $t('settings.pats.create.submit')}
+            </button>
+            <button
+              type="button"
+              onclick={() => {
+                createOpen = false;
+                createError = null;
+              }}
+              class="inline-flex items-center transition-colors"
+              style="background: transparent; color: var(--color-fg-secondary); padding: 11px 22px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; border: 1px solid var(--color-border-soft);"
+            >
+              {$t('settings.pats.create.cancel')}
+            </button>
+          </div>
+        </form>
+      {/if}
+
+      {#if me?.auth_method !== 'legacy' && me?.auth_method !== 'setup'}
+        <!-- Liste der existierenden PATs. Plain-Token gibt's hier nicht mehr —
+             nur prefix für Identifikation, plus created/last-used/expires. -->
+        {#if patsError}
+          <p style="font-size: 12px; color: #f87171; margin: 0 0 12px;">{patsError}</p>
+        {/if}
+        {#if !patsLoaded}
+          <p style="font-size: 12px; color: var(--color-fg-tertiary); margin: 0;">…</p>
+        {:else if pats.length === 0}
+          <p style="font-size: 13px; color: var(--color-fg-tertiary); margin: 0;">
+            {$t('settings.pats.list.empty')}
+          </p>
+        {:else}
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary); margin-bottom: 10px;"
+          >
+            {$t('settings.pats.list.title')}
+          </div>
+          <ul class="flex flex-col" style="gap: 10px; margin: 0; padding: 0; list-style: none;">
+            {#each pats as p (p.id)}
+              {@const now = Date.now()}
+              {@const expired = p.expires_at_ms && p.expires_at_ms < now}
+              {@const expiresIn = p.expires_at_ms ? p.expires_at_ms - now : null}
+              {@const createdAgo = now - p.created_at_ms}
+              {@const lastUsedAgo = p.last_used_at_ms ? now - p.last_used_at_ms : null}
+              <li
+                class="flex items-center justify-between gap-4 flex-wrap"
+                style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--color-border-soft); border-radius: 14px; padding: 14px 18px;"
+              >
+                <div class="flex flex-col" style="gap: 4px; min-width: 0; flex: 1;">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span
+                      style="font-size: 14px; font-weight: 500; color: var(--color-fg-primary);"
+                      >{p.name}</span
+                    >
+                    <code
+                      style="font-family: var(--font-mono); font-size: 11.5px; color: var(--color-fg-tertiary); letter-spacing: 0.04em;"
+                      >{p.prefix}…</code
+                    >
+                  </div>
+                  <div
+                    class="flex items-center gap-2 flex-wrap"
+                    style="font-size: 11.5px; color: var(--color-fg-secondary);"
+                  >
+                    <span>
+                      {#if expired}
+                        <span style="color: #f87171;">{$t('settings.pats.list.expired')}</span>
+                      {:else if p.expires_at_ms && expiresIn !== null}
+                        {$t('settings.pats.list.expires_in', {
+                          when: formatRelative(expiresIn)
+                        })}
+                      {:else}
+                        {$t('settings.pats.list.no_expiry')}
+                      {/if}
+                    </span>
+                    <span style="color: var(--color-fg-tertiary);">·</span>
+                    <span>
+                      {#if lastUsedAgo !== null}
+                        {$t('settings.pats.list.last_used', {
+                          when: formatRelative(lastUsedAgo)
+                        })}
+                      {:else}
+                        {$t('settings.pats.list.never_used')}
+                      {/if}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={revokingId === p.id}
+                  onclick={() => revokePat(p)}
+                  class="inline-flex items-center gap-1.5 transition-opacity flex-shrink-0"
+                  style="background: rgba(248, 113, 113, 0.12); color: #fca5a5; padding: 8px 16px; border-radius: 999px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid rgba(248, 113, 113, 0.28); opacity: {revokingId === p.id ? 0.6 : 1};"
+                >
+                  <Trash2 size={12} strokeWidth={2} />
+                  {revokingId === p.id
+                    ? $t('settings.pats.revoke.busy')
+                    : $t('settings.pats.list.revoke')}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {/if}
     </div>
   {/if}
 

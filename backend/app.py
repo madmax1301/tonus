@@ -3488,6 +3488,70 @@ async def auth_totp_disable(req: TotpDisableRequest, request: Request,
     return {"ok": True}
 
 
+class PatCreateRequest(BaseModel):
+    name: str
+    expires_in_days: Optional[int] = None  # None ⇒ unbegrenzt
+
+
+def _user_id_from_request(request: Request) -> int:
+    """Extrahiert die User-ID aus dem authentifizierten Request. Wirft 403
+    für legacy/setup-Auth (kein User-Datensatz dahinter — PATs gehören zu
+    einem konkreten User)."""
+    user = request.state.user
+    user_id = int(user.get("id", 0))
+    if user_id <= 0:
+        raise HTTPException(
+            status_code=403,
+            detail="API-Tokens sind nur für eingeloggte User mit Account verfügbar.",
+        )
+    return user_id
+
+
+@app.post("/api/auth/pats")
+async def auth_pats_create(req: PatCreateRequest, request: Request,
+                            _: None = Depends(require_token)):
+    """Erstellt einen neuen Personal Access Token. Plain-Token wird NUR
+    in dieser Antwort zurückgegeben — Backend speichert nur den sha256-Hash.
+    Caller (Frontend) muss den Plain-Token einmalig anzeigen + verwerfen."""
+    from utils import auth_users as au
+    user_id = _user_id_from_request(request)
+    name = (req.name or "").strip()
+    if not name or len(name) > 64:
+        raise HTTPException(status_code=400, detail="Name muss 1–64 Zeichen lang sein.")
+
+    expires_at_ms: Optional[int] = None
+    if req.expires_in_days and req.expires_in_days > 0:
+        expires_at_ms = int(time.time() * 1000) + req.expires_in_days * 24 * 60 * 60 * 1000
+
+    try:
+        pat = au.issue_pat(user_id, name, expires_at_ms=expires_at_ms)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return pat
+
+
+@app.get("/api/auth/pats")
+async def auth_pats_list(request: Request, _: None = Depends(require_token)):
+    """Liste aller PATs des eingeloggten Users — ohne Plain-Token (gibt's nicht
+    mehr, nur prefix für Identifikation)."""
+    from utils import auth_users as au
+    user_id = _user_id_from_request(request)
+    return {"pats": au.list_pats(user_id)}
+
+
+@app.delete("/api/auth/pats/{pat_id}")
+async def auth_pats_revoke(pat_id: int, request: Request,
+                            _: None = Depends(require_token)):
+    """Hard-Delete eines PATs. Owner-Check ist im SQL — der User kann nur
+    seine eigenen Tokens widerrufen, fremde IDs returnieren 404."""
+    from utils import auth_users as au
+    user_id = _user_id_from_request(request)
+    ok = au.revoke_pat(pat_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Token nicht gefunden.")
+    return {"ok": True}
+
+
 @app.get("/api/auth/me")
 async def auth_me(request: Request, _: None = Depends(require_token)):
     """Currently authenticated user — Frontend nutzt das beim Mount um zu

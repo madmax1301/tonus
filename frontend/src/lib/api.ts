@@ -189,8 +189,39 @@ export const authApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token })
-    })
+    }),
+  /** Auth — Liste aller PATs des eingeloggten Users (ohne Plain-Token). */
+  patsList: () => request<{ pats: Pat[] }>('/api/auth/pats'),
+  /** Auth — Erstellt PAT. Plain-Token im Response NUR diesmal sichtbar. */
+  patsCreate: (name: string, expires_in_days?: number | null) =>
+    request<PatCreateResponse>('/api/auth/pats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, expires_in_days: expires_in_days ?? null })
+    }),
+  /** Auth — Widerruft PAT (hard delete). 404 wenn nicht ownership. */
+  patsRevoke: (pat_id: number) =>
+    request<{ ok: boolean }>(`/api/auth/pats/${pat_id}`, { method: 'DELETE' })
 };
+
+export interface Pat {
+  id: number;
+  name: string;
+  prefix: string;
+  scopes?: string | null;
+  created_at_ms: number;
+  last_used_at_ms?: number | null;
+  expires_at_ms?: number | null;
+}
+
+export interface PatCreateResponse {
+  id: number;
+  name: string;
+  prefix: string;
+  /** Plain-Token — NUR in dieser einen Antwort verfügbar. Sofort dem User zeigen, dann verwerfen. */
+  token: string;
+  expires_at_ms?: number | null;
+}
 
 export interface QueueJobPayload {
   kind?: 'url';
