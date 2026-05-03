@@ -3391,6 +3391,52 @@ class TotpConfirmRequest(BaseModel):
     code: str
 
 
+class TotpDisableRequest(BaseModel):
+    password: str
+    totp_code: Optional[str] = None
+
+
+@app.post("/api/auth/totp-init")
+async def auth_totp_init(request: Request, _: None = Depends(require_token)):
+    """Generiert ein frisches TOTP-Secret + Provisioning-URI + QR-PNG (data-URL)
+    für nachträgliches 2FA-Setup aus den Settings. Wird NICHT in der DB
+    persistiert — der Aufrufer muss den ersten Code via /api/auth/totp-confirm
+    verifizieren, das aktiviert das Secret dann scharf.
+    Verify-First-Activate-Second.
+
+    QR wird hier serverseitig gerendert (qrcode-lib + base64-data-URL), damit
+    das Secret nicht an einen externen QR-Service raussickert — der otpauth-URI
+    enthält das Secret im Klartext.
+
+    409 wenn TOTP für den User schon aktiv ist — erst /totp-disable nötig."""
+    from utils import auth_users as au
+    import qrcode
+    import base64
+    from io import BytesIO
+
+    user = request.state.user
+    user_id = int(user.get("id", 0))
+    if user_id <= 0:
+        raise HTTPException(status_code=403, detail="TOTP-Init nur für eingeloggte User")
+    db_user = au.get_user_by_id(user_id)
+    if not db_user:
+        raise HTTPException(status_code=401, detail="User nicht mehr gefunden")
+    if db_user["totp_secret"]:
+        raise HTTPException(
+            status_code=409,
+            detail="TOTP ist bereits aktiv — erst deaktivieren, dann neu einrichten.",
+        )
+    secret = au.generate_totp_secret()
+    uri = au.totp_provisioning_uri(secret, db_user["username"])
+
+    img = qrcode.make(uri)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    qr_data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+    return {"secret": secret, "uri": uri, "qr_data_url": qr_data_url}
+
+
 @app.post("/api/auth/totp-confirm")
 async def auth_totp_confirm(req: TotpConfirmRequest, request: Request,
                              _: None = Depends(require_token)):
@@ -3408,6 +3454,37 @@ async def auth_totp_confirm(req: TotpConfirmRequest, request: Request,
         raise HTTPException(status_code=401, detail="TOTP-Code falsch oder abgelaufen")
 
     au.set_totp_secret(user_id, req.secret)
+    return {"ok": True}
+
+
+@app.post("/api/auth/totp-disable")
+async def auth_totp_disable(req: TotpDisableRequest, request: Request,
+                             _: None = Depends(require_token)):
+    """Deaktiviert TOTP für den eingeloggten User. Verlangt Password-Re-Verify
+    plus aktuellen TOTP-Code (wenn 2FA gerade aktiv ist) — sonst könnte ein
+    geklauter Access-Token allein genügen, um 2FA auszuhebeln. Defense gegen
+    Session-Hijack."""
+    from utils import auth_users as au
+    user = request.state.user
+    user_id = int(user.get("id", 0))
+    if user_id <= 0:
+        raise HTTPException(status_code=403, detail="TOTP-Disable nur für eingeloggte User")
+    db_user = au.get_user_by_id(user_id)
+    if not db_user:
+        raise HTTPException(status_code=401, detail="User nicht mehr gefunden")
+
+    if not au.verify_password(req.password, db_user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Passwort falsch")
+
+    if db_user["totp_secret"]:
+        secret = au.get_user_totp_secret(user_id)
+        if not secret or not au.verify_totp_code(secret, req.totp_code or ""):
+            raise HTTPException(
+                status_code=401,
+                detail="TOTP-Code fehlt oder ist falsch",
+            )
+
+    au.disable_totp(user_id)
     return {"ok": True}
 
 

@@ -5,10 +5,12 @@
   import {
     providersApi,
     systemApi,
+    authApi,
     ApiError,
     type MetadataProvidersResponse,
     type FormatsInfo,
-    type HealthResponse
+    type HealthResponse,
+    type AuthUser
   } from '$lib/api';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
@@ -23,10 +25,11 @@
     Check,
     Sliders,
     Database,
-    Globe
+    Globe,
+    ShieldCheck
   } from 'lucide-svelte';
 
-  type Section = 'auth' | 'defaults' | 'backend' | 'local' | 'language';
+  type Section = 'auth' | 'defaults' | 'backend' | 'local' | 'language' | 'security';
   let section = $state<Section>('auth');
 
   // Token
@@ -45,12 +48,129 @@
   let health = $state<HealthResponse | null>(null);
   let infoError = $state<string | null>(null);
 
+  // Current user — Quelle für totp_enabled und Re-Render nach TOTP-Mutation.
+  let me = $state<AuthUser | null>(null);
+
+  // TOTP-Setup-Wizard-State (öffnet inline in der Security-Section).
+  // initData != null ⇒ Wizard läuft (QR + Code-Eingabe sichtbar).
+  // Verify-First-Pattern: Secret nur in dieser Variable, nicht in DB,
+  // bis confirmTotpSetup() den Code erfolgreich gegen das Backend prüft.
+  let totpInit = $state<{ secret: string; uri: string; qr_data_url: string } | null>(null);
+  let totpInitBusy = $state(false);
+  let totpInitCode = $state('');
+  let totpInitError = $state<string | null>(null);
+  let totpInitConfirming = $state(false);
+
+  // TOTP-Disable-Form-State.
+  let totpDisablePassword = $state('');
+  let totpDisableCode = $state('');
+  let totpDisableBusy = $state(false);
+  let totpDisableError = $state<string | null>(null);
+  let totpJustDisabled = $state(false);
+
+  async function reloadMe() {
+    try {
+      me = await authApi.me();
+    } catch {
+      // 401 wird von api.ts global gehandhabt
+    }
+  }
+
+  async function startTotpSetup() {
+    totpInitBusy = true;
+    totpInitError = null;
+    totpInitCode = '';
+    try {
+      totpInit = await authApi.totpInit();
+    } catch (err) {
+      totpInitError =
+        err instanceof ApiError && err.status === 409
+          ? err.message
+          : $t('settings.security.setup.error_generic');
+    } finally {
+      totpInitBusy = false;
+    }
+  }
+
+  function cancelTotpSetup() {
+    totpInit = null;
+    totpInitCode = '';
+    totpInitError = null;
+  }
+
+  async function confirmTotpSetup() {
+    if (!totpInit) return;
+    const code = totpInitCode.replace(/\s/g, '');
+    if (!/^\d{6}$/.test(code)) {
+      totpInitError = $t('settings.security.setup.error_code');
+      return;
+    }
+    totpInitConfirming = true;
+    totpInitError = null;
+    try {
+      await authApi.totpConfirm(totpInit.secret, code);
+      totpInit = null;
+      totpInitCode = '';
+      await reloadMe();
+    } catch (err) {
+      totpInitError =
+        err instanceof ApiError && err.status === 401
+          ? $t('settings.security.setup.error_code')
+          : $t('settings.security.setup.error_generic');
+    } finally {
+      totpInitConfirming = false;
+    }
+  }
+
+  async function disableTotp() {
+    const ok = await showConfirm({
+      title: $t('settings.security.disable.confirm_title'),
+      message: $t('settings.security.disable.confirm_message'),
+      confirmLabel: $t('settings.security.disable.confirm_label'),
+      destructive: true
+    });
+    if (!ok) return;
+
+    if (!totpDisablePassword || (me?.totp_enabled && !/^\d{6}$/.test(totpDisableCode.replace(/\s/g, '')))) {
+      totpDisableError = me?.totp_enabled
+        ? $t('settings.security.disable.error_code')
+        : $t('settings.security.disable.error_password');
+      return;
+    }
+
+    totpDisableBusy = true;
+    totpDisableError = null;
+    try {
+      await authApi.totpDisable(
+        totpDisablePassword,
+        me?.totp_enabled ? totpDisableCode.replace(/\s/g, '') : undefined
+      );
+      totpDisablePassword = '';
+      totpDisableCode = '';
+      totpJustDisabled = true;
+      setTimeout(() => (totpJustDisabled = false), 1800);
+      await reloadMe();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        const detail = (err.message || '').toLowerCase();
+        totpDisableError = detail.includes('totp') || detail.includes('2fa')
+          ? $t('settings.security.disable.error_code')
+          : $t('settings.security.disable.error_password');
+      } else {
+        totpDisableError = $t('settings.security.disable.error_generic');
+      }
+    } finally {
+      totpDisableBusy = false;
+    }
+  }
+
   onMount(async () => {
     try {
-      [providers, formats, health] = await Promise.all([
+      [providers, formats, health, me] = await Promise.all([
         providersApi.list().catch(() => null),
         systemApi.formats().catch(() => null),
-        systemApi.health().catch(() => null)
+        systemApi.health().catch(() => null),
+        authApi.me().catch(() => null)
       ]);
     } catch (err) {
       if (!(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
@@ -147,7 +267,8 @@
       { id: 'defaults' as Section, key: 'settings.section.defaults' as const, icon: Sliders },
       { id: 'backend' as Section, key: 'settings.section.backend' as const, icon: Server },
       { id: 'local' as Section, key: 'settings.section.local' as const, icon: Database },
-      { id: 'language' as Section, key: 'settings.section.language' as const, icon: Globe }
+      { id: 'language' as Section, key: 'settings.section.language' as const, icon: Globe },
+      { id: 'security' as Section, key: 'settings.section.security' as const, icon: ShieldCheck }
     ] as s}
       {@const active = section === s.id}
       <button
@@ -665,6 +786,210 @@
           </button>
         {/each}
       </div>
+    </div>
+  {/if}
+
+  <!-- ─── Section: Security (TOTP) ───────────────────────── -->
+  {#if section === 'security'}
+    <div
+      class="tonus-fadein"
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
+    >
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+      >
+        {$t('settings.security.eyebrow')}
+      </div>
+      <div
+        style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 18px;"
+      >
+        {me?.totp_enabled
+          ? $t('settings.security.title.active')
+          : $t('settings.security.title.inactive')}
+      </div>
+      <p
+        style="font-size: 13px; color: var(--color-fg-secondary); margin-bottom: 22px; line-height: 1.55; max-width: 560px;"
+      >
+        {me?.totp_enabled
+          ? $t('settings.security.body.active')
+          : $t('settings.security.body.inactive')}
+      </p>
+
+      {#if me?.totp_enabled}
+        <!-- Disable-Form: Password (+ aktueller Code wenn aktiv) als Re-Verify
+             gegen Session-Hijack — ein gestohlener Access-Token allein soll
+             2FA nicht aushebeln können. -->
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            disableTotp();
+          }}
+          class="flex flex-col gap-3"
+          style="max-width: 460px;"
+        >
+          <label class="flex flex-col gap-1.5" for="totp-disable-password">
+            <span
+              class="uppercase"
+              style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+            >
+              {$t('settings.security.disable.password_label')}
+            </span>
+            <input
+              id="totp-disable-password"
+              name="current-password"
+              type="password"
+              autocomplete="current-password"
+              spellcheck="false"
+              bind:value={totpDisablePassword}
+              class="outline-none"
+              style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 12px 16px; letter-spacing: 0.04em;"
+            />
+          </label>
+          <label class="flex flex-col gap-1.5" for="totp-disable-code">
+            <span
+              class="uppercase"
+              style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+            >
+              {$t('settings.security.disable.code_label')}
+            </span>
+            <input
+              id="totp-disable-code"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9 ]*"
+              autocomplete="one-time-code"
+              maxlength="7"
+              spellcheck="false"
+              bind:value={totpDisableCode}
+              class="outline-none"
+              style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 16px; padding: 12px 16px; letter-spacing: 0.18em; text-align: center;"
+              placeholder="000 000"
+            />
+          </label>
+          {#if totpDisableError}
+            <p style="font-size: 12px; color: #f87171; margin: 0;">{totpDisableError}</p>
+          {/if}
+          {#if totpJustDisabled}
+            <p style="font-size: 12px; color: var(--color-fg-secondary); margin: 0;">
+              <Check size={12} strokeWidth={2} /> {$t('common.saved')}
+            </p>
+          {/if}
+          <div class="flex items-center gap-3" style="margin-top: 4px;">
+            <button
+              type="submit"
+              disabled={totpDisableBusy}
+              class="inline-flex items-center gap-1.5 transition-opacity"
+              style="background: rgba(248, 113, 113, 0.18); color: #fca5a5; padding: 12px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid rgba(248, 113, 113, 0.35); opacity: {totpDisableBusy ? 0.6 : 1}; cursor: {totpDisableBusy ? 'wait' : 'pointer'};"
+            >
+              {totpDisableBusy
+                ? $t('settings.security.disable.submitting')
+                : $t('settings.security.disable.button')}
+            </button>
+          </div>
+        </form>
+      {:else if totpInit}
+        <!-- Setup-Wizard: server-rendered QR (data-URL, kein externer Service)
+             + Code-Input. Erst nach erfolgreichem Confirm wird Secret persistiert
+             — Verify-First-Activate-Second-Pattern. -->
+        <div class="flex flex-col items-start" style="gap: 18px; max-width: 460px;">
+          <p
+            style="font-size: 13px; color: var(--color-fg-secondary); line-height: 1.55; margin: 0;"
+          >
+            {$t('settings.security.setup.qr_body')}
+          </p>
+          <div
+            style="background: rgba(255, 255, 255, 0.95); padding: 14px; border-radius: 14px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);"
+          >
+            <img src={totpInit.qr_data_url} alt="TOTP QR" width="220" height="220" />
+          </div>
+          <div
+            class="w-full"
+            style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--color-border-soft); border-radius: 12px; padding: 14px 16px;"
+          >
+            <div
+              class="uppercase"
+              style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+            >
+              {$t('settings.security.setup.secret_label')}
+            </div>
+            <code
+              style="font-family: var(--font-mono); font-size: 13px; color: var(--color-fg-primary); word-break: break-all; letter-spacing: 0.06em;"
+              >{totpInit.secret}</code
+            >
+          </div>
+          <form
+            onsubmit={(e) => {
+              e.preventDefault();
+              confirmTotpSetup();
+            }}
+            class="flex flex-col gap-3 w-full"
+          >
+            <label class="flex flex-col gap-1.5" for="totp-init-code">
+              <span
+                class="uppercase"
+                style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+              >
+                {$t('settings.security.setup.code_label')}
+              </span>
+              <input
+                id="totp-init-code"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9 ]*"
+                autocomplete="one-time-code"
+                maxlength="7"
+                spellcheck="false"
+                bind:value={totpInitCode}
+                class="outline-none"
+                style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 16px; padding: 12px 16px; letter-spacing: 0.18em; text-align: center;"
+                placeholder="000 000"
+              />
+            </label>
+            {#if totpInitError}
+              <p style="font-size: 12px; color: #f87171; margin: 0;">{totpInitError}</p>
+            {/if}
+            <div class="flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={totpInitConfirming}
+                class="inline-flex items-center gap-1.5 transition-opacity"
+                style="background: {accent}; color: #1a1410; padding: 12px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25); opacity: {totpInitConfirming ? 0.6 : 1}; cursor: {totpInitConfirming ? 'wait' : 'pointer'};"
+              >
+                {totpInitConfirming
+                  ? $t('settings.security.setup.confirming')
+                  : $t('settings.security.setup.confirm')}
+              </button>
+              <button
+                type="button"
+                onclick={cancelTotpSetup}
+                class="inline-flex items-center transition-colors"
+                style="background: transparent; color: var(--color-fg-secondary); padding: 12px 22px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; border: 1px solid var(--color-border-soft);"
+              >
+                {$t('settings.security.setup.cancel')}
+              </button>
+            </div>
+          </form>
+        </div>
+      {:else}
+        <div class="flex flex-col items-start" style="gap: 12px;">
+          {#if totpInitError}
+            <p style="font-size: 12px; color: #f87171; margin: 0;">{totpInitError}</p>
+          {/if}
+          <button
+            type="button"
+            disabled={totpInitBusy}
+            onclick={startTotpSetup}
+            class="inline-flex items-center gap-1.5 transition-opacity"
+            style="background: {accent}; color: #1a1410; padding: 12px 24px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25); opacity: {totpInitBusy ? 0.6 : 1}; cursor: {totpInitBusy ? 'wait' : 'pointer'};"
+          >
+            <ShieldCheck size={13} strokeWidth={2} />
+            {totpInitBusy
+              ? $t('settings.security.setup.starting')
+              : $t('settings.security.setup.button')}
+          </button>
+        </div>
+      {/if}
     </div>
   {/if}
 </section>

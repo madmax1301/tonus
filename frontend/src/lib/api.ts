@@ -157,6 +157,14 @@ export const authApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, totp_code })
     }),
+  /** Auth — generiert ein frisches TOTP-Secret + provisioning-URI + QR-PNG
+   *  (data-URL, server-rendered) fürs nachträgliche 2FA-Setup aus Settings.
+   *  Wird NICHT persistiert — totpConfirm() macht das nach erfolgreichem
+   *  Code-Verify. Server-side QR vermeidet Secret-Leak an externe Dienste. */
+  totpInit: () =>
+    request<{ secret: string; uri: string; qr_data_url: string }>('/api/auth/totp-init', {
+      method: 'POST'
+    }),
   /** Auth — verifiziert den ersten TOTP-Code beim Setup. Bei Erfolg wird
    *  das Secret scharf in der DB gespeichert. */
   totpConfirm: (secret: string, code: string) =>
@@ -164,6 +172,14 @@ export const authApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ secret, code })
+    }),
+  /** Auth — deaktiviert TOTP. Braucht Password-Re-Verify + (wenn aktiv) Code,
+   *  damit ein geklauter JWT allein nicht 2FA aushebeln kann. */
+  totpDisable: (password: string, totp_code?: string) =>
+    request<{ ok: boolean }>('/api/auth/totp-disable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password, totp_code })
     }),
   /** Auth — current user info, oder 401 wenn Session expired. */
   me: () => request<AuthUser>('/api/auth/me'),

@@ -192,6 +192,40 @@ export const strings = {
     'settings.section.backend': 'Backend-Info',
     'settings.section.local': 'Lokale Daten',
     'settings.section.language': 'Sprache',
+    'settings.section.security': 'Sicherheit',
+
+    // Security section (TOTP-Mgmt)
+    'settings.security.eyebrow': 'Zwei-Faktor',
+    'settings.security.title.active': 'TOTP ist aktiv',
+    'settings.security.title.inactive': 'TOTP einrichten',
+    'settings.security.body.active':
+      'Bei jedem Login wird zusätzlich ein 6-stelliger Code aus deiner Authenticator-App abgefragt.',
+    'settings.security.body.inactive':
+      'Schütze deinen Account mit einem zweiten Faktor. Du brauchst eine TOTP-App wie Authy, 1Password, Aegis oder Google Authenticator.',
+    'settings.security.disable.button': 'TOTP deaktivieren',
+    'settings.security.disable.confirm_title': 'TOTP wirklich deaktivieren?',
+    'settings.security.disable.confirm_message':
+      'Dein Account wird ab dann nur noch mit Username + Passwort geschützt. Bei Verdacht auf gestohlene Zugangsdaten besser ein neues Passwort setzen.',
+    'settings.security.disable.confirm_label': 'Deaktivieren',
+    'settings.security.disable.password_label': 'Passwort zur Bestätigung',
+    'settings.security.disable.code_label': 'Aktueller TOTP-Code',
+    'settings.security.disable.submitting': 'deaktiviere …',
+    'settings.security.disable.error_password': 'Passwort falsch',
+    'settings.security.disable.error_code': 'TOTP-Code fehlt oder ist falsch',
+    'settings.security.disable.error_generic': 'Konnte nicht deaktivieren — Backend nicht erreichbar?',
+    'settings.security.setup.button': '2FA jetzt einrichten',
+    'settings.security.setup.starting': 'lade QR …',
+    'settings.security.setup.qr_title': 'Code scannen',
+    'settings.security.setup.qr_body':
+      'Scanne den QR-Code mit deiner Authenticator-App und tippe den ersten 6-stelligen Code ein. Erst nach erfolgreichem Code wird 2FA aktiv — du kannst den Wizard jederzeit abbrechen.',
+    'settings.security.setup.secret_label': 'Manuelles Secret (falls Scan nicht klappt)',
+    'settings.security.setup.code_label': 'Erster Code',
+    'settings.security.setup.confirm': 'Aktivieren',
+    'settings.security.setup.confirming': 'aktiviere …',
+    'settings.security.setup.cancel': 'Abbrechen',
+    'settings.security.setup.error_code': 'Code falsch oder abgelaufen — neu versuchen',
+    'settings.security.setup.error_generic': 'Setup fehlgeschlagen — Backend nicht erreichbar?',
+    'settings.security.setup.success': 'TOTP aktiv',
 
     // Auth section
     'settings.auth.eyebrow': 'API-Token',
@@ -473,6 +507,40 @@ export const strings = {
     'settings.section.backend': 'Backend info',
     'settings.section.local': 'Local data',
     'settings.section.language': 'Language',
+    'settings.section.security': 'Security',
+
+    // Security section (TOTP management)
+    'settings.security.eyebrow': 'Two-factor',
+    'settings.security.title.active': 'TOTP is active',
+    'settings.security.title.inactive': 'Set up TOTP',
+    'settings.security.body.active':
+      'On every login a 6-digit code from your authenticator app is required in addition to your password.',
+    'settings.security.body.inactive':
+      'Add a second factor to your account. You need a TOTP app like Authy, 1Password, Aegis or Google Authenticator.',
+    'settings.security.disable.button': 'Disable TOTP',
+    'settings.security.disable.confirm_title': 'Disable TOTP?',
+    'settings.security.disable.confirm_message':
+      'Your account will only be protected by username and password from now on. If you suspect stolen credentials, set a new password.',
+    'settings.security.disable.confirm_label': 'Disable',
+    'settings.security.disable.password_label': 'Password to confirm',
+    'settings.security.disable.code_label': 'Current TOTP code',
+    'settings.security.disable.submitting': 'disabling …',
+    'settings.security.disable.error_password': 'Wrong password',
+    'settings.security.disable.error_code': '2FA code missing or wrong',
+    'settings.security.disable.error_generic': "Couldn't disable — backend not reachable?",
+    'settings.security.setup.button': 'Set up 2FA now',
+    'settings.security.setup.starting': 'loading QR …',
+    'settings.security.setup.qr_title': 'Scan the code',
+    'settings.security.setup.qr_body':
+      "Scan this QR with your authenticator app and enter the first 6-digit code. 2FA only activates after a successful code — you can cancel the wizard any time.",
+    'settings.security.setup.secret_label': 'Manual secret (if scanning fails)',
+    'settings.security.setup.code_label': 'First code',
+    'settings.security.setup.confirm': 'Activate',
+    'settings.security.setup.confirming': 'activating …',
+    'settings.security.setup.cancel': 'Cancel',
+    'settings.security.setup.error_code': 'Code wrong or expired — try again',
+    'settings.security.setup.error_generic': 'Setup failed — backend not reachable?',
+    'settings.security.setup.success': 'TOTP active',
 
     // Auth section
     'settings.auth.eyebrow': 'API token',
