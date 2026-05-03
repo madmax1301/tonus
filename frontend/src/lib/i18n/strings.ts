@@ -428,7 +428,20 @@ export const strings = {
     'auth.totp_qr.body':
       'Scanne diesen QR-Code mit Authy, 1Password, Aegis oder Google Authenticator. Der Code wird ab dem nächsten Login zusätzlich abgefragt.',
     'auth.totp_qr.secret_label': 'Manuelles Secret (falls Scan nicht klappt)',
-    'auth.totp_qr.continue': 'Weiter zur Bibliothek',
+    'auth.totp_qr.continue': 'Weiter',
+
+    // Onboarding Step 2/2: Provider verbinden
+    'auth.onboarding.eyebrow': 'Schritt 2 / 2 · Verbinden',
+    'auth.onboarding.title': 'Provider verbinden',
+    'auth.onboarding.body':
+      'Hier verbindest du Tonus mit deinen Quellen für Suche, Downloads und Library-Sync. Sensitive Felder werden verschlüsselt gespeichert. Du kannst alles später unter Settings → Verbindungen anpassen.',
+    'auth.onboarding.status_saved': 'gespeichert',
+    'auth.onboarding.restart_required':
+      'Container-Restart nötig damit die Provider-Änderungen aktiv werden.',
+    'auth.onboarding.continue': 'Zur Bibliothek',
+    'auth.onboarding.skip': 'Später einrichten',
+    'auth.onboarding.error_load': 'Konnte Provider-Liste nicht laden.',
+    'auth.onboarding.error_save': 'Konnte nicht speichern — Backend nicht erreichbar?',
 
     'auth.logout.button': 'Abmelden',
     'auth.user_menu.signed_in_as': 'angemeldet als'
@@ -850,7 +863,20 @@ export const strings = {
     'auth.totp_qr.body':
       'Scan this QR code with Authy, 1Password, Aegis or Google Authenticator. The code will be required at every login from now on.',
     'auth.totp_qr.secret_label': 'Manual secret (if scanning fails)',
-    'auth.totp_qr.continue': 'Continue to library',
+    'auth.totp_qr.continue': 'Continue',
+
+    // Onboarding Step 2/2: connect providers
+    'auth.onboarding.eyebrow': 'Step 2 / 2 · Connect',
+    'auth.onboarding.title': 'Connect providers',
+    'auth.onboarding.body':
+      "Connect Tonus to your sources for search, downloads and library sync. Sensitive fields are stored encrypted. You can change everything later under Settings → Connections.",
+    'auth.onboarding.status_saved': 'saved',
+    'auth.onboarding.restart_required':
+      'A container restart is required for the provider changes to take effect.',
+    'auth.onboarding.continue': 'Continue to library',
+    'auth.onboarding.skip': 'Set up later',
+    'auth.onboarding.error_load': 'Could not load provider list.',
+    'auth.onboarding.error_save': "Couldn't save — backend not reachable?",
 
     'auth.logout.button': 'Sign out',
     'auth.user_menu.signed_in_as': 'signed in as'

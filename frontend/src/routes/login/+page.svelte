@@ -19,15 +19,21 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
-  import { authApi, ApiError } from '$lib/api';
+  import { authApi, providersConfigApi, ApiError, type ProviderConfig } from '$lib/api';
   import { setJwtPair, currentUser } from '$lib/auth';
   import { tint, DEFAULT_HUE } from '$lib/accent';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import { t } from '$lib/i18n';
-  import { Loader2, KeyRound, ShieldCheck, User } from 'lucide-svelte';
+  import { Loader2, KeyRound, ShieldCheck, User, Plug, AlertTriangle, Check } from 'lucide-svelte';
 
-  let mode = $state<'login' | 'setup' | 'totp-qr'>('login');
+  // Modi:
+  //   login       → Standard-Eingabe Username/Password
+  //   setup       → First-Run Wizard (kein User in DB)
+  //   totp-qr     → nach Setup mit enable_totp=true: QR + Verify
+  //   onboarding  → nach Setup (oder TOTP-Confirm): Schritt 2/2 Provider
+  //                 verbinden. Kann übersprungen werden.
+  let mode = $state<'login' | 'setup' | 'totp-qr' | 'onboarding'>('login');
 
   // Form state
   let username = $state('');
@@ -82,7 +88,9 @@
 
   async function confirmTotp() {
     if (!totpSecret) {
-      await goto(`${base}/`);
+      // Kein QR-Step lief — direkt zum Provider-Onboarding.
+      mode = 'onboarding';
+      void loadOnboardingProviders();
       return;
     }
     if (!/^\d{6}$/.test(totpConfirmCode.replace(/\s/g, ''))) {
@@ -93,9 +101,10 @@
     errorMsg = null;
     try {
       await authApi.totpConfirm(totpSecret, totpConfirmCode.replace(/\s/g, ''));
-      // Erfolgreich verifiziert → Continue zur Library
+      // TOTP erfolgreich aktiv → weiter zu Schritt 2/2 (Provider verbinden).
       currentUser.update((u) => (u ? { ...u, totp_enabled: true } : u));
-      await goto(`${base}/`);
+      mode = 'onboarding';
+      void loadOnboardingProviders();
     } catch (err) {
       errorMsg =
         err instanceof ApiError && err.status === 401
@@ -104,6 +113,65 @@
     } finally {
       busy = false;
     }
+  }
+
+  // ── Onboarding Step 2/2: Provider verbinden ────────────────────
+  let onboardingProviders = $state<ProviderConfig[]>([]);
+  let onboardingLoaded = $state(false);
+  let onboardingError = $state<string | null>(null);
+  let onboardingForm = $state<Record<string, Record<string, string>>>({});
+  let onboardingSavingName = $state<string | null>(null);
+  let onboardingSavedNames = $state<Set<string>>(new Set());
+
+  async function loadOnboardingProviders() {
+    onboardingError = null;
+    try {
+      const res = await providersConfigApi.list();
+      onboardingProviders = res.providers;
+      const buf: Record<string, Record<string, string>> = {};
+      for (const p of res.providers) {
+        buf[p.name] = {};
+        for (const f of p.fields) {
+          buf[p.name][f.key] = f.secret ? '' : f.value;
+        }
+      }
+      onboardingForm = buf;
+      onboardingLoaded = true;
+    } catch {
+      // 403 dürfte nicht passieren weil Setup-User automatisch Admin ist;
+      // aber falls doch (z.B. legacy-Auth-Pfad): Onboarding stillschweigend
+      // skippen — der User kann's später über Settings nachholen.
+      onboardingLoaded = true;
+      onboardingError = $t('auth.onboarding.error_load');
+    }
+  }
+
+  async function saveOnboardingProvider(p: ProviderConfig) {
+    onboardingSavingName = p.name;
+    onboardingError = null;
+    try {
+      const fields: Record<string, string> = {};
+      for (const f of p.fields) {
+        const buf = onboardingForm[p.name]?.[f.key] ?? '';
+        if (f.secret) {
+          if (buf !== '') fields[f.key] = buf;
+        } else {
+          fields[f.key] = buf;
+        }
+      }
+      await providersConfigApi.update(p.name, fields);
+      onboardingSavedNames = new Set([...onboardingSavedNames, p.name]);
+      // Reload damit is_set-Flags + masked-Placeholder neu greifen.
+      await loadOnboardingProviders();
+    } catch {
+      onboardingError = $t('auth.onboarding.error_save');
+    } finally {
+      onboardingSavingName = null;
+    }
+  }
+
+  async function finishOnboarding() {
+    await goto(`${base}/`);
   }
 
   async function submit() {
@@ -131,7 +199,9 @@
           totpQrDataUrl = r.totp_qr_data_url ?? null;
           mode = 'totp-qr';
         } else {
-          await goto(`${base}/`);
+          // Kein TOTP gewählt → direkt zu Schritt 2/2 (Provider verbinden).
+          mode = 'onboarding';
+          void loadOnboardingProviders();
         }
       } else {
         const r = await authApi.login(username.trim(), password, totpCode.trim() || undefined);
@@ -307,6 +377,137 @@
           {$t('auth.totp_qr.continue')}
         </button>
       </form>
+    {:else if mode === 'onboarding'}
+      <!-- ── Schritt 2/2: Provider verbinden ──────────────────────── -->
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.24em; color: {accent}; font-weight: 600;"
+      >
+        {$t('auth.onboarding.eyebrow')}
+      </div>
+      <h1
+        class="m-0"
+        style="font-family: var(--font-display); font-size: 36px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; color: var(--color-fg-primary);"
+      >
+        {$t('auth.onboarding.title')}
+      </h1>
+      <p
+        style="font-size: 14px; color: var(--color-fg-secondary); line-height: 1.55; max-width: 440px; margin: 0;"
+      >
+        {$t('auth.onboarding.body')}
+      </p>
+
+      {#if !onboardingLoaded}
+        <p style="font-size: 12px; color: var(--color-fg-tertiary); margin: 0;">…</p>
+      {:else if onboardingError && onboardingProviders.length === 0}
+        <p style="font-size: 12px; color: #f87171; margin: 0;">{onboardingError}</p>
+      {:else}
+        <div class="flex flex-col w-full" style="gap: 12px; max-width: 460px;">
+          {#each onboardingProviders as p (p.name)}
+            {@const saved = onboardingSavedNames.has(p.name)}
+            <details
+              class="tonus-onboarding-card"
+              style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--color-border-soft); border-radius: 14px; overflow: hidden;"
+            >
+              <summary
+                class="flex items-center justify-between gap-3 cursor-pointer"
+                style="padding: 14px 18px; list-style: none;"
+              >
+                <div class="flex items-center gap-3">
+                  <Plug size={14} strokeWidth={1.8} style="color: var(--color-fg-secondary);" />
+                  <span
+                    style="font-family: var(--font-display); font-size: 16px; font-weight: 500; color: var(--color-fg-primary);"
+                    >{p.label}</span
+                  >
+                </div>
+                {#if saved}
+                  <span
+                    class="inline-flex items-center gap-1 uppercase"
+                    style="font-size: 9.5px; letter-spacing: 0.16em; color: rgba(134, 239, 172, 0.95); background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.3); padding: 3px 9px; border-radius: 999px;"
+                  >
+                    <Check size={10} strokeWidth={2.2} />
+                    {$t('auth.onboarding.status_saved')}
+                  </span>
+                {:else}
+                  <span
+                    style="font-size: 11px; color: var(--color-fg-tertiary);"
+                    >+</span
+                  >
+                {/if}
+              </summary>
+              <div class="flex flex-col" style="gap: 10px; padding: 0 18px 18px;">
+                {#each p.fields as f (f.key)}
+                  <label class="flex flex-col gap-1.5" for="onb-{p.name}-{f.key}">
+                    <span
+                      class="uppercase"
+                      style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+                    >
+                      {f.label}
+                    </span>
+                    <input
+                      id="onb-{p.name}-{f.key}"
+                      type={f.secret ? 'password' : 'text'}
+                      autocomplete={f.secret ? 'new-password' : 'off'}
+                      spellcheck="false"
+                      bind:value={onboardingForm[p.name][f.key]}
+                      placeholder={f.secret && f.is_set
+                        ? $t('settings.connections.secret_placeholder')
+                        : ''}
+                      class="outline-none"
+                      style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 12px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 12.5px; padding: 10px 14px; letter-spacing: 0.04em;"
+                    />
+                  </label>
+                {/each}
+                <button
+                  type="button"
+                  disabled={onboardingSavingName === p.name}
+                  onclick={() => saveOnboardingProvider(p)}
+                  class="inline-flex items-center justify-center transition-opacity"
+                  style="margin-top: 4px; background: {accent}; color: #1a1410; padding: 9px 16px; border-radius: 999px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 6px 16px {accent}30; opacity: {onboardingSavingName === p.name ? 0.6 : 1}; cursor: {onboardingSavingName === p.name ? 'wait' : 'pointer'};"
+                >
+                  {onboardingSavingName === p.name
+                    ? $t('settings.connections.saving')
+                    : $t('settings.connections.save')}
+                </button>
+              </div>
+            </details>
+          {/each}
+        </div>
+
+        {#if onboardingError && onboardingProviders.length > 0}
+          <p style="font-size: 11px; color: #f87171; margin: 0;">{onboardingError}</p>
+        {/if}
+
+        {#if onboardingSavedNames.size > 0}
+          <div
+            class="inline-flex items-center gap-1.5"
+            style="font-size: 11.5px; color: var(--color-fg-secondary); max-width: 460px;"
+          >
+            <AlertTriangle size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95);" />
+            <span>{$t('auth.onboarding.restart_required')}</span>
+          </div>
+        {/if}
+
+        <div class="flex items-center gap-3 flex-wrap" style="margin-top: 4px;">
+          <button
+            type="button"
+            onclick={finishOnboarding}
+            class="inline-flex items-center gap-2 transition-opacity"
+            style="padding: 12px 26px; border-radius: 999px; font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; background: {accent}; color: #0a0a0c; border: none; box-shadow: 0 8px 24px {accent}40; cursor: pointer;"
+          >
+            <ShieldCheck size={13} strokeWidth={2} />
+            {$t('auth.onboarding.continue')}
+          </button>
+          <button
+            type="button"
+            onclick={finishOnboarding}
+            class="inline-flex items-center transition-colors"
+            style="padding: 12px 22px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; background: transparent; color: var(--color-fg-secondary); border: 1px solid var(--color-border-soft);"
+          >
+            {$t('auth.onboarding.skip')}
+          </button>
+        </div>
+      {/if}
     {:else}
       <div
         class="font-semibold uppercase"
