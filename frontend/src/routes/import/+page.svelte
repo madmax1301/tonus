@@ -18,6 +18,7 @@
   import ProgressLine from '$lib/components/ProgressLine.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { t } from '$lib/i18n';
   import { Upload, Loader2, Download, FileText, X, Search } from 'lucide-svelte';
 
   // ── Provider ────────────────────────────────────────────
@@ -346,7 +347,7 @@
           margin-bottom: 14px;
         "
       >
-        Bulk Import
+        {$t('import.eyebrow')}
       </div>
       <h1
         class="font-semibold m-0"
@@ -358,8 +359,10 @@
           letter-spacing: -0.035em;
         "
       >
-        Hunderte Tracks.<br />
-        <em style="color: {accent}; font-weight: 400; font-style: italic;">Eine Liste.</em>
+        {$t('import.title.before')}<br />
+        <em style="color: {accent}; font-weight: 400; font-style: italic;"
+          >{$t('import.title.italic')}</em
+        >
       </h1>
       <p
         style="
@@ -370,8 +373,7 @@
           line-height: 1.6;
         "
       >
-        CSV oder Freitext rein — Tonus matcht jede Zeile gegen Deezer/Spotify und queued
-        sauber, was zu finden war. Was nicht passt, kannst du als CSV exportieren.
+        {$t('import.description')}
       </p>
     </div>
     <div class="flex justify-center">
@@ -470,7 +472,7 @@
               class="font-semibold uppercase mt-3"
               style="font-size: 11px; letter-spacing: 0.24em; color: {accent};"
             >
-              Drop to import
+              {$t('import.dropzone.drop_overlay')}
             </div>
           </div>
         </div>
@@ -487,7 +489,7 @@
               color: var(--color-fg-tertiary);
             "
           >
-            Eingabe
+            {$t('import.dropzone.eyebrow')}
           </div>
           <div
             class="mt-1"
@@ -499,7 +501,7 @@
               color: var(--color-fg-primary);
             "
           >
-            Datei droppen oder Liste einfügen
+            {$t('import.dropzone.title')}
           </div>
         </div>
         <div class="flex items-center gap-2">
@@ -515,7 +517,7 @@
             "
           >
             <Upload size={12} strokeWidth={1.5} />
-            CSV-Datei wählen
+            {$t('import.dropzone.choose_file')}
             <input
               type="file"
               accept=".csv,.tsv,.txt,text/*"
@@ -539,7 +541,7 @@
               aria-label="Zurücksetzen"
             >
               <X size={11} strokeWidth={1.5} />
-              Leeren
+              {$t('import.dropzone.clear')}
             </button>
           {/if}
         </div>
@@ -569,7 +571,7 @@
             <span style="color: {accent}; font-weight: 500;">{lineCount.toLocaleString('de-DE')}</span>
             <span> Zeile{lineCount === 1 ? '' : 'n'} bereit</span>
           {:else}
-            Liste einfügen oder Datei droppen — Format: <code style="font-family: var(--font-mono); color: var(--color-fg-secondary);">Künstler;Titel</code>
+            {$t('import.dropzone.format_hint')} <code style="font-family: var(--font-mono); color: var(--color-fg-secondary);">Künstler;Titel</code>
           {/if}
         </div>
         <button
@@ -590,7 +592,7 @@
         >
           {#if csvBusy}
             <Loader2 size={13} class="animate-spin" />
-            Lade …
+            {$t('common.loading')}
           {:else}
             <FileText size={13} strokeWidth={2} />
             Import starten
@@ -633,7 +635,7 @@
             color: {accent};
           "
         >
-          Live · matching against {provider || 'provider'}
+          {$t('import.live.eyebrow', { provider: provider || 'provider' })}
         </div>
       </div>
 
@@ -660,7 +662,7 @@
             letter-spacing: 0;
           "
         >
-          Tracks verarbeitet
+          {$t('import.live.tracks_processed')}
         </span>
       </div>
 
@@ -674,13 +676,13 @@
 
       <div class="flex items-center gap-6 mt-4 text-[12px] tabular-nums">
         <div>
-          <span style="color: var(--color-fg-tertiary);">matched</span>
+          <span style="color: var(--color-fg-tertiary);">{$t('import.live.matched')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-done);"
             >{csvStatus.found.toLocaleString('de-DE')}</span
           >
         </div>
         <div>
-          <span style="color: var(--color-fg-tertiary);">nicht gefunden</span>
+          <span style="color: var(--color-fg-tertiary);">{$t('import.live.not_found')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-error);"
             >{csvStatus.not_found.toLocaleString('de-DE')}</span
           >
@@ -718,7 +720,7 @@
               margin-bottom: 14px;
             "
           >
-            Import abgeschlossen
+            {$t('import.result.eyebrow')}
           </div>
           <div
             class="font-medium m-0"
@@ -760,7 +762,7 @@
               font-size: 12px;
             "
           >
-            Neuer Import
+            {$t('import.result.new_import')}
           </button>
           <button
             onclick={queueAllMatched}
@@ -811,7 +813,7 @@
                 color: var(--color-fg-tertiary);
               "
             >
-              Match-Rate
+              {$t('import.match_rate')}
             </span>
             <span
               class="tabular-nums font-medium"
@@ -859,7 +861,7 @@
               color: var(--color-fg-tertiary);
             "
           >
-            Nicht gefunden
+            {$t('import.unmatched.title')}
           </div>
           <div
             class="mt-1 text-[15px]"
@@ -892,7 +894,7 @@
             )}
           {:else}
             <Download size={11} strokeWidth={1.8} />
-            Als CSV exportieren
+            {$t('import.unmatched.export_csv')}
           {/if}
         </button>
       </div>
@@ -941,14 +943,14 @@
                   border-radius: 999px;
                   font-size: 10.5px;
                 "
-                aria-label="Bei Deezer nachprüfen"
+                aria-label="Bei Deezer {$t('import.recheck.button')}"
               >
                 {#if r?.loading}
                   <Loader2 size={10} class="animate-spin" />
-                  prüfe …
+                  {$t('import.recheck.checking')}
                 {:else if r?.results}
                   <Search size={10} strokeWidth={1.8} />
-                  erneut
+                  {$t('import.recheck.again')}
                 {:else}
                   <Search size={10} strokeWidth={1.8} />
                   nachprüfen

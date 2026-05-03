@@ -8,6 +8,8 @@
     type LaneStatusResponse
   } from '$lib/api';
   import { tint, extractHue, DEFAULT_HUE } from '$lib/accent';
+  import { t } from '$lib/i18n';
+  import { get } from 'svelte/store';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import CoverArt from '$lib/components/CoverArt.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
@@ -31,33 +33,43 @@
   type DestInfo = { icon: typeof HardDrive; label: string; detail?: string };
 
   function jobOrigin(j: QueueJob): OriginInfo {
+    const tt = get(t);
     const p = j.payload ?? {};
     if (p.plugin_sync_navidrome_user) {
-      return { icon: Puzzle, label: 'Plugin', detail: p.plugin_sync_navidrome_user };
+      return {
+        icon: Puzzle,
+        label: tt('queue.origin.plugin'),
+        detail: p.plugin_sync_navidrome_user
+      };
     }
     if (p.kind === 'url') {
-      return { icon: Link2, label: 'URL' };
+      return { icon: Link2, label: tt('queue.origin.url') };
     }
     if (p.album_id || p.album_name) {
-      return { icon: Disc, label: 'Album', detail: p.album_name };
+      return { icon: Disc, label: tt('queue.origin.album'), detail: p.album_name };
     }
-    return { icon: Search, label: 'Suche' };
+    return { icon: Search, label: tt('queue.origin.search') };
   }
 
   function jobDest(j: QueueJob): DestInfo {
+    const tt = get(t);
     const p = j.payload ?? {};
     if (p.plugin_sync_playlist_name) {
-      return { icon: ListMusic, label: 'Playlist', detail: p.plugin_sync_playlist_name };
+      return {
+        icon: ListMusic,
+        label: tt('queue.dest.playlist'),
+        detail: p.plugin_sync_playlist_name
+      };
     }
     if (p.location === 'navidrome') {
       const lib = p.navidrome_library_path;
       if (lib) {
         const last = lib.split('/').filter(Boolean).pop() ?? lib;
-        return { icon: Music, label: 'Navidrome', detail: last };
+        return { icon: Music, label: tt('queue.dest.navidrome'), detail: last };
       }
-      return { icon: Music, label: 'Navidrome' };
+      return { icon: Music, label: tt('queue.dest.navidrome') };
     }
-    return { icon: HardDrive, label: 'Local' };
+    return { icon: HardDrive, label: tt('queue.dest.local') };
   }
 
   type Filter = 'all' | 'queued' | 'processing' | 'completed' | 'error';
@@ -289,12 +301,13 @@
   };
 
   const filterDefs = $derived.by<FilterDef[]>(() => {
+    const tt = $t;
     return [
-      { id: 'all', label: 'Alle', count: total, color: accent },
-      { id: 'processing', label: 'Aktiv', count: counts.processing ?? 0, color: accent },
-      { id: 'queued', label: 'Wartend', count: counts.queued ?? 0, color: 'var(--color-fg-tertiary)' },
-      { id: 'completed', label: 'Fertig', count: counts.completed ?? 0, color: 'var(--color-status-done)' },
-      { id: 'error', label: 'Fehler', count: counts.error ?? 0, color: 'var(--color-status-error)' }
+      { id: 'all', label: tt('queue.filter.all'), count: total, color: accent },
+      { id: 'processing', label: tt('queue.filter.processing'), count: counts.processing ?? 0, color: accent },
+      { id: 'queued', label: tt('queue.filter.queued'), count: counts.queued ?? 0, color: 'var(--color-fg-tertiary)' },
+      { id: 'completed', label: tt('queue.filter.completed'), count: counts.completed ?? 0, color: 'var(--color-status-done)' },
+      { id: 'error', label: tt('queue.filter.error'), count: counts.error ?? 0, color: 'var(--color-status-error)' }
     ];
   });
 
@@ -335,14 +348,14 @@
           ></span>
         {/if}
         {#if processingCount > 0}
-          Live
+          {$t('queue.eyebrow.live')}
         {:else if nextLaneReadyMs >= 1000}
-          Wartet
+          {$t('queue.eyebrow.waiting')}
           <span style="color: var(--color-fg-tertiary); letter-spacing: 0.04em; font-family: var(--font-mono); margin-left: 6px;">
-            · Lane in {fmtMs(nextLaneReadyMs)}
+            · {$t('queue.featured.lane_in', { time: fmtMs(nextLaneReadyMs) })}
           </span>
         {:else}
-          Bereit
+          {$t('queue.eyebrow.ready')}
         {/if}
       </div>
       <h1
@@ -354,16 +367,16 @@
           line-height: 1;
         "
       >
-        Warteschlange
+        {$t('queue.title')}
       </h1>
       {#if data}
         <div
           class="mt-2 tabular-nums"
           style="font-size: 12px; color: var(--color-fg-secondary); font-family: var(--font-mono); letter-spacing: 0.02em;"
         >
-          {total.toLocaleString('de-DE')} Jobs gesamt
+          {$t('queue.total_jobs', { count: total.toLocaleString('de-DE') })}
           {#if shown < total}
-            · {shown.toLocaleString('de-DE')} sichtbar
+            · {$t('queue.shown', { count: shown.toLocaleString('de-DE') })}
           {/if}
         </div>
       {/if}
@@ -391,7 +404,7 @@
         {:else}
           <RotateCw size={12} strokeWidth={1.8} />
         {/if}
-        Fehler retry
+        {$t('queue.bulk.retry_errors')}
         {#if counts.error}
           <span style="color: var(--color-status-error); font-weight: 600;">
             {counts.error}
@@ -419,7 +432,7 @@
         {:else}
           <Eraser size={12} strokeWidth={1.5} />
         {/if}
-        Aufräumen
+        {$t('queue.bulk.cleanup')}
       </button>
 
       <button
@@ -440,7 +453,7 @@
         {:else}
           <Trash2 size={12} strokeWidth={1.5} />
         {/if}
-        Leeren
+        {$t('queue.bulk.clear_all')}
       </button>
 
       {#if busy.feedback}
