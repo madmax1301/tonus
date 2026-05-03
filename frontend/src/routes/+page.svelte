@@ -52,15 +52,26 @@
   let urlMessage = $state<string | null>(null);
   let urlError = $state<string | null>(null);
 
-  async function submitUrl() {
+  async function submitUrl(ev?: MouseEvent | KeyboardEvent) {
     if (!urlInput.trim()) return;
     urlBusy = true;
     urlMessage = null;
     urlError = null;
+    // URL-Download hat kein Cover-Bild — wir nehmen den Click-Auslöser
+    // als Source. Bei Enter-Trigger im Input nehmen wir das Input-Feld
+    // selbst. Klon zeigt das Gradient-Fallback (kein src) — der Effekt
+    // dient hier hauptsächlich als visuelle Bestätigung "in Queue".
+    let coverEl: HTMLElement | null = null;
+    if (ev) {
+      coverEl = ev.currentTarget as HTMLElement;
+    }
     try {
       const r = await urlApi.download(urlInput.trim(), { location: $defaultLocation });
       urlMessage = r.message ?? `In Queue als ${r.job_id}`;
       urlInput = '';
+      if (coverEl) {
+        flyToQueue(coverEl, null, accent, 32);
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         const detail =
@@ -98,14 +109,23 @@
     }
   }
 
-  async function pickRevCandidate(c: Track) {
+  async function pickRevCandidate(c: Track, ev?: MouseEvent) {
     revQueuing = { ...revQueuing, [c.id]: { kind: 'queued' } };
+    let coverEl: HTMLElement | null = null;
+    if (ev) {
+      const btn = ev.currentTarget as HTMLElement;
+      const row = btn.closest<HTMLElement>('[data-track-row]');
+      coverEl = row?.querySelector<HTMLElement>('[data-cover]') ?? null;
+    }
     try {
       await reverseApi.download(revUrl.trim(), c, {
         location: $defaultLocation,
         provider: provider || undefined
       });
       revQueuing = { ...revQueuing, [c.id]: { kind: 'done' } };
+      if (coverEl) {
+        flyToQueue(coverEl, c.album_art ?? null, accent, coverEl.offsetWidth);
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         const detail =
@@ -119,13 +139,17 @@
     }
   }
 
-  async function pickRevRaw() {
+  async function pickRevRaw(ev?: MouseEvent) {
     if (!revUrl.trim()) return;
     revError = null;
+    const coverEl = ev ? (ev.currentTarget as HTMLElement) : null;
     try {
       await reverseApi.download(revUrl.trim(), null, { location: $defaultLocation });
       revUrl = '';
       revLookup = null;
+      if (coverEl) {
+        flyToQueue(coverEl, null, accent, 32);
+      }
     } catch (err) {
       revError = err instanceof Error ? err.message : 'Direkter Download fehlgeschlagen';
     }
@@ -486,7 +510,7 @@
       <input
         type="url"
         bind:value={urlInput}
-        onkeydown={(e) => e.key === 'Enter' && submitUrl()}
+        onkeydown={(e) => e.key === 'Enter' && submitUrl(e)}
         placeholder={$t('library.placeholder.url')}
         spellcheck="false"
         autocomplete="off"
@@ -494,7 +518,7 @@
         style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary);"
       />
       <button
-        onclick={submitUrl}
+        onclick={(e) => submitUrl(e)}
         disabled={urlBusy || !urlInput.trim()}
         class="inline-flex items-center gap-1.5 transition-opacity disabled:opacity-40"
         style="background: {accent}; color: #0a0a0c; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; line-height: 1; text-transform: uppercase; flex-shrink: 0;"
@@ -695,7 +719,7 @@
     {#if revLookup || revError}
       <div class="flex items-center gap-3 flex-wrap mb-3" style="font-size: 12px;">
         <button
-          onclick={pickRevRaw}
+          onclick={(e) => pickRevRaw(e)}
           class="inline-flex items-center gap-2 transition-colors"
           style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--color-border-soft); color: var(--color-fg-secondary); padding: 6px 14px; border-radius: 999px; font-size: 11.5px;"
         >
@@ -732,10 +756,12 @@
           {#each revLookup.spotify_candidates as c (c.id)}
             {@const state = revQueuing[c.id]}
             {@const rLoading = state?.kind === 'queued'}
-            <div class="relative" class:skeleton-card={rLoading}>
+            <div class="relative" class:skeleton-card={rLoading} data-track-row>
               <GlassCard padding="sm" interactive>
                 <div class="flex items-center gap-4" class:opacity-60={rLoading}>
-                  <AlbumArt src={c.album_art} alt={c.album} size="md" />
+                  <div data-cover>
+                    <AlbumArt src={c.album_art} alt={c.album} size="md" />
+                  </div>
                   <div class="flex-1 min-w-0">
                     <div class="font-medium text-[14px] truncate" style="color: var(--color-fg-primary);">
                       {c.name}
@@ -754,7 +780,7 @@
                     {fmtDuration(c.duration_ms)}
                   </div>
                   <button
-                    onclick={() => pickRevCandidate(c)}
+                    onclick={(e) => pickRevCandidate(c, e)}
                     disabled={rLoading || state?.kind === 'done' || state?.kind === 'exists'}
                     title={state?.message ?? ''}
                     class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all disabled:cursor-default"

@@ -22,6 +22,7 @@
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import { tint, DEFAULT_HUE } from '$lib/accent';
   import { t } from '$lib/i18n';
+  import { flyToQueue } from '$lib/fly-to-queue';
   import { Upload, Loader2, Download, FileText, X, Search } from 'lucide-svelte';
 
   // localStorage-Key für die Job-Resume-Logik. Wenn der User reloadet,
@@ -250,10 +251,16 @@
     }
   });
 
-  async function queueAllMatched() {
+  async function queueAllMatched(ev?: MouseEvent) {
     if (!csvJobId) return;
     csvQueueAllBusy = true;
     csvQueueAllResult = null;
+    // Bulk-Queue löst eine kurze Burst-Animation aus: pro N Tracks
+    // ein Cover-Klon, gestaffelt über 250 ms damit's wie ein "Schwarm"
+    // wirkt statt chaotisches Geblitze. Source ist der Queue-Button
+    // selbst (kein Cover verfügbar — wir nehmen das Result-Hero-Cover
+    // wenn da, sonst den Button).
+    const btnEl = ev ? (ev.currentTarget as HTMLElement) : null;
     try {
       const r = await importApi.queueAll(csvJobId, {
         location: $defaultLocation,
@@ -263,6 +270,24 @@
       const skipped = r.skipped ?? 0;
       csvQueueAllResult =
         skipped > 0 ? `${queued} queued, ${skipped} schon da` : `${queued} queued`;
+
+      // Bis zu 5 Klone hintereinander schicken — repräsentative Burst-
+      // Animation. Die ersten 5 matched Tracks liefern die Cover-URLs,
+      // damit's nicht alle gleich aussehen. Counter wird vom Backend-
+      // Polling synchronisiert (alle 5 s), Animation darf optimistisch
+      // bumpen ohne Sorge um Drift.
+      const sources = (csvResult?.matched ?? []).slice(0, 5);
+      const fallbackSrc = sources[0]?.track?.album_art ?? null;
+      const burst = Math.min(queued, 5);
+      for (let i = 0; i < burst; i++) {
+        const src = sources[i]?.track?.album_art ?? fallbackSrc;
+        const startEl = btnEl ?? document.body;
+        // Stagger 80 ms zwischen den Klonen — alle laufen parallel,
+        // aber leicht versetzt für den "Schwarm"-Effekt.
+        window.setTimeout(() => {
+          flyToQueue(startEl, src, accent, 48);
+        }, i * 80);
+      }
     } catch (err) {
       csvQueueAllResult = err instanceof Error ? err.message : 'Fehler beim Queuen';
     } finally {
@@ -402,11 +427,17 @@
     }
   }
 
-  async function queueRecheckTrack(index: number, track: Track) {
+  async function queueRecheckTrack(index: number, track: Track, ev?: MouseEvent) {
     const cur = recheck[index];
     if (!cur) return;
     const qs = { ...(cur.queueState ?? {}), [track.id]: 'queued' as const };
     recheck = { ...recheck, [index]: { ...cur, queueState: qs } };
+    let coverEl: HTMLElement | null = null;
+    if (ev) {
+      const btn = ev.currentTarget as HTMLElement;
+      const row = btn.closest<HTMLElement>('[data-recheck-track]');
+      coverEl = row?.querySelector<HTMLElement>('[data-cover]') ?? null;
+    }
     try {
       await downloadApi.start(track.id, {
         location: $defaultLocation,
@@ -423,6 +454,9 @@
           queueState: { ...(cur2.queueState ?? {}), [track.id]: 'done' }
         }
       };
+      if (coverEl) {
+        flyToQueue(coverEl, track.album_art ?? null, accent, coverEl.offsetWidth);
+      }
     } catch (err) {
       const cur2 = recheck[index];
       if (!cur2) return;
@@ -928,7 +962,7 @@
             {$t('import.result.new_import')}
           </button>
           <button
-            onclick={queueAllMatched}
+            onclick={(e) => queueAllMatched(e)}
             disabled={csvQueueAllBusy || csvResult.found === 0}
             class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
             style="
@@ -1151,8 +1185,11 @@
                     <div
                       class="flex items-center gap-3 px-2.5 py-1.5 rounded-md"
                       style="background: rgba(0, 0, 0, 0.25);"
+                      data-recheck-track
                     >
-                      <AlbumArt src={t.album_art} alt={t.album} size="sm" />
+                      <div data-cover>
+                        <AlbumArt src={t.album_art} alt={t.album} size="sm" />
+                      </div>
                       <div class="flex-1 min-w-0">
                         <div
                           class="text-[12px] truncate"
@@ -1176,7 +1213,7 @@
                       </div>
                       <button
                         type="button"
-                        onclick={() => queueRecheckTrack(i, t)}
+                        onclick={(e) => queueRecheckTrack(i, t, e)}
                         disabled={qs === 'queued' || qs === 'done' || qs === 'exists'}
                         class="inline-flex items-center gap-1 transition-colors disabled:cursor-default flex-shrink-0"
                         style="

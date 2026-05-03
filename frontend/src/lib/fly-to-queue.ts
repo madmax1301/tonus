@@ -41,28 +41,6 @@ export const flashAccent = writable<string | null>(null);
 
 let flyIdCounter = 0;
 
-/** Element-Position relativ zum Anchor — survives CSS-Transforms im
- *  Gegensatz zu getBoundingClientRect(). Iteriert offsetParents hoch und
- *  zieht scrollLeft/Top zwischendurch ab. */
-function offsetWithin(el: HTMLElement, ancestor: HTMLElement): { x: number; y: number } {
-  let x = 0;
-  let y = 0;
-  let n: HTMLElement | null = el;
-  while (n && n !== ancestor) {
-    x += n.offsetLeft;
-    y += n.offsetTop;
-    const op = n.offsetParent as HTMLElement | null;
-    let p: HTMLElement | null = n.parentElement;
-    while (p && p !== op && p !== ancestor) {
-      if (p.scrollLeft) x -= p.scrollLeft;
-      if (p.scrollTop) y -= p.scrollTop;
-      p = p.parentElement;
-    }
-    n = op;
-  }
-  return { x, y };
-}
-
 /**
  * Lös die Cover-fly-Animation aus.
  *
@@ -92,10 +70,30 @@ export function flyToQueue(
     return Promise.resolve();
   }
 
-  const anchor = document.body;
-  const coverPos = offsetWithin(coverEl, anchor);
-  const puckPos = offsetWithin(puck, anchor);
-  const puckSize = puck.offsetWidth;
+  // Viewport-relative Koordinaten via getBoundingClientRect() — der Puck
+  // ist `position: fixed` (klebt an viewport.right/bottom), und der Klon
+  // wird ebenfalls als position: fixed gerendert. Beide also im selben
+  // Koordinatensystem (window). Vorteil gegenüber dem alten offsetWithin:
+  //   - scroll-immun (Source-Cover scrollt mit, Puck nicht — Klon nutzt
+  //     viewport-Koordinaten und rechnet nicht mehr falsch wenn der User
+  //     gescrollt hat)
+  //   - kein Margin-Geraffel mit fixed-Elementen, deren offsetTop bei
+  //     `bottom: 24` undefiniert oder 0 ist
+  const coverRect = coverEl.getBoundingClientRect();
+  const puckRect = puck.getBoundingClientRect();
+
+  // Cover-Klon zentriert auf Cover-Mittelpunkt (Source) bzw. Puck-Mittel
+  // (Target). FlyingCover positioniert via translate(x, y) ohne weitere
+  // Anchor-Korrektur, also rechnen wir hier x = center - size/2.
+  const fromX = coverRect.left + coverRect.width / 2 - size / 2;
+  const fromY = coverRect.top + coverRect.height / 2 - size / 2;
+  // Bei Ankunft soll der Klon auf 0.36 geschrumpft sein. Ziel-Center =
+  // Puck-Center. transform: translate(...) bezieht sich aufs unscaled
+  // Element — also verschiebe so, dass der ungeschrumpfte Klon mittig
+  // unter dem Puck-Center liegt; die scale(0.36) zieht ihn dann optisch
+  // zur Mitte zusammen. Visuell macht das den Bogen schöner.
+  const toX = puckRect.left + puckRect.width / 2 - size / 2;
+  const toY = puckRect.top + puckRect.height / 2 - size / 2;
 
   const id = ++flyIdCounter;
   flyingCovers.update((arr) => [
@@ -105,11 +103,8 @@ export function flyToQueue(
       src,
       accent,
       size,
-      from: { x: coverPos.x, y: coverPos.y },
-      to: {
-        x: puckPos.x + puckSize / 2 - size * 0.18,
-        y: puckPos.y + puckSize / 2 - size * 0.18
-      }
+      from: { x: fromX, y: fromY },
+      to: { x: toX, y: toY }
     }
   ]);
 

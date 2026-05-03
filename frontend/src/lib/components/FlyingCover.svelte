@@ -32,7 +32,7 @@
 <div
   class="tonus-fly-cover"
   style="
-    position: absolute;
+    position: fixed;
     z-index: 60;
     pointer-events: none;
     left: 0;
