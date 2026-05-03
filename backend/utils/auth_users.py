@@ -354,6 +354,38 @@ def update_user_password(user_id: int, new_password: str) -> bool:
         conn.close()
 
 
+def set_user_admin(user_id: int, is_admin: bool) -> bool:
+    """Toggle is_admin-Flag. Caller (Endpoint) verantwortet den Last-Admin-
+    Schutz — diese Funktion macht keinen Count-Check, weil sie auch
+    intern für die initiale create_user(is_admin=True)-Pfade benutzt
+    werden könnte."""
+    conn = _db()
+    try:
+        cur = conn.execute(
+            "UPDATE users SET is_admin = ? WHERE id = ?",
+            (1 if is_admin else 0, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_user(user_id: int) -> bool:
+    """Hard-Delete. Cascades manually (SQLite-FK ist nicht zwingend enforced):
+    erst PATs + refresh_tokens des Users löschen, dann den User selbst.
+    Caller verantwortet Last-Admin-Schutz und Self-Delete-Verbot."""
+    conn = _db()
+    try:
+        conn.execute("DELETE FROM pats WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,))
+        cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def set_totp_secret(user_id: int, plain_secret: str) -> None:
     """Aktiviert TOTP für den User. Speichert das Secret verschlüsselt."""
     enc = encrypt_totp_secret(plain_secret)

@@ -3606,6 +3606,111 @@ async def auth_pats_revoke(pat_id: int, request: Request,
 
 
 # ─────────────────────────────────────────────────────────────────────
+# User-Management (Admin-only)
+# ─────────────────────────────────────────────────────────────────────
+
+class UserCreateRequest(BaseModel):
+    username: str
+    password: str
+    is_admin: bool = False
+
+
+class UserPatchRequest(BaseModel):
+    is_admin: Optional[bool] = None
+    password: Optional[str] = None
+
+
+def _public_user_record(u: Dict[str, Any]) -> Dict[str, Any]:
+    """Filter sensitive Felder (password_hash, totp_secret) bevor wir Records
+    ans Frontend geben. totp_enabled wird als bool surfacet (statt das
+    Secret selbst zu enthüllen)."""
+    return {
+        "id": u.get("id"),
+        "username": u.get("username"),
+        "is_admin": bool(u.get("is_admin")),
+        "totp_enabled": bool(u.get("totp_enabled")) if "totp_enabled" in u else bool(u.get("totp_secret")),
+        "created_at_ms": u.get("created_at_ms"),
+        "last_login_at_ms": u.get("last_login_at_ms"),
+    }
+
+
+@app.get("/api/auth/users")
+async def auth_users_list(_: None = Depends(require_token),
+                           __: None = Depends(require_admin)):
+    """Liste aller User. Admin-only."""
+    from utils import auth_users as au
+    return {"users": [_public_user_record(u) for u in au.list_users()]}
+
+
+@app.post("/api/auth/users")
+async def auth_users_create(req: UserCreateRequest,
+                              _: None = Depends(require_token),
+                              __: None = Depends(require_admin)):
+    """Legt neuen User an. Admin-only.
+    400 wenn Username schon existiert oder Validation fehlschlägt."""
+    from utils import auth_users as au
+    try:
+        user = au.create_user(req.username, req.password, is_admin=req.is_admin)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"user": _public_user_record(user)}
+
+
+@app.delete("/api/auth/users/{user_id}")
+async def auth_users_delete(user_id: int, request: Request,
+                              _: None = Depends(require_token),
+                              __: None = Depends(require_admin)):
+    """Hard-Delete. Schutz:
+    - Self-Delete: nicht erlaubt (Self-Lockout-Risiko)
+    - Last-Admin-Delete: nicht erlaubt (System wäre unverwaltbar)
+    Cascade: User's PATs + refresh_tokens werden mit gelöscht."""
+    from utils import auth_users as au
+    me = request.state.user
+    if int(me.get("id", 0)) == user_id:
+        raise HTTPException(status_code=400, detail="Du kannst dich nicht selbst löschen.")
+    target = au.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User nicht gefunden.")
+    if bool(target.get("is_admin")) and au.admin_count() <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Letzter Admin — kann nicht gelöscht werden.",
+        )
+    au.delete_user(user_id)
+    return {"ok": True}
+
+
+@app.patch("/api/auth/users/{user_id}")
+async def auth_users_patch(user_id: int, req: UserPatchRequest, request: Request,
+                             _: None = Depends(require_token),
+                             __: None = Depends(require_admin)):
+    """Toggle Admin-Flag oder reset Password. Admin-only.
+    Schutz: Last-Admin-Demotion (eigener oder fremder Account) wird verhindert."""
+    from utils import auth_users as au
+    target = au.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User nicht gefunden.")
+
+    if req.is_admin is not None:
+        # Demotion eines Admins blockieren wenn er der letzte ist (egal ob
+        # Self oder von anderem Admin getriggert).
+        if not req.is_admin and bool(target.get("is_admin")) and au.admin_count() <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Letzter Admin — kann nicht demoted werden.",
+            )
+        au.set_user_admin(user_id, req.is_admin)
+
+    if req.password is not None:
+        try:
+            au.update_user_password(user_id, req.password)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Banned-IPs (Admin-only)
 # ─────────────────────────────────────────────────────────────────────
 

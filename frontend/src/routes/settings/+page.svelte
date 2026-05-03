@@ -12,7 +12,8 @@
     type AuthUser,
     type Pat,
     type PatCreateResponse,
-    type BannedIp
+    type BannedIp,
+    type ManagedUser
   } from '$lib/api';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
@@ -30,10 +31,14 @@
     KeyRound,
     Copy,
     AlertTriangle,
-    Ban
+    Ban,
+    Users as UsersIcon,
+    UserPlus,
+    UserMinus,
+    UserCog
   } from 'lucide-svelte';
 
-  type Section = 'defaults' | 'backend' | 'language' | 'pats' | 'security' | 'bans';
+  type Section = 'defaults' | 'backend' | 'language' | 'pats' | 'security' | 'bans' | 'users';
   let section = $state<Section>('language');
 
   // Backend-Info (read-only)
@@ -164,14 +169,17 @@
     return $lang === 'de' ? `${days} Tage${days === 1 ? '' : 'n'}` : `${days} day${days === 1 ? '' : 's'}`;
   }
 
-  // Lazy-Load: PATs nur fetchen, wenn der User die Section tatsächlich öffnet.
-  // Spart einen Roundtrip bei Settings-Open für den 80%-Use-Case.
+  // Lazy-Load: PATs/Bans/Users nur fetchen, wenn der User die Section
+  // tatsächlich öffnet. Spart Roundtrips bei Settings-Open für 80%-Use-Cases.
   $effect(() => {
     if (section === 'pats' && !patsLoaded) {
       loadPats();
     }
     if (section === 'bans' && !bansLoaded) {
       loadBans();
+    }
+    if (section === 'users' && !usersLoaded) {
+      loadUsers();
     }
   });
 
@@ -186,7 +194,8 @@
       | 'settings.section.language'
       | 'settings.section.pats'
       | 'settings.section.security'
-      | 'settings.section.bans';
+      | 'settings.section.bans'
+      | 'settings.section.users';
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     icon: any;
     adminOnly: boolean;
@@ -196,6 +205,7 @@
     { id: 'backend', key: 'settings.section.backend', icon: Server, adminOnly: true },
     { id: 'language', key: 'settings.section.language', icon: Globe, adminOnly: false },
     { id: 'pats', key: 'settings.section.pats', icon: KeyRound, adminOnly: true },
+    { id: 'users', key: 'settings.section.users', icon: UsersIcon, adminOnly: true },
     { id: 'security', key: 'settings.section.security', icon: ShieldCheck, adminOnly: false },
     { id: 'bans', key: 'settings.section.bans', icon: Ban, adminOnly: true }
   ];
@@ -259,6 +269,158 @@
       bansError = $t('settings.bans.error_unban');
     } finally {
       unbanningIp = null;
+    }
+  }
+
+  // ── User-Management (Admin-only) ────────────────────────────────
+  let users = $state<ManagedUser[]>([]);
+  let usersLoaded = $state(false);
+  let usersError = $state<string | null>(null);
+
+  // Create-Modal
+  let userCreateOpen = $state(false);
+  let userCreateUsername = $state('');
+  let userCreatePassword = $state('');
+  let userCreateIsAdmin = $state(false);
+  let userCreateBusy = $state(false);
+  let userCreateError = $state<string | null>(null);
+
+  // Reset-Password-Modal
+  let resetTarget = $state<ManagedUser | null>(null);
+  let resetPasswordValue = $state('');
+  let resetBusy = $state(false);
+  let resetError = $state<string | null>(null);
+
+  // Per-row pending actions
+  let userActionPending = $state<{ id: number; kind: 'toggle' | 'delete' } | null>(null);
+
+  async function loadUsers() {
+    usersError = null;
+    try {
+      const res = await authApi.usersList();
+      users = res.users;
+      usersLoaded = true;
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 403)) {
+        usersError = $t('settings.users.error_load');
+      }
+      usersLoaded = true;
+    }
+  }
+
+  async function submitCreateUser() {
+    const name = userCreateUsername.trim();
+    if (!name) {
+      userCreateError = $t('settings.users.create.error_username');
+      return;
+    }
+    if (userCreatePassword.length < 8) {
+      userCreateError = $t('settings.users.create.error_password');
+      return;
+    }
+    userCreateBusy = true;
+    userCreateError = null;
+    try {
+      await authApi.usersCreate(name, userCreatePassword, userCreateIsAdmin);
+      userCreateOpen = false;
+      userCreateUsername = '';
+      userCreatePassword = '';
+      userCreateIsAdmin = false;
+      await loadUsers();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 400) {
+        const detail = (err.message || '').toLowerCase();
+        userCreateError = detail.includes('password')
+          ? $t('settings.users.create.error_password')
+          : $t('settings.users.create.error_username');
+      } else {
+        userCreateError = $t('settings.users.create.error_generic');
+      }
+    } finally {
+      userCreateBusy = false;
+    }
+  }
+
+  async function toggleUserAdmin(u: ManagedUser) {
+    const willBeAdmin = !u.is_admin;
+    const ok = await showConfirm({
+      title: $t('settings.users.toggle_admin.confirm_title'),
+      message: willBeAdmin
+        ? $t('settings.users.toggle_admin.confirm_promote', { username: u.username })
+        : $t('settings.users.toggle_admin.confirm_demote', { username: u.username }),
+      confirmLabel: willBeAdmin
+        ? $t('settings.users.actions.toggle_admin_promote')
+        : $t('settings.users.actions.toggle_admin_demote'),
+      destructive: !willBeAdmin
+    });
+    if (!ok) return;
+    userActionPending = { id: u.id, kind: 'toggle' };
+    try {
+      await authApi.usersPatch(u.id, { is_admin: willBeAdmin });
+      await loadUsers();
+      // Wenn der User sich selbst demoted hat, muss me reloaded werden,
+      // damit die admin-only Tabs korrekt verschwinden.
+      if (me && u.id === me.id) {
+        await reloadMe();
+      }
+    } catch (err) {
+      usersError =
+        err instanceof ApiError && err.status === 400
+          ? $t('settings.users.error_last_admin')
+          : $t('settings.users.error_action');
+    } finally {
+      userActionPending = null;
+    }
+  }
+
+  async function deleteManagedUser(u: ManagedUser) {
+    if (me && u.id === me.id) {
+      usersError = $t('settings.users.error_self_delete');
+      return;
+    }
+    const ok = await showConfirm({
+      title: $t('settings.users.delete.confirm_title'),
+      message: $t('settings.users.delete.confirm_message', { username: u.username }),
+      confirmLabel: $t('settings.users.delete.confirm_label'),
+      destructive: true
+    });
+    if (!ok) return;
+    userActionPending = { id: u.id, kind: 'delete' };
+    try {
+      await authApi.usersDelete(u.id);
+      await loadUsers();
+    } catch (err) {
+      usersError =
+        err instanceof ApiError && err.status === 400
+          ? $t('settings.users.error_last_admin')
+          : $t('settings.users.error_action');
+    } finally {
+      userActionPending = null;
+    }
+  }
+
+  function openResetPassword(u: ManagedUser) {
+    resetTarget = u;
+    resetPasswordValue = '';
+    resetError = null;
+  }
+
+  async function submitResetPassword() {
+    if (!resetTarget) return;
+    if (resetPasswordValue.length < 8) {
+      resetError = $t('settings.users.create.error_password');
+      return;
+    }
+    resetBusy = true;
+    resetError = null;
+    try {
+      await authApi.usersPatch(resetTarget.id, { password: resetPasswordValue });
+      resetTarget = null;
+      resetPasswordValue = '';
+    } catch {
+      resetError = $t('settings.users.error_action');
+    } finally {
+      resetBusy = false;
     }
   }
 
@@ -1142,6 +1304,313 @@
             {/each}
           </ul>
         {/if}
+      {/if}
+    </div>
+  {/if}
+
+  <!-- ─── Section: Users (Admin-only) ─────────────────────── -->
+  {#if section === 'users' && me?.is_admin}
+    <div
+      class="tonus-fadein"
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
+    >
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+      >
+        {$t('settings.users.eyebrow')}
+      </div>
+      <div
+        class="flex items-baseline justify-between flex-wrap gap-3"
+        style="margin-bottom: 18px;"
+      >
+        <div
+          style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary);"
+        >
+          {$t('settings.users.title')}
+        </div>
+        <button
+          type="button"
+          onclick={() => {
+            userCreateOpen = true;
+            userCreateError = null;
+            userCreateUsername = '';
+            userCreatePassword = '';
+            userCreateIsAdmin = false;
+          }}
+          class="inline-flex items-center gap-1.5 transition-opacity"
+          style="background: {accent}; color: #1a1410; padding: 10px 18px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);"
+        >
+          <UserPlus size={13} strokeWidth={2} />
+          {$t('settings.users.create.button')}
+        </button>
+      </div>
+      <p
+        style="font-size: 13px; color: var(--color-fg-secondary); margin-bottom: 22px; line-height: 1.55; max-width: 620px;"
+      >
+        {$t('settings.users.body')}
+      </p>
+
+      {#if userCreateOpen}
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            submitCreateUser();
+          }}
+          class="flex flex-col gap-3"
+          style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--color-border-soft); border-radius: 16px; padding: 22px 24px; margin-bottom: 22px; max-width: 560px;"
+        >
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 4px;"
+          >
+            {$t('settings.users.create.modal_title')}
+          </div>
+          <label class="flex flex-col gap-1.5" for="usr-create-username">
+            <span
+              class="uppercase"
+              style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+            >
+              {$t('settings.users.create.username_label')}
+            </span>
+            <input
+              id="usr-create-username"
+              type="text"
+              maxlength="64"
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={userCreateUsername}
+              placeholder={$t('settings.users.create.username_placeholder')}
+              class="outline-none"
+              style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 12px 16px;"
+            />
+          </label>
+          <label class="flex flex-col gap-1.5" for="usr-create-password">
+            <span
+              class="uppercase"
+              style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+            >
+              {$t('settings.users.create.password_label')}
+            </span>
+            <input
+              id="usr-create-password"
+              type="password"
+              autocomplete="new-password"
+              spellcheck="false"
+              bind:value={userCreatePassword}
+              class="outline-none"
+              style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 12px 16px; letter-spacing: 0.04em;"
+            />
+            <span style="font-size: 11.5px; color: var(--color-fg-tertiary); line-height: 1.5;">
+              {$t('settings.users.create.password_hint')}
+            </span>
+          </label>
+          <label
+            class="inline-flex items-center gap-2"
+            style="font-size: 13px; color: var(--color-fg-secondary);"
+          >
+            <input
+              type="checkbox"
+              bind:checked={userCreateIsAdmin}
+              style="accent-color: {accent}; width: 14px; height: 14px;"
+            />
+            {$t('settings.users.create.is_admin_label')}
+          </label>
+          {#if userCreateError}
+            <p style="font-size: 12px; color: #f87171; margin: 0;">{userCreateError}</p>
+          {/if}
+          <div class="flex items-center gap-3" style="margin-top: 4px;">
+            <button
+              type="submit"
+              disabled={userCreateBusy}
+              class="inline-flex items-center transition-opacity"
+              style="background: {accent}; color: #1a1410; padding: 11px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25); opacity: {userCreateBusy ? 0.6 : 1}; cursor: {userCreateBusy ? 'wait' : 'pointer'};"
+            >
+              {userCreateBusy
+                ? $t('settings.users.create.submitting')
+                : $t('settings.users.create.submit')}
+            </button>
+            <button
+              type="button"
+              onclick={() => (userCreateOpen = false)}
+              class="inline-flex items-center transition-colors"
+              style="background: transparent; color: var(--color-fg-secondary); padding: 11px 22px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; border: 1px solid var(--color-border-soft);"
+            >
+              {$t('settings.users.create.cancel')}
+            </button>
+          </div>
+        </form>
+      {/if}
+
+      {#if resetTarget}
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            submitResetPassword();
+          }}
+          class="flex flex-col gap-3"
+          style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--color-border-soft); border-radius: 16px; padding: 22px 24px; margin-bottom: 22px; max-width: 560px;"
+        >
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 4px;"
+          >
+            {$t('settings.users.reset_password.modal_title', { username: resetTarget.username })}
+          </div>
+          <label class="flex flex-col gap-1.5" for="usr-reset-pw">
+            <span
+              class="uppercase"
+              style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+            >
+              {$t('settings.users.reset_password.label')}
+            </span>
+            <input
+              id="usr-reset-pw"
+              type="password"
+              autocomplete="new-password"
+              spellcheck="false"
+              bind:value={resetPasswordValue}
+              class="outline-none"
+              style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 12px 16px; letter-spacing: 0.04em;"
+            />
+          </label>
+          {#if resetError}
+            <p style="font-size: 12px; color: #f87171; margin: 0;">{resetError}</p>
+          {/if}
+          <div class="flex items-center gap-3" style="margin-top: 4px;">
+            <button
+              type="submit"
+              disabled={resetBusy}
+              class="inline-flex items-center transition-opacity"
+              style="background: {accent}; color: #1a1410; padding: 11px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25); opacity: {resetBusy ? 0.6 : 1}; cursor: {resetBusy ? 'wait' : 'pointer'};"
+            >
+              {resetBusy
+                ? $t('settings.users.reset_password.submitting')
+                : $t('settings.users.reset_password.submit')}
+            </button>
+            <button
+              type="button"
+              onclick={() => (resetTarget = null)}
+              class="inline-flex items-center transition-colors"
+              style="background: transparent; color: var(--color-fg-secondary); padding: 11px 22px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; border: 1px solid var(--color-border-soft);"
+            >
+              {$t('settings.users.reset_password.cancel')}
+            </button>
+          </div>
+        </form>
+      {/if}
+
+      {#if usersError}
+        <p style="font-size: 12px; color: #f87171; margin: 0 0 12px;">{usersError}</p>
+      {/if}
+      {#if !usersLoaded}
+        <p style="font-size: 12px; color: var(--color-fg-tertiary); margin: 0;">…</p>
+      {:else if users.length === 0}
+        <p style="font-size: 13px; color: var(--color-fg-tertiary); margin: 0;">
+          {$t('settings.users.list.empty')}
+        </p>
+      {:else}
+        <div
+          class="font-semibold uppercase"
+          style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary); margin-bottom: 10px;"
+        >
+          {$t('settings.users.list.title')}
+        </div>
+        <ul class="flex flex-col" style="gap: 10px; margin: 0; padding: 0; list-style: none;">
+          {#each users as u (u.id)}
+            {@const now = Date.now()}
+            {@const createdAgo = now - u.created_at_ms}
+            {@const lastLoginAgo = u.last_login_at_ms ? now - u.last_login_at_ms : null}
+            {@const isSelf = me?.id === u.id}
+            <li
+              class="flex items-center justify-between gap-4 flex-wrap"
+              style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--color-border-soft); border-radius: 14px; padding: 14px 18px;"
+            >
+              <div class="flex flex-col" style="gap: 4px; min-width: 0; flex: 1;">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span
+                    style="font-size: 14px; font-weight: 500; color: var(--color-fg-primary);"
+                    >{u.username}</span
+                  >
+                  {#if isSelf}
+                    <span
+                      class="uppercase"
+                      style="font-size: 9.5px; letter-spacing: 0.16em; color: var(--color-fg-tertiary); background: rgba(255,255,255,0.04); border: 1px solid var(--color-border-soft); padding: 2px 7px; border-radius: 999px;"
+                      >{$t('settings.users.list.you')}</span
+                    >
+                  {/if}
+                  {#if u.is_admin}
+                    <span
+                      class="uppercase"
+                      style="font-size: 9.5px; letter-spacing: 0.16em; color: {accent}; background: {accent}1a; border: 1px solid {accent}55; padding: 2px 7px; border-radius: 999px; font-weight: 600;"
+                      >{$t('settings.users.list.admin_badge')}</span
+                    >
+                  {/if}
+                  {#if u.totp_enabled}
+                    <span
+                      class="uppercase inline-flex items-center gap-1"
+                      style="font-size: 9.5px; letter-spacing: 0.16em; color: rgba(134, 239, 172, 0.95); background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.3); padding: 2px 7px; border-radius: 999px;"
+                    >
+                      <ShieldCheck size={10} strokeWidth={2.2} />
+                      {$t('settings.users.list.totp_badge')}
+                    </span>
+                  {/if}
+                </div>
+                <div
+                  class="flex items-center gap-2 flex-wrap"
+                  style="font-size: 11.5px; color: var(--color-fg-secondary);"
+                >
+                  <span>{$t('settings.users.list.created', { when: formatRelative(createdAgo) })}</span>
+                  <span style="color: var(--color-fg-tertiary);">·</span>
+                  {#if lastLoginAgo !== null}
+                    <span>{$t('settings.users.list.last_login', { when: formatRelative(lastLoginAgo) })}</span>
+                  {:else}
+                    <span>{$t('settings.users.list.never_logged_in')}</span>
+                  {/if}
+                </div>
+              </div>
+              <div class="flex items-center gap-1.5 flex-wrap flex-shrink-0">
+                <button
+                  type="button"
+                  disabled={userActionPending?.id === u.id && userActionPending.kind === 'toggle'}
+                  onclick={() => toggleUserAdmin(u)}
+                  title={u.is_admin
+                    ? $t('settings.users.actions.toggle_admin_demote')
+                    : $t('settings.users.actions.toggle_admin_promote')}
+                  class="inline-flex items-center gap-1.5 transition-opacity"
+                  style="background: rgba(255, 255, 255, 0.06); color: var(--color-fg-primary); padding: 7px 12px; border-radius: 999px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--color-border-soft); opacity: {userActionPending?.id === u.id ? 0.6 : 1};"
+                >
+                  {#if u.is_admin}
+                    <UserMinus size={11} strokeWidth={2} />
+                  {:else}
+                    <UserCog size={11} strokeWidth={2} />
+                  {/if}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => openResetPassword(u)}
+                  title={$t('settings.users.actions.reset_password')}
+                  class="inline-flex items-center gap-1.5 transition-opacity"
+                  style="background: rgba(255, 255, 255, 0.06); color: var(--color-fg-primary); padding: 7px 12px; border-radius: 999px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--color-border-soft);"
+                >
+                  <KeyRound size={11} strokeWidth={2} />
+                </button>
+                {#if !isSelf}
+                  <button
+                    type="button"
+                    disabled={userActionPending?.id === u.id && userActionPending.kind === 'delete'}
+                    onclick={() => deleteManagedUser(u)}
+                    title={$t('settings.users.actions.delete')}
+                    class="inline-flex items-center gap-1.5 transition-opacity"
+                    style="background: rgba(248, 113, 113, 0.12); color: #fca5a5; padding: 7px 12px; border-radius: 999px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid rgba(248, 113, 113, 0.28); opacity: {userActionPending?.id === u.id ? 0.6 : 1};"
+                  >
+                    <Trash2 size={11} strokeWidth={2} />
+                  </button>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
       {/if}
     </div>
   {/if}

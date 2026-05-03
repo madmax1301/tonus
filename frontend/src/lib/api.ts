@@ -211,8 +211,36 @@ export const authApi = {
   bansUnban: (ip: string) =>
     request<{ ok: boolean }>(`/api/auth/banned-ips/${encodeURIComponent(ip)}`, {
       method: 'DELETE'
+    }),
+  /** Admin-only — Liste aller User mit is_admin/totp/last-login. */
+  usersList: () => request<{ users: ManagedUser[] }>('/api/auth/users'),
+  /** Admin-only — Legt neuen User an. */
+  usersCreate: (username: string, password: string, is_admin = false) =>
+    request<{ user: ManagedUser }>('/api/auth/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, is_admin })
+    }),
+  /** Admin-only — Hard-Delete (cascades PATs + refresh_tokens). */
+  usersDelete: (user_id: number) =>
+    request<{ ok: boolean }>(`/api/auth/users/${user_id}`, { method: 'DELETE' }),
+  /** Admin-only — Toggle is_admin oder reset Password. */
+  usersPatch: (user_id: number, body: { is_admin?: boolean; password?: string }) =>
+    request<{ ok: boolean }>(`/api/auth/users/${user_id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
     })
 };
+
+export interface ManagedUser {
+  id: number;
+  username: string;
+  is_admin: boolean;
+  totp_enabled: boolean;
+  created_at_ms: number;
+  last_login_at_ms?: number | null;
+}
 
 export interface BannedIp {
   ip: string;
