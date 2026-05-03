@@ -1124,18 +1124,31 @@ def reverse_download_and_process(
                 upsert_job(job_id, status="error", message="Could not fetch track information", progress=0)
                 return
         else:
-            # Validate manual metadata (name + artist required)
+            # Kein Spotify/Deezer-Track-ID UND keine manuellen Metadaten →
+            # "Direkt laden ohne Match"-Fall. Vorher hat der Code hier hart
+            # mit "Manual metadata requires 'name' (song title) and 'artist'"
+            # abgebrochen — dabei sind YouTube-Title + Uploader + Thumbnail
+            # vom yt-dlp-extract genau das was der User in diesem Pfad will.
+            #
+            # Logik:
+            #   1. Manuelle Metadaten haben Vorrang (User-Eingaben)
+            #   2. Falls fehlend → Fallback auf yt-dlp-Werte
+            #   3. Falls weder noch → letzter Fallback "YouTube" / "Unknown"
             md = metadata or {}
-            name = (md.get('name') or md.get('title') or '').strip()
-            artist = (md.get('artist') or '').strip()
-            if not name or not artist:
-                upsert_job(job_id, status="error", message="Manual metadata requires 'name' (song title) and 'artist'",
-                           progress=0)
-                return
+            name = (
+                (md.get('name') or md.get('title') or '').strip()
+                or (yt_info.get('title') or '').strip()
+                or 'Unknown'
+            )
+            artist = (
+                (md.get('artist') or '').strip()
+                or (yt_info.get('uploader') or yt_info.get('channel') or '').strip()
+                or 'YouTube'
+            )
 
             # Default album/album_artist to "YouTube" if not provided
-            album_artist = (md.get('album_artist') or '').strip() or "YouTube"
-            album = (md.get('album') or md.get('album_name') or '').strip() or "YouTube"
+            album_artist = (md.get('album_artist') or '').strip() or artist
+            album = (md.get('album') or md.get('album_name') or '').strip() or 'YouTube'
 
             # If user didn't provide album art, use YouTube thumbnail
             album_art = md.get('album_art') or yt_info.get('thumbnail') or None
@@ -1150,7 +1163,7 @@ def reverse_download_and_process(
                 'track_number': int(md.get('track_number') or 1),
                 'release_date': (md.get('release_date') or '').strip(),
                 'album_art': album_art,
-                'duration_ms': 0,
+                'duration_ms': int((yt_info.get('duration') or 0) * 1000),
                 'external_url': yt_info.get('webpage_url') or youtube_url,
                 'preview_url': None,
             }
