@@ -1168,8 +1168,31 @@ def reverse_download_and_process(
                 'preview_url': None,
             }
 
-        upsert_job(job_id, status="processing", message="Preparing download location...", stage="preparing",
-                   progress=20)
+        # Job-Payload auf den jetzt-resolved Track umstellen, damit die
+        # Queue-UI Title + Artist + Cover statt YouTube-URL + leeres Bild
+        # zeigt. Bei Catalog-Match kommt track_info aus Provider, bei
+        # Direct-ohne-Match aus yt-dlp — in beiden Fällen ist track_info
+        # jetzt vollständig.
+        slim_track = {
+            "id": job_id,
+            "name": track_info.get('name'),
+            "artist": track_info.get('artist'),
+            "album": track_info.get('album'),
+            "album_art": track_info.get('album_art'),
+        }
+        upsert_job(
+            job_id,
+            status="processing",
+            message="Preparing download location...",
+            stage="preparing",
+            progress=20,
+            payload={
+                "kind": "reverse",
+                "provider": metadata_provider,
+                "record_track_id": track_id,
+                "track": slim_track,
+            },
+        )
 
         # Determine download path
         temp_dir = os.path.join(config.DOWNLOAD_DIR, "temp")
@@ -2192,8 +2215,34 @@ def url_download_and_process(
             'preview_url': None,
         }
 
-        upsert_job(job_id, status="processing", message="Preparing download location...",
-                   stage="preparing", progress=25)
+        # Job-Payload mit den yt-dlp-Metadaten aktualisieren — sonst zeigt
+        # die Queue-UI weiterhin die rohe URL als Track-Name (so wurde der
+        # Job vom Endpoint mit Placeholder-Track angelegt). Mit dem Update
+        # bekommt das Frontend Title + Uploader + Thumbnail in der Live-
+        # Ansicht direkt nach dem yt-dlp-Extract.
+        slim_track = {
+            "id": job_id,
+            "name": title,
+            "artist": uploader,
+            "album": uploader,
+            "album_art": thumb,
+        }
+        upsert_job(
+            job_id,
+            status="processing",
+            message="Preparing download location...",
+            stage="preparing",
+            progress=25,
+            payload={
+                "kind": "url",
+                "url": url,
+                "location": location,
+                "output_format": output_format,
+                "audio_quality": audio_quality,
+                "navidrome_library_path": navidrome_library_path,
+                "track": slim_track,
+            },
+        )
 
         temp_dir = os.path.join(config.DOWNLOAD_DIR, "temp")
         Path(temp_dir).mkdir(parents=True, exist_ok=True)

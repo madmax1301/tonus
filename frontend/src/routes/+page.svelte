@@ -557,7 +557,7 @@
         {#if revBusy}
           <Loader2 size={11} class="animate-spin" />
         {:else}
-          {$t('library.youtube.search_button')}
+          {$t('library.youtube.search_button', { provider: provider || 'Provider' })}
         {/if}
       </button>
     {/if}
@@ -737,8 +737,8 @@
       </div>
     {/if}
     {#if !revLookup}
-      <p style="font-size: 12px; color: var(--color-fg-tertiary);">
-        {$t('library.youtube.hint')}
+      <p style="font-size: 12px; color: var(--color-fg-tertiary); line-height: 1.55;">
+        {$t('library.youtube.hint', { provider: provider || 'Provider' })}
       </p>
     {/if}
 
@@ -755,7 +755,8 @@
         {/if}
         <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
           {$t('library.youtube.candidates_hint', {
-            count: revLookup.spotify_candidates.length
+            count: revLookup.spotify_candidates.length,
+            provider: provider || 'Provider'
           })}
         </div>
         <div class="space-y-2">
