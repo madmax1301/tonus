@@ -1872,7 +1872,8 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     # Spalte (vorher: Hijack des `message`-Felds als "provider|limit|pending_raw"-
     # String, was bei verzögertem Worker-Pickup als Status-Message in der UI
     # auftauchte). Filename optional für UI-Anzeige.
-    payload = json.dumps({"provider": provider, "search_limit": search_limit})
+    import json as _json
+    payload = _json.dumps({"provider": provider, "search_limit": search_limit})
     fname = (request.filename or "").strip() or None
 
     upsert_csv_job(

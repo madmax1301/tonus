@@ -23,11 +23,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (resp.status === 401 || resp.status === 403) {
       challengeAuth();
     }
-    let body: unknown;
+    // Erst Text lesen, dann optional als JSON parsen — wenn der erste
+    // .json() fehlschlägt (z.B. bei HTML-Traceback in einer FastAPI-500),
+    // ist der ReadableStream bereits konsumiert und ein zweiter .text()-
+    // Call wirft "body stream already read". Sicher: einmal lesen, dann
+    // entscheiden.
+    const raw = await resp.text();
+    let body: unknown = raw;
     try {
-      body = await resp.json();
+      body = JSON.parse(raw);
     } catch {
-      body = await resp.text();
+      /* nicht-JSON Response — body bleibt der raw-Text */
     }
     throw new ApiError(resp.status, `${resp.status} ${resp.statusText}`, body);
   }
