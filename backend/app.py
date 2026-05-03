@@ -1146,9 +1146,13 @@ def reverse_download_and_process(
                 or 'YouTube'
             )
 
-            # Default album/album_artist to "YouTube" if not provided
+            # Default album/album_artist: album = "Singles" (Navidrome-
+            # konventional für Tracks ohne natürliches Album), album_artist
+            # = artist (= YouTube-Channel). Manuelle Tags haben weiterhin
+            # Vorrang. Damit Pfad <Channel>/Singles/<Title>.opus statt
+            # vorher Doppelnest <Channel>/<Channel>/<Title>.opus.
             album_artist = (md.get('album_artist') or '').strip() or artist
-            album = (md.get('album') or md.get('album_name') or '').strip() or 'YouTube'
+            album = (md.get('album') or md.get('album_name') or '').strip() or 'Singles'
 
             # If user didn't provide album art, use YouTube thumbnail
             album_art = md.get('album_art') or yt_info.get('thumbnail') or None
@@ -2213,13 +2217,19 @@ def url_download_and_process(
             uploader = (track_hint.get('artist') or uploader).strip()
             thumb = track_hint.get('album_art') or thumb
 
+        # Album = "Singles" statt uploader — vorher führte uploader-als-album
+        # zum Doppelnest <Channel>/<Channel>/<Title>.opus, was visuell in
+        # Navidrome merkwürdig wirkt (Channel-Name als Album-Bezeichnung).
+        # Mit "Singles" gibt's <Channel>/Singles/<Title>.opus — der
+        # Navidrome-konventionale Pfad für Tracks ohne natürliches Album-
+        # Konzept (YouTube, SoundCloud, Bandcamp-Singles).
         track_info = {
             'id': job_id,
             'name': title,
             'artist': uploader,
             'artists': [uploader] if uploader else [],
             'album_artist': uploader,
-            'album': uploader,  # SoundCloud/YouTube haben selten Album-Konzept
+            'album': 'Singles',
             'track_number': 1,
             'release_date': '',
             'album_art': thumb,
@@ -2237,7 +2247,7 @@ def url_download_and_process(
             "id": job_id,
             "name": title,
             "artist": uploader,
-            "album": uploader,
+            "album": 'Singles',
             "album_art": thumb,
         }
         upsert_job(
