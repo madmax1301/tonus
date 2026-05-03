@@ -181,6 +181,66 @@ if _csv_stale.get("jobs_reset") or _csv_stale.get("rows_purged"):
     )
 
 
+# ───────────────────────────────────────────────────────────────────
+# F.5: Legacy-Token-Migration
+# ───────────────────────────────────────────────────────────────────
+def _first_run_admin_bootstrap() -> None:
+    """Wenn TONUS_API_TOKEN env gesetzt ist, beim Boot:
+
+    1. **Deprecation-Warning** in die Container-Logs schreiben — auch wenn
+       schon User existieren. Erinnert den Operator daran, den Legacy-Token
+       nach abgeschlossener Plugin-Migration aus der .env zu nehmen.
+
+    2. **First-Run-Admin-Bootstrap**: wenn (zusätzlich) noch keine User in
+       der DB sind, einmalig `_admin` mit zufälligem Password anlegen und
+       das Klartext-Password in den Container-Stdout schreiben. Operator
+       loggt sich damit ein, ändert das Password und kann anschließend
+       Plugin-Auth via PAT konfigurieren (Settings → API-Tokens, F.4).
+
+    Idempotent — nach erstem Boot mit Bootstrap zählt admin_count() > 0
+    und der Pfad wird nicht nochmal genommen, auch wenn `_admin` später
+    renamed/disabled wird."""
+    if not config.TONUS_API_TOKEN:
+        return
+
+    print("=" * 64, flush=True)
+    print("⚠  TONUS_API_TOKEN is DEPRECATED.", flush=True)
+    print("   Migrate the Navidrome plugin to a PAT (Settings → API tokens),", flush=True)
+    print("   then remove TONUS_API_TOKEN from backend/.env.", flush=True)
+    print("   See CUTOVER.md → 'Plugin-Migration auf PAT-Auth'.", flush=True)
+    print("=" * 64, flush=True)
+
+    from utils import auth_users as au
+    import secrets as _secrets
+
+    try:
+        existing = au.admin_count()
+    except Exception as e:  # pragma: no cover — defensive (DB just initialized)
+        print(f"[F.5] admin_count check failed, skipping bootstrap: {e}", flush=True)
+        return
+    if existing > 0:
+        return
+
+    plain_pw = _secrets.token_urlsafe(16)
+    try:
+        au.create_user("_admin", plain_pw, is_admin=True)
+    except Exception as e:
+        print(f"[F.5] First-run-admin bootstrap FAILED: {e}", flush=True)
+        return
+
+    print("=" * 64, flush=True)
+    print("🎟  FIRST-RUN ADMIN BOOTSTRAPPED", flush=True)
+    print("   Username: _admin", flush=True)
+    print(f"   Password: {plain_pw}", flush=True)
+    print("   ⚠ Save this password NOW — it won't be shown again.", flush=True)
+    print("   ⚠ Login at the Tonus UI, change the password, and enable", flush=True)
+    print("     2FA via Settings → Sicherheit (recommended).", flush=True)
+    print("=" * 64, flush=True)
+
+
+_first_run_admin_bootstrap()
+
+
 # ----- Dual-VPN-Splitting: Boot-Check -----
 # Wenn VPN_SPLIT_ENABLED=true ist, müssen beide Source-IPs (VPN_SOURCE_A,
 # VPN_SOURCE_B) auf einem Host-Interface bindbar sein. Schlägt das fehl,

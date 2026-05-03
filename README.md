@@ -49,7 +49,29 @@ environment:
 ## Configuration
 
 Copy `backend/env.example` → `backend/.env` and fill in:
-- `TONUS_API_TOKEN` — Bearer token for `/api/*`
 - `NAVIDROME_API_URL`, `NAVIDROME_USER`, `NAVIDROME_PASS`
 - `VPN_SOURCE_A`, `VPN_SOURCE_B` (only when running on NAS with dual-VPN)
 - Deezer / Spotify credentials per the example file
+- `TONUS_API_TOKEN` — **deprecated**; only set during the plugin-PAT migration window (see below)
+
+## Authentication
+
+Tonus uses **JWT login** for the browser and **PATs (Personal Access Tokens)** for service-to-service auth (Navidrome plugin, scripts).
+
+### First boot
+
+Open the UI → first-run setup wizard creates your admin account. From then on, every browser tab uses the JWT-cookie pair. 2FA can be enabled at any time under Settings → Sicherheit.
+
+### Plugin/service auth
+
+Settings → API-Tokens → *Neuen Token anlegen* (name + expiry). The plain token is shown **once** — copy it directly into the plugin config (`tonus_token` field). Revoke any time via the same screen.
+
+### Migration from `TONUS_API_TOKEN`
+
+The legacy static-token path stays available for backward compatibility, but is deprecated:
+
+1. **First boot with `TONUS_API_TOKEN` set + empty user-table** auto-creates an `_admin` account. The random password is printed once to the container stdout — `docker logs tonus | grep -A8 'FIRST-RUN ADMIN'`. Save it, log in via the UI, change the password.
+2. Configure your Navidrome plugin to use a **PAT** instead of `TONUS_API_TOKEN` (Settings → API-Tokens). Restart the plugin and verify queue jobs come through with the user-tagged origin.
+3. Remove `TONUS_API_TOKEN` from `backend/.env` and restart Tonus. The legacy path is now closed; all calls require JWT or PAT.
+
+Rollback: revoke the PAT, set `TONUS_API_TOKEN` back, restart. The static path resumes.
