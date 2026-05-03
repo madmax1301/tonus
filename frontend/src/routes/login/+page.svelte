@@ -39,6 +39,7 @@
   // After-Setup-QR state
   let totpSecret = $state<string | null>(null);
   let totpUri = $state<string | null>(null);
+  let totpConfirmCode = $state('');
 
   let busy = $state(false);
   let errorMsg = $state<string | null>(null);
@@ -74,6 +75,32 @@
       if (err.status === 429) return $t('auth.login.error_rate');
     }
     return $t('auth.login.error_generic');
+  }
+
+  async function confirmTotp() {
+    if (!totpSecret) {
+      await goto(`${base}/`);
+      return;
+    }
+    if (!/^\d{6}$/.test(totpConfirmCode.replace(/\s/g, ''))) {
+      errorMsg = $t('auth.login.error_totp');
+      return;
+    }
+    busy = true;
+    errorMsg = null;
+    try {
+      await authApi.totpConfirm(totpSecret, totpConfirmCode.replace(/\s/g, ''));
+      // Erfolgreich verifiziert → Continue zur Library
+      currentUser.update((u) => (u ? { ...u, totp_enabled: true } : u));
+      await goto(`${base}/`);
+    } catch (err) {
+      errorMsg =
+        err instanceof ApiError && err.status === 401
+          ? $t('auth.login.error_totp')
+          : $t('auth.login.error_generic');
+    } finally {
+      busy = false;
+    }
   }
 
   async function submit() {
@@ -209,27 +236,79 @@
           </code>
         </div>
       {/if}
-      <button
-        type="button"
-        onclick={() => goto(`${base}/`)}
-        class="mt-2 inline-flex items-center gap-1.5 transition-transform"
-        style="
-          padding: 12px 24px;
-          border-radius: 999px;
-          font-size: 12px;
-          font-weight: 600;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-          background: {accent};
-          color: #0a0a0c;
-          border: none;
-          box-shadow: 0 8px 24px {accent}40;
-          cursor: pointer;
-        "
+      <!-- Verify-Code-Eingabe: User muss den ersten Code aus seiner App
+           eingeben, sonst wird TOTP nicht scharf geschaltet. -->
+      <form
+        onsubmit={(e) => {
+          e.preventDefault();
+          confirmTotp();
+        }}
+        class="w-full"
+        style="display: flex; flex-direction: column; gap: 12px;"
       >
-        <ShieldCheck size={13} strokeWidth={2} />
-        {$t('auth.totp_qr.continue')}
-      </button>
+        <input
+          type="text"
+          bind:value={totpConfirmCode}
+          inputmode="numeric"
+          pattern="[0-9]*"
+          maxlength="6"
+          autocomplete="one-time-code"
+          required
+          placeholder="000 000"
+          class="w-full outline-none"
+          style="
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--color-border-soft);
+            border-radius: 14px;
+            color: var(--color-fg-primary);
+            font-family: var(--font-mono);
+            font-size: 22px;
+            padding: 14px 16px;
+            letter-spacing: 0.4em;
+            text-align: center;
+          "
+        />
+        {#if errorMsg}
+          <div
+            style="
+              padding: 10px 14px;
+              background: rgba(255, 69, 58, 0.08);
+              border: 1px solid var(--color-status-error);
+              border-radius: 10px;
+              color: var(--color-status-error);
+              font-size: 12px;
+              text-align: left;
+            "
+          >
+            {errorMsg}
+          </div>
+        {/if}
+        <button
+          type="submit"
+          disabled={busy}
+          class="inline-flex items-center justify-center gap-1.5 transition-transform disabled:opacity-50"
+          style="
+            padding: 12px 24px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            background: {accent};
+            color: #0a0a0c;
+            border: none;
+            box-shadow: 0 8px 24px {accent}40;
+            cursor: pointer;
+          "
+        >
+          {#if busy}
+            <Loader2 size={13} class="animate-spin" />
+          {:else}
+            <ShieldCheck size={13} strokeWidth={2} />
+          {/if}
+          {$t('auth.totp_qr.continue')}
+        </button>
+      </form>
     {:else}
       <div
         class="font-semibold uppercase"

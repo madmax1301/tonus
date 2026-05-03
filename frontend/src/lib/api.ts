@@ -4,6 +4,7 @@ import {
   getToken,
   accessToken,
   refreshToken,
+  apiToken,
   setJwtPair,
   logoutLocal,
   challengeAuth
@@ -71,7 +72,15 @@ async function request<T>(path: string, init: RequestInit = {}, _retry = false):
       if (ok) return request<T>(path, init, true);
     }
     if (resp.status === 401 || resp.status === 403) {
-      challengeAuth();
+      // TokenSheet-Challenge nur im Legacy/PAT-Mode triggern (User hat
+      // manuelles Token gesetzt, aber keinen JWT-Login). Im JWT-Mode soll
+      // der Layout-Guard via goto('/login') übernehmen — Login-Form zeigt
+      // dann ggf. das TOTP-Feld an. Während wir bereits auf der Login-
+      // Route sind (kein accessToken, kein apiToken) → KEIN TokenSheet,
+      // sonst öffnet's beim Submit-401 auf der Login-Page selbst.
+      if (get(apiToken) && !get(accessToken)) {
+        challengeAuth();
+      }
     }
     // Erst Text lesen, dann optional als JSON parsen — wenn der erste
     // .json() fehlschlägt (z.B. bei HTML-Traceback in einer FastAPI-500),
@@ -147,6 +156,14 @@ export const authApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, totp_code })
+    }),
+  /** Auth — verifiziert den ersten TOTP-Code beim Setup. Bei Erfolg wird
+   *  das Secret scharf in der DB gespeichert. */
+  totpConfirm: (secret: string, code: string) =>
+    request<{ ok: boolean }>('/api/auth/totp-confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret, code })
     }),
   /** Auth — current user info, oder 401 wenn Session expired. */
   me: () => request<AuthUser>('/api/auth/me'),

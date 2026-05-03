@@ -3263,13 +3263,16 @@ async def auth_setup(req: AuthSetupRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Optional: TOTP gleich beim Setup aktivieren — Frontend zeigt
-    # in einem Folge-Step den QR-Code aus dem zurückgegebenen totp_uri.
+    # Optional: TOTP-Setup vorbereiten — aber NICHT direkt scharf machen!
+    # Frontend zeigt QR + Code-Input → POST /api/auth/totp-confirm verifies
+    # den ersten Code BEVOR das Secret in die DB landet. Sonst kann ein
+    # User mit kaputtem QR-Scan sich selbst aussperren (TOTP aktiv, aber
+    # er hat keinen funktionierenden Authenticator).
     totp_uri: Optional[str] = None
     totp_secret: Optional[str] = None
     if req.enable_totp:
         totp_secret = au.generate_totp_secret()
-        au.set_totp_secret(user["id"], totp_secret)
+        # NICHT au.set_totp_secret hier — erst nach Verify-Step.
         totp_uri = au.totp_provisioning_uri(totp_secret, req.username)
 
     # Direkt-Login nach Setup — User soll nicht extra einloggen müssen.
@@ -3380,6 +3383,31 @@ async def auth_logout(req: AuthLogoutRequest, request: Request,
 
     n = au.revoke_all_user_refresh_tokens(user_id)
     return {"ok": True, "revoked": n}
+
+
+class TotpConfirmRequest(BaseModel):
+    secret: str
+    code: str
+
+
+@app.post("/api/auth/totp-confirm")
+async def auth_totp_confirm(req: TotpConfirmRequest, request: Request,
+                             _: None = Depends(require_token)):
+    """Verifiziert den ersten TOTP-Code BEVOR das Secret scharf in der DB
+    landet. So kann sich ein User mit kaputtem Authenticator-Setup nicht
+    aussperren — TOTP wird nur aktiviert wenn er nachweisen kann dass
+    seine App den Code korrekt generiert."""
+    from utils import auth_users as au
+    user = request.state.user
+    user_id = int(user.get("id", 0))
+    if user_id <= 0:
+        raise HTTPException(status_code=403, detail="TOTP-Confirm nur für eingeloggte User")
+
+    if not au.verify_totp_code(req.secret, req.code):
+        raise HTTPException(status_code=401, detail="TOTP-Code falsch oder abgelaufen")
+
+    au.set_totp_secret(user_id, req.secret)
+    return {"ok": True}
 
 
 @app.get("/api/auth/me")
