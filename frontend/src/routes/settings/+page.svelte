@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { apiToken } from '$lib/auth';
   import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
   import {
     providersApi,
@@ -18,7 +17,6 @@
   import { t, lang, type Lang } from '$lib/i18n';
   import { showConfirm } from '$lib/confirm';
   import {
-    KeyRound,
     Server,
     Library,
     Trash2,
@@ -29,18 +27,8 @@
     ShieldCheck
   } from 'lucide-svelte';
 
-  type Section = 'auth' | 'defaults' | 'backend' | 'local' | 'language' | 'security';
-  let section = $state<Section>('auth');
-
-  // Token
-  let tokenValue = $state($apiToken);
-  let tokenSaved = $state(false);
-
-  function saveToken() {
-    apiToken.set(tokenValue.trim());
-    tokenSaved = true;
-    setTimeout(() => (tokenSaved = false), 1500);
-  }
+  type Section = 'defaults' | 'backend' | 'local' | 'language' | 'security';
+  let section = $state<Section>('defaults');
 
   // Backend-Info (read-only)
   let providers = $state<MetadataProvidersResponse | null>(null);
@@ -263,7 +251,6 @@
     style="gap: 24px; font-size: 13px; margin-bottom: 24px; border-bottom: 1px solid var(--color-border-soft); padding-bottom: 14px; flex-wrap: wrap;"
   >
     {#each [
-      { id: 'auth' as Section, key: 'settings.section.auth' as const, icon: KeyRound },
       { id: 'defaults' as Section, key: 'settings.section.defaults' as const, icon: Sliders },
       { id: 'backend' as Section, key: 'settings.section.backend' as const, icon: Server },
       { id: 'local' as Section, key: 'settings.section.local' as const, icon: Database },
@@ -281,71 +268,6 @@
       </button>
     {/each}
   </div>
-
-  <!-- ─── Section: Auth ───────────────────────────────────── -->
-  {#if section === 'auth'}
-    <div
-      class="tonus-fadein"
-      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
-    >
-      <div
-        class="font-semibold uppercase"
-        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
-      >
-        {$t('settings.auth.eyebrow')}
-      </div>
-      <div
-        style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 18px;"
-      >
-        {$t('settings.auth.title')}
-      </div>
-      <p
-        style="font-size: 13px; color: var(--color-fg-secondary); margin-bottom: 18px; line-height: 1.55; max-width: 560px;"
-      >
-        {$t('settings.auth.description.prefix')}
-        <code style="font-family: var(--font-mono); color: {accent}; font-size: 12px;"
-          >{$t('settings.auth.description.env_var')}</code
-        >
-        {$t('settings.auth.description.middle')}
-        <code
-          style="font-family: var(--font-mono); color: var(--color-fg-tertiary); font-size: 12px;"
-          >{$t('settings.auth.description.env_file')}</code
-        >{$t('settings.auth.description.suffix')}
-      </p>
-
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          saveToken();
-        }}
-        class="flex items-center gap-3"
-      >
-        <input
-          id="tonus-token-input"
-          name="tonus-api-token"
-          type="password"
-          bind:value={tokenValue}
-          spellcheck="false"
-          autocomplete="current-password"
-          class="flex-1 outline-none"
-          style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 12px 16px; letter-spacing: 0.04em;"
-          placeholder="ttkn_•••••••••••••••••••••••••"
-        />
-        <button
-          type="submit"
-          class="inline-flex items-center gap-1.5 transition-opacity"
-          style="background: {accent}; color: #1a1410; padding: 12px 24px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);"
-        >
-          {#if tokenSaved}
-            <Check size={13} strokeWidth={2} />
-            {$t('common.saved')}
-          {:else}
-            {$t('common.save')}
-          {/if}
-        </button>
-      </form>
-    </div>
-  {/if}
 
   <!-- ─── Section: Defaults ───────────────────────────────── -->
   {#if section === 'defaults'}

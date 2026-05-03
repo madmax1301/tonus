@@ -667,7 +667,6 @@
       eyebrow={$t('empty.queue.eyebrow')}
       title={$t('empty.queue.title')}
       body={$t('empty.queue.body')}
-      tip={$t('empty.queue.tip')}
     >
       {#snippet actions()}
         <a

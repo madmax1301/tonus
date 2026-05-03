@@ -866,7 +866,6 @@
       eyebrow={$t('empty.library.eyebrow')}
       title={$t('empty.library.title')}
       body={$t('empty.library.body')}
-      tip={$t('empty.library.tip')}
     >
       {#snippet actions()}
         <button

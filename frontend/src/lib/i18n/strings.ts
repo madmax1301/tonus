@@ -73,16 +73,12 @@ export const strings = {
     'empty.library.cta_search': 'Track suchen',
     'empty.library.cta_csv': 'CSV importieren',
     'empty.library.cta_navidrome': 'Navidrome öffnen',
-    'empty.library.tip':
-      'Kein Hintergrund-Sync, keine Quota — Tonus läuft nur, wenn du etwas suchst.',
     'empty.queue.eyebrow': 'Warteschlange leer',
     'empty.queue.title': 'Nichts läuft.\nNichts wartet.',
     'empty.queue.body':
       'Pack einen Track in die Queue — Tonus matcht die beste verfügbare Quelle und legt ihn in deine Bibliothek.',
     'empty.queue.cta_search': 'Track suchen',
     'empty.queue.cta_library': 'Zur Bibliothek',
-    'empty.queue.tip':
-      'Du erkennst aktive Jobs am Queue-Vinyl unten rechts — die Zahl zählt nur live + queued + Fehler.',
 
     // ── Album-Detail ────────────────────────────────────
     'album.back': 'Zurück',
@@ -187,7 +183,6 @@ export const strings = {
     'settings.description.env': 'backend/.env',
     'settings.description.suffix': 'und ist read-only sichtbar.',
 
-    'settings.section.auth': 'Authentifizierung',
     'settings.section.defaults': 'Standard-Verhalten',
     'settings.section.backend': 'Backend-Info',
     'settings.section.local': 'Lokale Daten',
@@ -226,16 +221,6 @@ export const strings = {
     'settings.security.setup.error_code': 'Code falsch oder abgelaufen — neu versuchen',
     'settings.security.setup.error_generic': 'Setup fehlgeschlagen — Backend nicht erreichbar?',
     'settings.security.setup.success': 'TOTP aktiv',
-
-    // Auth section
-    'settings.auth.eyebrow': 'API-Token',
-    'settings.auth.title': 'Browser ↔ Backend',
-    'settings.auth.description.prefix': 'Muss exakt mit',
-    'settings.auth.description.env_var': 'TONUS_API_TOKEN',
-    'settings.auth.description.middle': 'in',
-    'settings.auth.description.env_file': 'backend/.env',
-    'settings.auth.description.suffix':
-      'übereinstimmen. Bleibt nur in deinem Browser, wird nicht ans Backend zurückgespiegelt.',
 
     // Defaults section
     'settings.defaults.provider.eyebrow': 'Standard-Provider',
@@ -388,15 +373,12 @@ export const strings = {
     'empty.library.cta_search': 'Search tracks',
     'empty.library.cta_csv': 'Import CSV',
     'empty.library.cta_navidrome': 'Open Navidrome',
-    'empty.library.tip': 'No background sync, no quota — Tonus only runs when you ask it to.',
     'empty.queue.eyebrow': 'Queue is empty',
     'empty.queue.title': 'Nothing running.\nNothing waiting.',
     'empty.queue.body':
       'Drop a track into the queue — Tonus picks the best source available and lands it in your library.',
     'empty.queue.cta_search': 'Search tracks',
     'empty.queue.cta_library': 'Open library',
-    'empty.queue.tip':
-      'Active jobs show up on the queue vinyl bottom-right — the counter shows live + queued + errored only.',
 
     // ── Album-Detail ────────────────────────────────────
     'album.back': 'Back',
@@ -502,7 +484,6 @@ export const strings = {
     'settings.description.env': 'backend/.env',
     'settings.description.suffix': 'and is read-only here.',
 
-    'settings.section.auth': 'Authentication',
     'settings.section.defaults': 'Defaults',
     'settings.section.backend': 'Backend info',
     'settings.section.local': 'Local data',
@@ -541,16 +522,6 @@ export const strings = {
     'settings.security.setup.error_code': 'Code wrong or expired — try again',
     'settings.security.setup.error_generic': 'Setup failed — backend not reachable?',
     'settings.security.setup.success': 'TOTP active',
-
-    // Auth section
-    'settings.auth.eyebrow': 'API token',
-    'settings.auth.title': 'Browser ↔ Backend',
-    'settings.auth.description.prefix': 'Must match exactly',
-    'settings.auth.description.env_var': 'TONUS_API_TOKEN',
-    'settings.auth.description.middle': 'in',
-    'settings.auth.description.env_file': 'backend/.env',
-    'settings.auth.description.suffix':
-      '. Stays in your browser only, is never sent back to the backend.',
 
     // Defaults section
     'settings.defaults.provider.eyebrow': 'Default provider',
