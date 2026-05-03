@@ -1194,6 +1194,19 @@ def reverse_download_and_process(
             },
         )
 
+        # Idempotenz-Check (siehe url_download_and_process): wenn die
+        # Ziel-Datei schon existiert, gleich auf "completed" — kein
+        # Re-Download, keine "(1)/(2)"-Counter-Files mehr.
+        if physical_track_file_exists(track_info, location, config.OUTPUT_FORMAT, navidrome_library_path):
+            upsert_job(
+                job_id,
+                status="completed",
+                message="Track is already in your library",
+                stage="completed",
+                progress=100,
+            )
+            return
+
         # Determine download path
         temp_dir = os.path.join(config.DOWNLOAD_DIR, "temp")
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -2243,6 +2256,20 @@ def url_download_and_process(
                 "track": slim_track,
             },
         )
+
+        # Idempotenz-Check: User submittet dieselbe URL nochmal — vorher
+        # legte get_target_path bei jedem Run eine "(1)", "(2)"-Variante an.
+        # Jetzt: wenn die exakte Ziel-Datei (Title+Artist+Album) schon
+        # existiert, abbrechen mit "completed/already present".
+        if physical_track_file_exists(track_info, location, output_format, navidrome_library_path):
+            upsert_job(
+                job_id,
+                status="completed",
+                message="Track is already in your library",
+                stage="completed",
+                progress=100,
+            )
+            return
 
         temp_dir = os.path.join(config.DOWNLOAD_DIR, "temp")
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
