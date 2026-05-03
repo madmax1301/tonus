@@ -321,19 +321,41 @@ class JobWorker(threading.Thread):
         # ---- Phase 2: Parallele Suche -------------------------------------
         cache: Dict[Tuple[str, str], Optional[Dict[str, Any]]] = {}
 
+        def _is_transient(exc: Exception) -> bool:
+            """Klassifiziert Provider-Fehler in transient (retry-würdig)
+            vs. permanent (Track existiert wirklich nicht).
+
+            Transient → 429, alle 5xx, ConnectionError, Timeout, ReadTimeout.
+            Permanent → 4xx außer 429 (typisch 400/404 für ungültige Query),
+            JSON-Decode-Errors, oder None-Result bei 200.
+
+            Vorher hat der Code bei jeder HTTPError != 429 sofort 'unmatched'
+            geschrieben — das hat tausende valide Tracks bei Bad-Gateway-
+            Bursts oder VPN-Reconnect-Hicksern silent verloren.
+            """
+            if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+                return True
+            if isinstance(exc, requests.HTTPError):
+                status = getattr(exc.response, "status_code", None)
+                return status == 429 or (status is not None and 500 <= status < 600)
+            return False
+
         def _do_search(
             key: Tuple[str, str], lane: str = "default"
         ) -> Tuple[Tuple[str, str], Optional[Dict[str, Any]], str, bool]:
             """Sucht einen einzelnen Track.
 
-            Strategie bei 429:
+            Strategie bei transient errors:
             - Dual-Lane (lane in {a,b}): einmalig auf die andere Lane retried
               (Failover). was_failover=True dokumentiert den Lane-Wechsel.
-            - Single-Lane (lane == "default"): es gibt keine Alternativ-Lane,
-              also exponential-backoff in-place (siehe _CSV_429_RETRY_DELAYS).
-              Damit gibt's zumindest 2 weitere Chancen, statt sofort
-              "unmatched" zu schreiben — das war der Hauptgrund für die
-              katastrophalen Match-Raten ohne VPN-Splitting.
+              Andere Lane hat eigene Source-IP, sitzt nicht im selben
+              Rate-Limit-Bucket — also kein Backoff nötig.
+            - Single-Lane (lane == "default"): keine Alternativ-Lane, also
+              exponential-backoff in-place via _CSV_429_RETRY_DELAYS.
+
+            Permanent-Fehler (4xx außer 429, malformed response, leeres
+            results-Array) → sofort als unmatched. Nur dann ist's wirklich
+            ein "Track existiert nicht"-Signal.
 
             Returnt (key, result, lane_used, was_failover).
             """
@@ -346,30 +368,27 @@ class JobWorker(threading.Thread):
 
             try:
                 return key, _attempt(lane), lane, False
-            except requests.HTTPError as e:
-                status = getattr(e.response, "status_code", None)
-                if status != 429:
+            except Exception as e:
+                if not _is_transient(e):
+                    # Permanent — z.B. 400/404 bei kaputter Query, oder
+                    # JSON-Decode-Fehler im Response. Kein Sinn zu retryen.
                     return key, None, lane, False
-                # 429 → Failover-Strategie je nach Setup
+                # Transient → Failover-Strategie je nach Setup
                 if lane in _CSV_LANES:
                     other = _CSV_LANES[(_CSV_LANES.index(lane) + 1) % len(_CSV_LANES)]
                     try:
                         return key, _attempt(other), other, True
                     except Exception:
                         return key, None, lane, False
-                # Single-Lane (default): exponential backoff in-place.
+                # Single-Lane: exponential backoff in-place.
                 for delay in _CSV_429_RETRY_DELAYS:
                     time.sleep(delay)
                     try:
                         return key, _attempt(lane), lane, False
-                    except requests.HTTPError as e2:
-                        if getattr(e2.response, "status_code", None) != 429:
+                    except Exception as e2:
+                        if not _is_transient(e2):
                             return key, None, lane, False
                         continue
-                    except Exception:
-                        return key, None, lane, False
-                return key, None, lane, False
-            except Exception:
                 return key, None, lane, False
 
         completed_unique = 0
