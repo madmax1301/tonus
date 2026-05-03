@@ -3331,10 +3331,23 @@ async def auth_setup(req: AuthSetupRequest):
     # er hat keinen funktionierenden Authenticator).
     totp_uri: Optional[str] = None
     totp_secret: Optional[str] = None
+    totp_qr_data_url: Optional[str] = None
     if req.enable_totp:
+        import qrcode as _qrcode
+        import base64 as _b64
+        from io import BytesIO as _BytesIO
+
         totp_secret = au.generate_totp_secret()
         # NICHT au.set_totp_secret hier — erst nach Verify-Step.
         totp_uri = au.totp_provisioning_uri(totp_secret, req.username)
+
+        # QR server-side rendern, statt im Frontend an api.qrserver.com zu
+        # senden. Der otpauth-URI enthält das Klartext-Secret — externer
+        # QR-Service würde ihn mitloggen.
+        _img = _qrcode.make(totp_uri)
+        _buf = _BytesIO()
+        _img.save(_buf, format="PNG")
+        totp_qr_data_url = "data:image/png;base64," + _b64.b64encode(_buf.getvalue()).decode("ascii")
 
     # Direkt-Login nach Setup — User soll nicht extra einloggen müssen.
     pair = au.issue_jwt_pair(user["id"], req.username, is_admin=True)
@@ -3345,6 +3358,7 @@ async def auth_setup(req: AuthSetupRequest):
         "tokens": pair,
         "totp_secret": totp_secret,  # nur einmal sichtbar
         "totp_uri": totp_uri,
+        "totp_qr_data_url": totp_qr_data_url,
     }
 
 

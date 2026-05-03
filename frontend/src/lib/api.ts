@@ -138,6 +138,8 @@ export interface AuthLoginResponse {
 export interface AuthSetupResponse extends AuthLoginResponse {
   totp_secret?: string | null;
   totp_uri?: string | null;
+  /** Server-rendered QR-PNG (data-URL). Bevorzugt vor totp_uri durch externen Service. */
+  totp_qr_data_url?: string | null;
 }
 
 export const authApi = {

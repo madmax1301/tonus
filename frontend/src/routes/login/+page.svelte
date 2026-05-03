@@ -36,9 +36,12 @@
   let enableTotp = $state(false);
   let needsTotp = $state(false);
 
-  // After-Setup-QR state
+  // After-Setup-QR state. qr_data_url ist eine server-rendered PNG-data-URL
+  // (siehe /api/auth/setup) — bevorzugt vor totpUri, weil der otpauth-URI
+  // das Klartext-Secret enthält. Server-Render = Secret bleibt im Backend.
   let totpSecret = $state<string | null>(null);
   let totpUri = $state<string | null>(null);
+  let totpQrDataUrl = $state<string | null>(null);
   let totpConfirmCode = $state('');
 
   let busy = $state(false);
@@ -125,6 +128,7 @@
           // Show QR-step before continuing.
           totpSecret = r.totp_secret;
           totpUri = r.totp_uri;
+          totpQrDataUrl = r.totp_qr_data_url ?? null;
           mode = 'totp-qr';
         } else {
           await goto(`${base}/`);
@@ -147,18 +151,12 @@
     }
   }
 
-  // QR-Code-Image: nutzt das öffentliche google-charts-API durch eine
-  // pures Frontend-Crypto-Library wäre besser, aber google-charts ist
-  // simpel und der QR-Inhalt (otpauth://) ist nicht sensitive — der
-  // User SCANNT ihn ja eh ans Authenticator-Tool weiter.
-  // Alternative: backend liefert den QR direkt (qrcode lib ist installiert).
-  // Vorerst eine simple data:image-Lösung wäre besser — wir nutzen den
-  // standard 200x200 QR.
-  const qrImgSrc = $derived(
-    totpUri
-      ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=1&data=${encodeURIComponent(totpUri)}`
-      : null
-  );
+  // QR-Code-Image: bevorzugt server-rendered (qr_data_url aus /api/auth/setup),
+  // weil der otpauth-URI das Klartext-Secret enthält und ein externer
+  // QR-Service ihn mitloggen würde. Falls der Server das Feld noch nicht
+  // liefert (z.B. ältere Backend-Version), gibt's keinen Fallback —
+  // dann eben kein QR, der User tippt das Manual-Secret ab. Sicherheit > Komfort.
+  const qrImgSrc = $derived(totpQrDataUrl);
 </script>
 
 <CinemaBackdrop hue={DEFAULT_HUE} intensity={0.8} />

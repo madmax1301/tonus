@@ -905,10 +905,19 @@ class YouTubeService:
         }
 
         if wants_m4a_passthrough:
+            # Wenn die yt-dlp-Source bereits .m4a ist (Format-Kaskade präferiert
+            # bestaudio[ext=m4a]), würde FFmpegExtractAudio mit preferredcodec=m4a
+            # einen zweiten Destination-Schreib triggern — das ist die Quelle
+            # des doppelten "[download] Destination: ... .m4a"-Logs. nopostoverwrites=True
+            # lässt yt-dlp den Postprocessor-Output skippen, wenn die Datei schon
+            # vorhanden ist (= yt-dlp hat sie gerade selbst gespeichert).
+            # Bei webm/opus-Fallback existiert die .m4a noch NICHT → Postprocessor
+            # läuft regulär und konvertiert mit '-c:a copy' (oder Re-Encode falls
+            # Codec inkompatibel).
             ydl_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'm4a',
-                'nopostoverwrites': False,
+                'nopostoverwrites': True,
             }]
             ydl_opts['postprocessor_args'] = {
                 'ffmpeg': ['-ac', '2', '-c:a', 'copy', '-q:a', '0'],
