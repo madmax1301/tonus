@@ -10,8 +10,13 @@
     type FormatsInfo,
     type HealthResponse
   } from '$lib/api';
-  import GlassCard from '$lib/components/GlassCard.svelte';
-  import { KeyRound, Server, Library, Trash2, Check } from 'lucide-svelte';
+  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
+  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
+  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { KeyRound, Server, Library, Trash2, Check, Sliders, Database } from 'lucide-svelte';
+
+  type Section = 'auth' | 'defaults' | 'backend' | 'local';
+  let section = $state<Section>('auth');
 
   // Token
   let tokenValue = $state($apiToken);
@@ -58,92 +63,267 @@
     setTimeout(() => location.reload(), 800);
   }
 
-  const effectiveProvider = $derived(
-    $defaultProvider || providers?.default || ''
-  );
+  const effectiveProvider = $derived($defaultProvider || providers?.default || '');
+  const accent = $derived(tint(DEFAULT_HUE));
+  const accentSoft = $derived(tint(DEFAULT_HUE, 0.95));
+
+  // Pill-Helper: gibt einen kompletten Style-String zurück, abhängig davon ob
+  // dieser Pill aktiv ist oder nicht. Vereinfacht das per-Pill-Inline-Style-
+  // Geschnipsel das vorher mit verschachtelten Ternaries gebaut wurde.
+  function pillStyle(active: boolean): string {
+    if (active) {
+      return `background: ${accent}; color: #1a1410; border: 1px solid transparent; box-shadow: 0 4px 12px rgba(200, 169, 106, 0.25);`;
+    }
+    return 'background: rgba(255, 255, 255, 0.03); color: var(--color-fg-secondary); border: 1px solid var(--color-border-soft);';
+  }
 </script>
 
-<section class="space-y-8">
-  <header class="space-y-2">
-    <h1 class="text-4xl font-semibold tracking-tight" style="color: var(--color-fg-primary);">
-      Einstellungen
-    </h1>
-    <p class="text-sm" style="color: var(--color-fg-secondary);">
-      Lokale Defaults für deinen Browser, Backend-Konfiguration zur Übersicht.
-    </p>
-  </header>
+<CinemaBackdrop hue={DEFAULT_HUE} />
 
-  <!-- ─── Authentifizierung ─── -->
-  <GlassCard padding="md">
-    <div class="space-y-4">
-      <div class="flex items-center gap-2">
-        <KeyRound size={16} strokeWidth={1.5} style="color: var(--color-accent);" />
-        <h2 class="text-[15px] font-medium" style="color: var(--color-fg-primary);">
-          Authentifizierung
-        </h2>
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 40px 36px 50px;">
+  <!-- ─── Editorial Hero ───────────────────────────────────── -->
+  <div
+    class="grid items-center"
+    style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: 48px;"
+  >
+    <div>
+      <div
+        class="font-semibold uppercase"
+        style="
+          font-size: 11px;
+          letter-spacing: 0.24em;
+          color: {accent};
+          margin-bottom: 14px;
+        "
+      >
+        Setup
       </div>
+      <h1
+        class="font-semibold m-0"
+        style="
+          font-family: var(--font-display);
+          font-size: 48px;
+          font-weight: 600;
+          line-height: 0.95;
+          letter-spacing: -0.035em;
+        "
+      >
+        Deine<br />
+        <em style="color: {accent}; font-weight: 400; font-style: italic;">Konfiguration</em>.
+      </h1>
+      <p
+        style="
+          font-size: 14px;
+          color: var(--color-fg-secondary);
+          max-width: 440px;
+          margin-top: 18px;
+          line-height: 1.6;
+        "
+      >
+        Browser-Defaults und Backend-Übersicht. Lokale Einstellungen leben im
+        localStorage, Backend-Konfiguration kommt aus <code
+          style="font-family: var(--font-mono); color: var(--color-fg-secondary); font-size: 12.5px;"
+          >backend/.env</code
+        > und ist read-only sichtbar.
+      </p>
+    </div>
+    <div class="flex justify-center">
+      <VinylWithCover
+        src={null}
+        alt=""
+        artist="Setup"
+        year={effectiveProvider || ''}
+        size={240}
+        spinning={false}
+      />
+    </div>
+  </div>
+
+  <!-- ─── Section-Strip ─────────────────────────────────────── -->
+  <div
+    class="flex items-center"
+    style="
+      gap: 24px;
+      font-size: 13px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--color-border-soft);
+      padding-bottom: 14px;
+      flex-wrap: wrap;
+    "
+  >
+    {#each [
+      { id: 'auth' as Section, label: 'Authentifizierung', icon: KeyRound },
+      { id: 'defaults' as Section, label: 'Standard-Verhalten', icon: Sliders },
+      { id: 'backend' as Section, label: 'Backend-Info', icon: Server },
+      { id: 'local' as Section, label: 'Lokale Daten', icon: Database }
+    ] as s}
+      {@const active = section === s.id}
+      <button
+        onclick={() => (section = s.id)}
+        class="relative inline-flex items-center gap-1.5 transition-colors"
+        style="
+          color: {active ? 'var(--color-fg-primary)' : 'var(--color-fg-secondary)'};
+          font-weight: {active ? 500 : 400};
+          padding-bottom: 14px;
+          margin-bottom: -14px;
+          border-bottom: 2px solid {active ? accent : 'transparent'};
+        "
+      >
+        <svelte:component this={s.icon} size={13} strokeWidth={1.5} />
+        {s.label}
+      </button>
+    {/each}
+  </div>
+
+  <!-- ─── Section: Auth ───────────────────────────────────── -->
+  {#if section === 'auth'}
+    <div
+      class="tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.5);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 22px;
+        padding: 32px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      "
+    >
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+      >
+        API-Token
+      </div>
+      <div
+        style="
+          font-family: var(--font-display);
+          font-size: 22px;
+          font-weight: 500;
+          letter-spacing: -0.015em;
+          color: var(--color-fg-primary);
+          margin-bottom: 18px;
+        "
+      >
+        Browser ↔ Backend
+      </div>
+      <p
+        style="
+          font-size: 13px;
+          color: var(--color-fg-secondary);
+          margin-bottom: 18px;
+          line-height: 1.55;
+          max-width: 560px;
+        "
+      >
+        Muss exakt mit
+        <code style="font-family: var(--font-mono); color: {accent}; font-size: 12px;"
+          >TONUS_API_TOKEN</code
+        >
+        in <code style="font-family: var(--font-mono); color: var(--color-fg-tertiary); font-size: 12px;">backend/.env</code
+        > übereinstimmen. Bleibt nur in deinem Browser, wird nicht ans Backend zurückgespiegelt.
+      </p>
+
       <form
         onsubmit={(e) => {
           e.preventDefault();
           saveToken();
         }}
-        class="space-y-2"
+        class="flex items-center gap-3"
       >
-        <label for="tonus-token-input" class="text-[12px]" style="color: var(--color-fg-secondary);">
-          API-Token (matcht <code style="color: var(--color-accent);">TONUS_API_TOKEN</code> in
-          backend/.env)
-        </label>
-        <div class="flex items-center gap-2">
-          <input
-            id="tonus-token-input"
-            name="tonus-api-token"
-            type="password"
-            bind:value={tokenValue}
-            spellcheck="false"
-            autocomplete="current-password"
-            class="flex-1 px-3 py-2 rounded-md text-sm font-mono outline-none focus:border-[var(--color-accent)]"
-            style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft); color: var(--color-fg-primary);"
-            placeholder="ttkn_•••••••••••••••••••••••••"
-          />
-          <button
-            type="submit"
-            class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-[13px] font-medium transition-opacity"
-            style="background: var(--color-accent); color: #1a1410;"
-          >
-            {#if tokenSaved}
-              <Check size={13} strokeWidth={2} />
-              gespeichert
-            {:else}
-              speichern
-            {/if}
-          </button>
-        </div>
+        <input
+          id="tonus-token-input"
+          name="tonus-api-token"
+          type="password"
+          bind:value={tokenValue}
+          spellcheck="false"
+          autocomplete="current-password"
+          class="flex-1 outline-none"
+          style="
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--color-border-soft);
+            border-radius: 14px;
+            color: var(--color-fg-primary);
+            font-family: var(--font-mono);
+            font-size: 13px;
+            padding: 12px 16px;
+            letter-spacing: 0.04em;
+          "
+          placeholder="ttkn_•••••••••••••••••••••••••"
+        />
+        <button
+          type="submit"
+          class="inline-flex items-center gap-1.5 transition-opacity"
+          style="
+            background: {accent};
+            color: #1a1410;
+            padding: 12px 24px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+          "
+        >
+          {#if tokenSaved}
+            <Check size={13} strokeWidth={2} />
+            gespeichert
+          {:else}
+            speichern
+          {/if}
+        </button>
       </form>
     </div>
-  </GlassCard>
+  {/if}
 
-  <!-- ─── Defaults ─── -->
-  <GlassCard padding="md">
-    <div class="space-y-5">
-      <h2 class="text-[15px] font-medium" style="color: var(--color-fg-primary);">
-        Standard-Verhalten
-      </h2>
-
-      <div class="space-y-2">
-        <span class="text-[12px]" style="color: var(--color-fg-secondary);">
-          Standard-Provider für Suche &amp; Reverse-Lookup
-        </span>
-        <div class="flex items-center gap-1 flex-wrap">
+  <!-- ─── Section: Defaults ───────────────────────────────── -->
+  {#if section === 'defaults'}
+    <div class="tonus-fadein space-y-5">
+      <!-- Provider -->
+      <div
+        style="
+          background: rgba(20, 20, 24, 0.5);
+          backdrop-filter: blur(40px) saturate(1.2);
+          -webkit-backdrop-filter: blur(40px) saturate(1.2);
+          border: 1px solid var(--color-border-soft);
+          border-radius: 22px;
+          padding: 28px;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        "
+      >
+        <div class="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+          <div>
+            <div
+              class="font-semibold uppercase"
+              style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
+            >
+              Standard-Provider
+            </div>
+            <div
+              class="mt-1"
+              style="
+                font-family: var(--font-display);
+                font-size: 18px;
+                font-weight: 500;
+                color: var(--color-fg-primary);
+              "
+            >
+              Suche & Reverse-Lookup
+            </div>
+          </div>
+          <div
+            class="text-[11px] tabular-nums"
+            style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
+          >
+            aktiv: <span style="color: {accent};">{effectiveProvider || '—'}</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5 flex-wrap">
           <button
             onclick={() => defaultProvider.set('')}
-            class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
-            style="background: {!$defaultProvider
-              ? 'var(--color-accent)'
-              : 'transparent'}; color: {!$defaultProvider
-              ? '#1a1410'
-              : 'var(--color-fg-secondary)'}; border: 1px solid {!$defaultProvider
-              ? 'transparent'
-              : 'var(--color-border-soft)'};"
+            class="px-3 py-1.5 rounded-full text-[12px] transition-all"
+            style={pillStyle(!$defaultProvider)}
           >
             Backend-Default {providers?.default ? `(${providers.default})` : ''}
           </button>
@@ -151,41 +331,51 @@
             {#each providers.providers.filter((p) => p.configured) as p}
               <button
                 onclick={() => defaultProvider.set(p.id)}
-                class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
-                style="background: {$defaultProvider === p.id
-                  ? 'var(--color-accent)'
-                  : 'transparent'}; color: {$defaultProvider === p.id
-                  ? '#1a1410'
-                  : 'var(--color-fg-secondary)'}; border: 1px solid {$defaultProvider === p.id
-                  ? 'transparent'
-                  : 'var(--color-border-soft)'};"
+                class="px-3 py-1.5 rounded-full text-[12px] transition-all"
+                style={pillStyle($defaultProvider === p.id)}
               >
                 {p.label}
               </button>
             {/each}
           {/if}
         </div>
-        <p class="text-[11px]" style="color: var(--color-fg-tertiary);">
-          Aktiv: <span style="color: var(--color-fg-secondary);">{effectiveProvider}</span>
-        </p>
       </div>
 
-      <div class="space-y-2">
-        <span class="text-[12px]" style="color: var(--color-fg-secondary);">
-          Standard-Ziel für Downloads
-        </span>
-        <div class="flex items-center gap-1">
+      <!-- Location -->
+      <div
+        style="
+          background: rgba(20, 20, 24, 0.5);
+          backdrop-filter: blur(40px) saturate(1.2);
+          -webkit-backdrop-filter: blur(40px) saturate(1.2);
+          border: 1px solid var(--color-border-soft);
+          border-radius: 22px;
+          padding: 28px;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        "
+      >
+        <div
+          class="font-semibold uppercase"
+          style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
+        >
+          Download-Ziel
+        </div>
+        <div
+          class="mt-1 mb-3"
+          style="
+            font-family: var(--font-display);
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--color-fg-primary);
+          "
+        >
+          Wo Tracks landen
+        </div>
+        <div class="flex items-center gap-1.5 flex-wrap">
           {#each [{ id: 'navidrome' as const, label: 'Navidrome (in Bibliothek)' }, { id: 'local' as const, label: 'Local (downloads/)' }] as opt}
             <button
               onclick={() => defaultLocation.set(opt.id)}
-              class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
-              style="background: {$defaultLocation === opt.id
-                ? 'var(--color-accent)'
-                : 'transparent'}; color: {$defaultLocation === opt.id
-                ? '#1a1410'
-                : 'var(--color-fg-secondary)'}; border: 1px solid {$defaultLocation === opt.id
-                ? 'transparent'
-                : 'var(--color-border-soft)'};"
+              class="px-3 py-1.5 rounded-full text-[12px] transition-all"
+              style={pillStyle($defaultLocation === opt.id)}
             >
               {opt.label}
             </button>
@@ -193,21 +383,47 @@
         </div>
       </div>
 
-      <div class="space-y-2">
-        <span class="text-[12px]" style="color: var(--color-fg-secondary);">
-          Audio-Format
-        </span>
-        <div class="flex items-center gap-1 flex-wrap">
+      <!-- Format & Quality -->
+      <div
+        style="
+          background: rgba(20, 20, 24, 0.5);
+          backdrop-filter: blur(40px) saturate(1.2);
+          -webkit-backdrop-filter: blur(40px) saturate(1.2);
+          border: 1px solid var(--color-border-soft);
+          border-radius: 22px;
+          padding: 28px;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        "
+      >
+        <div
+          class="font-semibold uppercase"
+          style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
+        >
+          Audio-Codec
+        </div>
+        <div
+          class="mt-1 mb-3"
+          style="
+            font-family: var(--font-display);
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--color-fg-primary);
+          "
+        >
+          Format & Bitrate
+        </div>
+
+        <div
+          class="text-[11px] uppercase mb-2"
+          style="color: var(--color-fg-tertiary); letter-spacing: 0.12em;"
+        >
+          Format
+        </div>
+        <div class="flex items-center gap-1.5 flex-wrap mb-4">
           <button
             onclick={() => defaultFormat.set('')}
-            class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
-            style="background: {!$defaultFormat
-              ? 'var(--color-accent)'
-              : 'transparent'}; color: {!$defaultFormat
-              ? '#1a1410'
-              : 'var(--color-fg-secondary)'}; border: 1px solid {!$defaultFormat
-              ? 'transparent'
-              : 'var(--color-border-soft)'};"
+            class="px-3 py-1.5 rounded-full text-[12px] transition-all"
+            style={pillStyle(!$defaultFormat)}
           >
             Backend-Default {formats?.default_format ? `(${formats.default_format})` : ''}
           </button>
@@ -216,37 +432,26 @@
               <button
                 onclick={() => defaultFormat.set(f.value)}
                 title={f.description ?? ''}
-                class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
-                style="background: {$defaultFormat === f.value
-                  ? 'var(--color-accent)'
-                  : 'transparent'}; color: {$defaultFormat === f.value
-                  ? '#1a1410'
-                  : 'var(--color-fg-secondary)'}; border: 1px solid {$defaultFormat === f.value
-                  ? 'transparent'
-                  : 'var(--color-border-soft)'};"
+                class="px-3 py-1.5 rounded-full text-[12px] transition-all"
+                style={pillStyle($defaultFormat === f.value)}
               >
                 {f.label}
               </button>
             {/each}
           {/if}
         </div>
-      </div>
 
-      <div class="space-y-2">
-        <span class="text-[12px]" style="color: var(--color-fg-secondary);">
-          Audio-Qualität / Bitrate
-        </span>
-        <div class="flex items-center gap-1 flex-wrap">
+        <div
+          class="text-[11px] uppercase mb-2"
+          style="color: var(--color-fg-tertiary); letter-spacing: 0.12em;"
+        >
+          Bitrate
+        </div>
+        <div class="flex items-center gap-1.5 flex-wrap">
           <button
             onclick={() => defaultQuality.set('')}
-            class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
-            style="background: {!$defaultQuality
-              ? 'var(--color-accent)'
-              : 'transparent'}; color: {!$defaultQuality
-              ? '#1a1410'
-              : 'var(--color-fg-secondary)'}; border: 1px solid {!$defaultQuality
-              ? 'transparent'
-              : 'var(--color-border-soft)'};"
+            class="px-3 py-1.5 rounded-full text-[12px] transition-all"
+            style={pillStyle(!$defaultQuality)}
           >
             Backend-Default {formats?.default_quality ? `(${formats.default_quality})` : ''}
           </button>
@@ -255,71 +460,109 @@
               <button
                 onclick={() => defaultQuality.set(q.value)}
                 title={q.description ?? ''}
-                class="px-3 py-1.5 rounded-full text-[12px] transition-colors"
-                style="background: {$defaultQuality === q.value
-                  ? 'var(--color-accent)'
-                  : 'transparent'}; color: {$defaultQuality === q.value
-                  ? '#1a1410'
-                  : 'var(--color-fg-secondary)'}; border: 1px solid {$defaultQuality === q.value
-                  ? 'transparent'
-                  : 'var(--color-border-soft)'};"
+                class="px-3 py-1.5 rounded-full text-[12px] transition-all"
+                style={pillStyle($defaultQuality === q.value)}
               >
                 {q.label}
               </button>
             {/each}
           {/if}
         </div>
-        <p class="text-[11px]" style="color: var(--color-fg-tertiary);">
-          FLAC ignoriert die Bitrate (lossless). Opus &amp; OGG haben effektiv andere
-          Skalen — der Backend-Wert wird passend gemappt.
+        <p
+          class="mt-3 text-[11px]"
+          style="color: var(--color-fg-tertiary); line-height: 1.55;"
+        >
+          FLAC ignoriert die Bitrate (lossless). Opus & OGG mappen auf andere Skalen — der
+          Backend-Wert wird passend übersetzt.
         </p>
       </div>
     </div>
-  </GlassCard>
+  {/if}
 
-  <!-- ─── Backend-Konfiguration (read-only) ─── -->
-  <GlassCard padding="md">
-    <div class="space-y-4">
-      <div class="flex items-center gap-2">
-        <Server size={16} strokeWidth={1.5} style="color: var(--color-fg-secondary);" />
-        <h2 class="text-[15px] font-medium" style="color: var(--color-fg-primary);">
-          Backend-Konfiguration
-        </h2>
-      </div>
+  <!-- ─── Section: Backend ────────────────────────────────── -->
+  {#if section === 'backend'}
+    <div
+      class="tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.5);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 22px;
+        padding: 32px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      "
+    >
       {#if infoError}
-        <div class="text-sm" style="color: var(--color-status-error);">{infoError}</div>
+        <div class="text-[13px]" style="color: var(--color-status-error);">{infoError}</div>
       {:else}
-        <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-[13px]">
+        <div
+          class="font-semibold uppercase"
+          style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+        >
+          Read-Only · backend/.env
+        </div>
+        <div
+          style="
+            font-family: var(--font-display);
+            font-size: 22px;
+            font-weight: 500;
+            letter-spacing: -0.015em;
+            color: var(--color-fg-primary);
+            margin-bottom: 22px;
+          "
+        >
+          Was das Backend gerade nutzt
+        </div>
+
+        <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5 text-[13px]">
           <div>
-            <dt class="text-[11px] uppercase tracking-widest" style="color: var(--color-fg-tertiary);">
+            <dt
+              class="text-[10.5px] uppercase tracking-widest"
+              style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
+            >
               Default-Provider
             </dt>
-            <dd style="color: var(--color-fg-primary);">{providers?.default ?? '—'}</dd>
+            <dd
+              class="mt-1"
+              style="color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 14px;"
+            >
+              {providers?.default ?? '—'}
+            </dd>
           </div>
           <div>
-            <dt class="text-[11px] uppercase tracking-widest" style="color: var(--color-fg-tertiary);">
+            <dt
+              class="text-[10.5px] uppercase tracking-widest"
+              style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
+            >
               Konfigurierte Provider
             </dt>
-            <dd style="color: var(--color-fg-primary);">
+            <dd class="mt-1" style="color: var(--color-fg-primary);">
               {providers?.providers
                 .filter((p) => p.configured)
                 .map((p) => p.label)
                 .join(', ') ?? '—'}
               {#if providers && providers.providers.some((p) => !p.configured)}
-                <span style="color: var(--color-fg-tertiary);" class="ml-2">
-                  · nicht: {providers.providers
+                <div class="mt-1 text-[11px]" style="color: var(--color-fg-tertiary);">
+                  fehlt: {providers.providers
                     .filter((p) => !p.configured)
                     .map((p) => p.label)
                     .join(', ')}
-                </span>
+                </div>
               {/if}
             </dd>
           </div>
           <div>
-            <dt class="text-[11px] uppercase tracking-widest" style="color: var(--color-fg-tertiary);">
+            <dt
+              class="text-[10.5px] uppercase tracking-widest"
+              style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
+            >
               Default-Format
             </dt>
-            <dd style="color: var(--color-fg-primary);">
+            <dd
+              class="mt-1"
+              style="color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 14px;"
+            >
               {formats?.default_format ?? '—'}
               {#if formats?.default_quality}
                 <span style="color: var(--color-fg-tertiary);"> · {formats.default_quality}</span>
@@ -327,24 +570,27 @@
             </dd>
           </div>
           <div>
-            <dt class="text-[11px] uppercase tracking-widest" style="color: var(--color-fg-tertiary);">
+            <dt
+              class="text-[10.5px] uppercase tracking-widest"
+              style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
+            >
               Verfügbare Formate
             </dt>
-            <dd style="color: var(--color-fg-primary);">
+            <dd class="mt-1" style="color: var(--color-fg-primary);">
               {formats?.formats.map((f) => f.label).join(', ') ?? '—'}
             </dd>
           </div>
           {#if health?.navidrome_path}
             <div class="sm:col-span-2">
               <dt
-                class="text-[11px] uppercase tracking-widest"
-                style="color: var(--color-fg-tertiary);"
+                class="text-[10.5px] uppercase tracking-widest"
+                style="color: var(--color-fg-tertiary); letter-spacing: 0.18em;"
               >
                 Navidrome-Pfad
               </dt>
               <dd
-                style="color: var(--color-fg-primary);"
-                class="font-mono text-[12px]"
+                class="mt-1"
+                style="color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 12.5px; word-break: break-all;"
               >
                 {health.navidrome_path}
               </dd>
@@ -352,62 +598,115 @@
           {/if}
         </dl>
       {/if}
-    </div>
-  </GlassCard>
 
-  <!-- ─── Navidrome-Bibliotheken ─── -->
-  {#if health?.navidrome_libraries && health.navidrome_libraries.length > 0}
-    <GlassCard padding="md">
-      <div class="space-y-3">
-        <div class="flex items-center gap-2">
-          <Library size={16} strokeWidth={1.5} style="color: var(--color-fg-secondary);" />
-          <h2 class="text-[15px] font-medium" style="color: var(--color-fg-primary);">
-            Navidrome-Bibliotheken
-          </h2>
-        </div>
-        <div class="space-y-1.5">
-          {#each health.navidrome_libraries as lib}
+      {#if health?.navidrome_libraries && health.navidrome_libraries.length > 0}
+        <div
+          class="mt-6 pt-6"
+          style="border-top: 1px solid var(--color-border-soft);"
+        >
+          <div class="flex items-center gap-2 mb-3">
+            <Library size={14} strokeWidth={1.5} style="color: {accent};" />
             <div
-              class="flex items-center justify-between text-[13px] px-3 py-2 rounded-md"
-              style="background: var(--color-surface-3); border: 1px solid var(--color-border-soft);"
+              class="font-semibold uppercase"
+              style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
             >
-              <span style="color: var(--color-fg-primary);" class="font-medium"
-                >{lib.label ?? '—'}</span
-              >
-              <span class="font-mono text-[12px]" style="color: var(--color-fg-secondary);">
-                {lib.path}
-              </span>
+              Navidrome-Bibliotheken · {health.navidrome_libraries.length}
             </div>
-          {/each}
+          </div>
+          <div class="space-y-1.5">
+            {#each health.navidrome_libraries as lib}
+              <div
+                class="flex items-center justify-between gap-3 px-4 py-2.5 rounded-md"
+                style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--color-border-soft);"
+              >
+                <span
+                  class="font-medium text-[13px]"
+                  style="color: var(--color-fg-primary);">{lib.label ?? '—'}</span
+                >
+                <span
+                  class="text-[11.5px] truncate"
+                  style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
+                >
+                  {lib.path}
+                </span>
+              </div>
+            {/each}
+          </div>
         </div>
-      </div>
-    </GlassCard>
+      {/if}
+    </div>
   {/if}
 
-  <!-- ─── Cache-Reset ─── -->
-  <GlassCard padding="md">
-    <div class="space-y-3">
-      <h2 class="text-[15px] font-medium" style="color: var(--color-fg-primary);">
-        Lokale Daten
-      </h2>
-      <p class="text-[12px]" style="color: var(--color-fg-secondary);">
-        Alle <code style="color: var(--color-accent);">tonus_*</code>-Schlüssel im Browser-localStorage
-        löschen — Token, Defaults, Queue-Snapshot. Setup setzt sich auf den Backend-Default zurück.
+  <!-- ─── Section: Local ──────────────────────────────────── -->
+  {#if section === 'local'}
+    <div
+      class="tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.5);
+        backdrop-filter: blur(40px) saturate(1.2);
+        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 22px;
+        padding: 32px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      "
+    >
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+      >
+        Browser-Storage
+      </div>
+      <div
+        style="
+          font-family: var(--font-display);
+          font-size: 22px;
+          font-weight: 500;
+          letter-spacing: -0.015em;
+          color: var(--color-fg-primary);
+          margin-bottom: 18px;
+        "
+      >
+        Reset auf Werkseinstellungen
+      </div>
+      <p
+        style="
+          font-size: 13px;
+          color: var(--color-fg-secondary);
+          line-height: 1.55;
+          max-width: 560px;
+          margin-bottom: 22px;
+        "
+      >
+        Löscht alle <code style="font-family: var(--font-mono); color: {accent}; font-size: 12px;"
+          >tonus_*</code
+        >-Schlüssel im Browser-localStorage — Token, Defaults, Queue-Snapshot. Anschließend lädt
+        die Seite neu und alle Defaults springen auf die Backend-Werte zurück.
       </p>
       <button
         onclick={clearLocalCache}
         disabled={cacheCleared}
-        class="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] transition-colors"
-        style="background: transparent; border: 1px solid var(--color-status-error); color: var(--color-status-error);"
+        class="inline-flex items-center gap-2 transition-colors disabled:opacity-60"
+        style="
+          background: rgba(255, 69, 58, 0.08);
+          border: 1px solid var(--color-status-error);
+          color: var(--color-status-error);
+          padding: 10px 22px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 600;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        "
       >
         {#if cacheCleared}
           <Check size={13} strokeWidth={2} />
           geleert · lade neu
         {:else}
-          <Trash2 size={13} strokeWidth={1.5} />
+          <Trash2 size={13} strokeWidth={1.8} />
           Lokale Daten löschen
         {/if}
       </button>
     </div>
-  </GlassCard>
+  {/if}
 </section>
