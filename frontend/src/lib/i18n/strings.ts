@@ -188,8 +188,27 @@ export const strings = {
     'settings.section.language': 'Sprache',
     'settings.section.pats': 'API-Tokens',
     'settings.section.security': 'Sicherheit',
+    'settings.section.connections': 'Verbindungen',
     'settings.section.users': 'Benutzer',
     'settings.section.bans': 'Brute-Force',
+
+    // Connections section (admin-only — Provider-Configs)
+    'settings.connections.eyebrow': 'Provider',
+    'settings.connections.title': 'Externe Dienste',
+    'settings.connections.body':
+      'Hier verbindest du Tonus mit deinen Providern (Spotify-API, Navidrome, YouTube). Geheime Felder werden verschlüsselt gespeichert. Änderungen wirken nach dem nächsten Container-Restart.',
+    'settings.connections.status.configured': 'verbunden',
+    'settings.connections.status.partial': 'unvollständig',
+    'settings.connections.status.empty': 'nicht konfiguriert',
+    'settings.connections.secret_placeholder': '•••••••••••• (gesetzt)',
+    'settings.connections.secret_hint': 'Leer lassen ⇒ aktueller Wert bleibt erhalten.',
+    'settings.connections.save': 'Speichern',
+    'settings.connections.saving': 'speichere …',
+    'settings.connections.saved': 'gespeichert',
+    'settings.connections.restart_required': 'Container-Restart nötig damit die Änderungen aktiv werden.',
+    'settings.connections.error_load': 'Konnte Provider-Konfiguration nicht laden.',
+    'settings.connections.error_save': 'Konnte nicht speichern — Backend nicht erreichbar?',
+    'settings.connections.reset_field': 'auf env-Default zurücksetzen',
 
     // Users section (admin-only)
     'settings.users.eyebrow': 'Konten',
@@ -588,8 +607,27 @@ export const strings = {
     'settings.section.language': 'Language',
     'settings.section.pats': 'API tokens',
     'settings.section.security': 'Security',
+    'settings.section.connections': 'Connections',
     'settings.section.users': 'Users',
     'settings.section.bans': 'Brute-force',
+
+    // Connections section (admin-only — Provider configs)
+    'settings.connections.eyebrow': 'Providers',
+    'settings.connections.title': 'External services',
+    'settings.connections.body':
+      'Connect Tonus to your providers (Spotify API, Navidrome, YouTube). Secret fields are stored encrypted. Changes take effect after the next container restart.',
+    'settings.connections.status.configured': 'connected',
+    'settings.connections.status.partial': 'incomplete',
+    'settings.connections.status.empty': 'not configured',
+    'settings.connections.secret_placeholder': '•••••••••••• (set)',
+    'settings.connections.secret_hint': "Leave empty ⇒ current value stays.",
+    'settings.connections.save': 'Save',
+    'settings.connections.saving': 'saving …',
+    'settings.connections.saved': 'saved',
+    'settings.connections.restart_required': 'Container restart required for the changes to take effect.',
+    'settings.connections.error_load': 'Could not load provider configuration.',
+    'settings.connections.error_save': "Couldn't save — backend not reachable?",
+    'settings.connections.reset_field': 'reset to env default',
 
     // Users section (admin-only)
     'settings.users.eyebrow': 'Accounts',

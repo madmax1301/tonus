@@ -5,6 +5,7 @@
     providersApi,
     systemApi,
     authApi,
+    providersConfigApi,
     ApiError,
     type MetadataProvidersResponse,
     type FormatsInfo,
@@ -13,7 +14,8 @@
     type Pat,
     type PatCreateResponse,
     type BannedIp,
-    type ManagedUser
+    type ManagedUser,
+    type ProviderConfig
   } from '$lib/api';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
@@ -35,10 +37,19 @@
     Users as UsersIcon,
     UserPlus,
     UserMinus,
-    UserCog
+    UserCog,
+    Plug
   } from 'lucide-svelte';
 
-  type Section = 'defaults' | 'backend' | 'language' | 'pats' | 'security' | 'bans' | 'users';
+  type Section =
+    | 'defaults'
+    | 'backend'
+    | 'language'
+    | 'pats'
+    | 'security'
+    | 'bans'
+    | 'users'
+    | 'connections';
   let section = $state<Section>('language');
 
   // Backend-Info (read-only)
@@ -181,7 +192,92 @@
     if (section === 'users' && !usersLoaded) {
       loadUsers();
     }
+    if (section === 'connections' && !providerConfigsLoaded) {
+      loadProviderConfigs();
+    }
   });
+
+  // ── Provider-Configs (Admin-only, Settings → Verbindungen) ──────────
+  let providerConfigs = $state<ProviderConfig[]>([]);
+  let providerConfigsLoaded = $state(false);
+  let providerConfigsError = $state<string | null>(null);
+
+  // Form-Buffer pro Provider: provider-name → field-key → eingegebener Wert.
+  // Secret-Felder bleiben leer-string solange User nicht editiert; Submit
+  // sendet nur die nicht-leeren Felder bei secrets (existing Wert bleibt
+  // dann erhalten — siehe Backend), und alles für non-secrets.
+  let providerFormBuffer = $state<Record<string, Record<string, string>>>({});
+  let providerSaveBusy = $state<string | null>(null);
+  let providerSaveSuccess = $state<string | null>(null);
+  let providerSaveError = $state<string | null>(null);
+
+  async function loadProviderConfigs() {
+    providerConfigsError = null;
+    try {
+      const res = await providersConfigApi.list();
+      providerConfigs = res.providers;
+      // Form-Buffer mit aktuellen non-secret Werten initialisieren;
+      // secret-Felder starten leer (Placeholder zeigt is_set-Marker).
+      const buf: Record<string, Record<string, string>> = {};
+      for (const p of res.providers) {
+        buf[p.name] = {};
+        for (const f of p.fields) {
+          buf[p.name][f.key] = f.secret ? '' : f.value;
+        }
+      }
+      providerFormBuffer = buf;
+      providerConfigsLoaded = true;
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 403)) {
+        providerConfigsError = $t('settings.connections.error_load');
+      }
+      providerConfigsLoaded = true;
+    }
+  }
+
+  async function saveProviderConfig(provider: ProviderConfig) {
+    providerSaveBusy = provider.name;
+    providerSaveError = null;
+    providerSaveSuccess = null;
+    try {
+      const fields: Record<string, string> = {};
+      for (const f of provider.fields) {
+        const buf = providerFormBuffer[provider.name]?.[f.key] ?? '';
+        if (f.secret) {
+          // Bei Secrets: nur senden wenn User editiert hat (non-empty).
+          // Leerer Wert + secret bedeutet "Wert unverändert lassen".
+          if (buf !== '') fields[f.key] = buf;
+        } else {
+          // Non-Secrets: immer senden — leerer Wert ⇒ delete_setting im Backend.
+          fields[f.key] = buf;
+        }
+      }
+      await providersConfigApi.update(provider.name, fields);
+      providerSaveSuccess = provider.name;
+      setTimeout(() => {
+        if (providerSaveSuccess === provider.name) providerSaveSuccess = null;
+      }, 2200);
+      // Reload um is_set-Flags + values neu zu bekommen.
+      await loadProviderConfigs();
+    } catch {
+      providerSaveError = $t('settings.connections.error_save');
+    } finally {
+      providerSaveBusy = null;
+    }
+  }
+
+  /** Heuristik fürs Status-Pill: alle non-secret Felder mit Werten +
+   *  alle secret Felder is_set ⇒ configured. Mind. eines gesetzt aber
+   *  nicht alle ⇒ partial. Nichts gesetzt ⇒ empty. */
+  function providerStatus(p: ProviderConfig): 'configured' | 'partial' | 'empty' {
+    let setCount = 0;
+    for (const f of p.fields) {
+      if (f.secret ? f.is_set : !!f.value) setCount++;
+    }
+    if (setCount === 0) return 'empty';
+    if (setCount === p.fields.length) return 'configured';
+    return 'partial';
+  }
 
   // ── Section-Permissions ─────────────────────────────────────────
   // adminOnly-Sections: nur sichtbar wenn me.is_admin. Frontend-Filter ist
@@ -195,12 +291,14 @@
       | 'settings.section.pats'
       | 'settings.section.security'
       | 'settings.section.bans'
-      | 'settings.section.users';
+      | 'settings.section.users'
+      | 'settings.section.connections';
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     icon: any;
     adminOnly: boolean;
   };
   const allTabs: TabDef[] = [
+    { id: 'connections', key: 'settings.section.connections', icon: Plug, adminOnly: true },
     { id: 'defaults', key: 'settings.section.defaults', icon: Sliders, adminOnly: true },
     { id: 'backend', key: 'settings.section.backend', icon: Server, adminOnly: true },
     { id: 'language', key: 'settings.section.language', icon: Globe, adminOnly: false },
@@ -1304,6 +1402,132 @@
             {/each}
           </ul>
         {/if}
+      {/if}
+    </div>
+  {/if}
+
+  <!-- ─── Section: Connections (Provider-Configs, Admin-only) ─── -->
+  {#if section === 'connections' && me?.is_admin}
+    <div
+      class="tonus-fadein"
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
+    >
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+      >
+        {$t('settings.connections.eyebrow')}
+      </div>
+      <div
+        style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 18px;"
+      >
+        {$t('settings.connections.title')}
+      </div>
+      <p
+        style="font-size: 13px; color: var(--color-fg-secondary); margin-bottom: 22px; line-height: 1.55; max-width: 620px;"
+      >
+        {$t('settings.connections.body')}
+      </p>
+
+      {#if providerConfigsError}
+        <p style="font-size: 12px; color: #f87171; margin: 0 0 12px;">{providerConfigsError}</p>
+      {/if}
+      {#if !providerConfigsLoaded}
+        <p style="font-size: 12px; color: var(--color-fg-tertiary); margin: 0;">…</p>
+      {:else}
+        <div class="flex flex-col" style="gap: 16px;">
+          {#each providerConfigs as p (p.name)}
+            {@const status = providerStatus(p)}
+            <form
+              onsubmit={(e) => {
+                e.preventDefault();
+                saveProviderConfig(p);
+              }}
+              style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--color-border-soft); border-radius: 16px; padding: 22px 24px;"
+            >
+              <div class="flex items-center justify-between gap-3 flex-wrap" style="margin-bottom: 16px;">
+                <div class="flex items-center gap-3">
+                  <Plug size={16} strokeWidth={1.8} style="color: var(--color-fg-secondary);" />
+                  <span
+                    style="font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--color-fg-primary);"
+                    >{p.label}</span
+                  >
+                </div>
+                <span
+                  class="uppercase"
+                  style="font-size: 9.5px; letter-spacing: 0.18em; padding: 3px 10px; border-radius: 999px; {status === 'configured'
+                    ? `color: rgba(134, 239, 172, 0.95); background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.3);`
+                    : status === 'partial'
+                      ? `color: rgba(248, 195, 113, 0.95); background: rgba(248, 195, 113, 0.08); border: 1px solid rgba(248, 195, 113, 0.3);`
+                      : `color: var(--color-fg-tertiary); background: rgba(255,255,255,0.03); border: 1px solid var(--color-border-soft);`};"
+                >
+                  {$t(`settings.connections.status.${status}` as
+                    | 'settings.connections.status.configured'
+                    | 'settings.connections.status.partial'
+                    | 'settings.connections.status.empty')}
+                </span>
+              </div>
+
+              <div class="flex flex-col" style="gap: 12px;">
+                {#each p.fields as f (f.key)}
+                  <label class="flex flex-col gap-1.5" for="prov-{p.name}-{f.key}">
+                    <span
+                      class="uppercase"
+                      style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+                    >
+                      {f.label}
+                    </span>
+                    <input
+                      id="prov-{p.name}-{f.key}"
+                      type={f.secret ? 'password' : 'text'}
+                      autocomplete={f.secret ? 'new-password' : 'off'}
+                      spellcheck="false"
+                      bind:value={providerFormBuffer[p.name][f.key]}
+                      placeholder={f.secret && f.is_set
+                        ? $t('settings.connections.secret_placeholder')
+                        : ''}
+                      class="outline-none"
+                      style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 14px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 12px 16px; letter-spacing: 0.04em;"
+                    />
+                    {#if f.secret}
+                      <span style="font-size: 11px; color: var(--color-fg-tertiary); line-height: 1.5;">
+                        {$t('settings.connections.secret_hint')}
+                      </span>
+                    {/if}
+                  </label>
+                {/each}
+              </div>
+
+              <div class="flex items-center gap-3" style="margin-top: 16px; flex-wrap: wrap;">
+                <button
+                  type="submit"
+                  disabled={providerSaveBusy === p.name}
+                  class="inline-flex items-center transition-opacity"
+                  style="background: {accent}; color: #1a1410; padding: 11px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25); opacity: {providerSaveBusy === p.name ? 0.6 : 1}; cursor: {providerSaveBusy === p.name ? 'wait' : 'pointer'};"
+                >
+                  {providerSaveBusy === p.name
+                    ? $t('settings.connections.saving')
+                    : providerSaveSuccess === p.name
+                      ? $t('settings.connections.saved')
+                      : $t('settings.connections.save')}
+                </button>
+                {#if providerSaveSuccess === p.name}
+                  <span
+                    class="inline-flex items-center gap-1.5"
+                    style="font-size: 11.5px; color: var(--color-fg-secondary);"
+                  >
+                    <AlertTriangle size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95);" />
+                    {$t('settings.connections.restart_required')}
+                  </span>
+                {/if}
+              </div>
+            </form>
+          {/each}
+
+          {#if providerSaveError}
+            <p style="font-size: 12px; color: #f87171; margin: 0;">{providerSaveError}</p>
+          {/if}
+        </div>
       {/if}
     </div>
   {/if}

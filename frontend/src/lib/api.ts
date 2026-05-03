@@ -452,6 +452,37 @@ export const systemApi = {
   health: () => api.get<HealthResponse>('/api/health')
 };
 
+// ── Provider-Configs (admin-only) ─────────────────────────────────
+export interface ProviderField {
+  key: string;
+  label: string;
+  /** Bei secret=true wird der Klartext NIE zurückgegeben — nur is_set. UI zeigt masked Placeholder. */
+  secret: boolean;
+  is_set: boolean;
+  /** Plain-Text Wert für non-secret Felder. Leer wenn nicht gesetzt. */
+  value: string;
+}
+
+export interface ProviderConfig {
+  name: string;
+  label: string;
+  fields: ProviderField[];
+}
+
+export const providersConfigApi = {
+  list: () => api.get<{ providers: ProviderConfig[] }>('/api/providers/config'),
+  /** Body: {fields: {[key]: value}}. Leere Strings ⇒ Reset auf env-Default. */
+  update: (name: string, fields: Record<string, string>) =>
+    request<{ ok: boolean; restart_required: boolean }>(
+      `/api/providers/${encodeURIComponent(name)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields })
+      }
+    )
+};
+
 // ─── Import / URL / Reverse ────────────────────────────────
 
 export interface CsvImportStartResponse {

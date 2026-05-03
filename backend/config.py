@@ -119,3 +119,43 @@ Path(DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 for _nav_root in NAVIDROME_MUSIC_PATHS_LIST:
     Path(_nav_root).mkdir(parents=True, exist_ok=True)
 
+
+# ───────────────────────────────────────────────────────────────────
+# DB-Overrides für UI-editierbare Provider-Configs
+# ───────────────────────────────────────────────────────────────────
+# env-Werte sind die Defaults; die UI (Settings → Verbindungen) kann sie
+# in der app_settings-Tabelle überschreiben. apply_db_overrides() patcht
+# die Module-Globals, sodass nachfolgend instanziierte Services
+# (SpotifyService, NavidromeService) die UI-Werte sehen.
+#
+# WICHTIG: muss zwischen init_jobs_db() und der Service-Instanziierung in
+# app.py aufgerufen werden — sonst Henne-Ei.
+
+# Mapping zwischen DB-Key und Modul-Variable. encrypted=True für Felder
+# die als Secret gespeichert werden (Passwords, Client-Secrets).
+_DB_OVERRIDE_MAP = [
+    # Spotify
+    ("spotify.client_id", "SPOTIFY_CLIENT_ID", False),
+    ("spotify.client_secret", "SPOTIFY_CLIENT_SECRET", True),
+    ("spotify.redirect_uri", "SPOTIFY_REDIRECT_URI", False),
+    # Navidrome
+    ("navidrome.api_url", "NAVIDROME_API_URL", False),
+    ("navidrome.username", "NAVIDROME_USERNAME", False),
+    ("navidrome.password", "NAVIDROME_PASSWORD", True),
+    # YouTube
+    ("youtube.cookies_path", "YOUTUBE_COOKIES_PATH", False),
+]
+
+
+def apply_db_overrides() -> None:
+    """Patcht Module-Globals mit Werten aus app_settings, falls gesetzt.
+    Idempotent — kann mehrfach aufgerufen werden, wirkt aber nur beim
+    ersten Mal vor Service-Instanziierung."""
+    from utils.app_settings import get_setting
+
+    g = globals()
+    for db_key, attr, _encrypted in _DB_OVERRIDE_MAP:
+        v = get_setting(db_key)
+        if v is not None and v != "":
+            g[attr] = v
+

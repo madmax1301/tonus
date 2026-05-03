@@ -180,6 +180,21 @@ def init_jobs_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)")
 
+        # app_settings — generischer Key/Value-Store für Runtime-Konfiguration
+        # die NICHT in env (deployment-immutable) sondern via UI editierbar
+        # sein soll. Provider-Credentials (Spotify Client-ID/Secret, Navidrome
+        # User/Pass, etc.) wandern hierhin. encrypted=1 markiert Werte, die
+        # mit Fernet verschlüsselt sind (Secrets); plain-text-Werte wie URLs
+        # oder Usernames bleiben encrypted=0 für Operability/Debug.
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            encrypted INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL
+        )
+        """)
+
         # banned_ips — lifetime-Bans nach 5+ Failed-Logins/24h pro IP.
         # PRIMARY KEY auf ip macht Re-Bans idempotent (INSERT OR IGNORE).
         # Loopback-Adressen (127.0.0.1, ::1) werden vom Auto-Bann-Code

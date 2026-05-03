@@ -205,6 +205,16 @@ def _legacy_token_deprecation_notice() -> None:
 _legacy_token_deprecation_notice()
 
 
+# ───────────────────────────────────────────────────────────────────
+# UI-editierbare Provider-Configs aus app_settings laden
+# ───────────────────────────────────────────────────────────────────
+# DB-Overrides MÜSSEN vor der Service-Instanziierung (DeezerService,
+# SpotifyService, NavidromeService) passieren, weil die Services im
+# Constructor config.X-Werte lesen. Nachträgliches Patchen würde sie
+# nicht erreichen.
+config.apply_db_overrides()
+
+
 # ----- Dual-VPN-Splitting: Boot-Check -----
 # Wenn VPN_SPLIT_ENABLED=true ist, müssen beide Source-IPs (VPN_SOURCE_A,
 # VPN_SOURCE_B) auf einem Host-Interface bindbar sein. Schlägt das fehl,
@@ -3603,6 +3613,97 @@ async def auth_pats_revoke(pat_id: int, request: Request,
     if not ok:
         raise HTTPException(status_code=404, detail="Token nicht gefunden.")
     return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Provider-Configs (Admin-only) — UI-editierbar statt env
+# ─────────────────────────────────────────────────────────────────────
+
+# Schema einer Provider-Config: name, list of fields. secret-Felder werden
+# bei GET nicht im Klartext zurückgegeben, sondern nur als bool "is_set".
+# Frontend zeigt "••••••" wenn is_set=true, leer wenn false. PUT erwartet
+# alle Felder; leere Strings ⇒ Setting löschen (zurück zu env-Default).
+_PROVIDER_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    "spotify": {
+        "label": "Spotify",
+        "fields": [
+            {"key": "spotify.client_id", "label": "Client ID", "secret": False},
+            {"key": "spotify.client_secret", "label": "Client Secret", "secret": True},
+            {"key": "spotify.redirect_uri", "label": "Redirect URI", "secret": False},
+        ],
+    },
+    "navidrome": {
+        "label": "Navidrome",
+        "fields": [
+            {"key": "navidrome.api_url", "label": "API URL", "secret": False},
+            {"key": "navidrome.username", "label": "Username", "secret": False},
+            {"key": "navidrome.password", "label": "Password", "secret": True},
+        ],
+    },
+    "youtube": {
+        "label": "YouTube",
+        "fields": [
+            {"key": "youtube.cookies_path", "label": "Cookies File Path", "secret": False},
+        ],
+    },
+}
+
+
+class ProviderUpdateRequest(BaseModel):
+    # Felder als dict {key: value} — keys müssen zur Provider-Definition passen.
+    # Leere Strings ⇒ delete_setting (zurück zum env-Default).
+    fields: Dict[str, str]
+
+
+@app.get("/api/providers/config")
+async def providers_config_get(_: None = Depends(require_token),
+                                 __: None = Depends(require_admin)):
+    """Liefert alle Provider mit ihrem aktuellen Konfigurations-Stand.
+    Secret-Felder werden NICHT im Klartext rausgegeben — nur ein Flag
+    ``is_set`` damit das UI ein masked Placeholder rendern kann."""
+    from utils.app_settings import get_setting
+
+    out = []
+    for name, defn in _PROVIDER_DEFINITIONS.items():
+        fields_out = []
+        for f in defn["fields"]:
+            val = get_setting(f["key"])
+            fields_out.append({
+                "key": f["key"],
+                "label": f["label"],
+                "secret": f["secret"],
+                "is_set": bool(val),
+                # Plain-text-Wert nur für nicht-secret-Felder
+                "value": val if not f["secret"] and val else "",
+            })
+        out.append({"name": name, "label": defn["label"], "fields": fields_out})
+    return {"providers": out}
+
+
+@app.put("/api/providers/{provider_name}")
+async def providers_config_put(provider_name: str, req: ProviderUpdateRequest,
+                                 _: None = Depends(require_token),
+                                 __: None = Depends(require_admin)):
+    """Schreibt Provider-Config. Leere Werte ⇒ delete_setting (zurück zu
+    env-Defaults). Änderungen werden erst beim nächsten Container-Restart
+    aktiv — Service-Instanzen werden nicht hot-reloaded."""
+    from utils.app_settings import set_setting, delete_setting
+
+    defn = _PROVIDER_DEFINITIONS.get(provider_name)
+    if not defn:
+        raise HTTPException(status_code=404, detail="Unbekannter Provider.")
+
+    valid_keys = {f["key"]: f for f in defn["fields"]}
+    for key, value in req.fields.items():
+        if key not in valid_keys:
+            raise HTTPException(status_code=400, detail=f"Unbekanntes Feld: {key}")
+        secret = valid_keys[key]["secret"]
+        if value == "":
+            delete_setting(key)
+        else:
+            set_setting(key, value, encrypted=secret)
+
+    return {"ok": True, "restart_required": True}
 
 
 # ─────────────────────────────────────────────────────────────────────
