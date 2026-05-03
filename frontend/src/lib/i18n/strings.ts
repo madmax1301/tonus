@@ -188,6 +188,25 @@ export const strings = {
     'settings.section.language': 'Sprache',
     'settings.section.pats': 'API-Tokens',
     'settings.section.security': 'Sicherheit',
+    'settings.section.bans': 'Brute-Force',
+
+    // Bans section (admin-only — lifetime IP bans nach 5+ failed logins/24h)
+    'settings.bans.eyebrow': 'IP-Schutz',
+    'settings.bans.title': 'Gebannte IPs',
+    'settings.bans.body':
+      'IPs, die mehr als 5 fehlgeschlagene Login-Versuche innerhalb von 24h hatten, werden dauerhaft blockiert. Loopback-Adressen sind ausgenommen, damit der Container sich nicht selbst aussperrt.',
+    'settings.bans.list_title': 'Aktive Bans',
+    'settings.bans.empty': 'Keine IPs gebannt — alles ruhig.',
+    'settings.bans.banned_when': 'gebannt {when}',
+    'settings.bans.fails': '{count} Fehlversuche',
+    'settings.bans.unban': 'Entbannen',
+    'settings.bans.unban_busy': 'entbanne …',
+    'settings.bans.unban_confirm_title': 'IP entbannen?',
+    'settings.bans.unban_confirm_message':
+      'Die IP {ip} kann wieder Login-Versuche machen. Wenn der Angriff weiterläuft, wird sie nach 5 weiteren Fehlversuchen erneut gebannt.',
+    'settings.bans.unban_confirm_label': 'Entbannen',
+    'settings.bans.error_load': 'Konnte Ban-Liste nicht laden.',
+    'settings.bans.error_unban': 'Konnte nicht entbannen.',
 
     // Pats section (Personal Access Tokens for plugin/service-to-service auth)
     'settings.pats.eyebrow': 'Plugin-Auth',
@@ -516,10 +535,28 @@ export const strings = {
 
     'settings.section.defaults': 'Defaults',
     'settings.section.backend': 'Backend info',
-    'settings.section.local': 'Local data',
     'settings.section.language': 'Language',
     'settings.section.pats': 'API tokens',
     'settings.section.security': 'Security',
+    'settings.section.bans': 'Brute-force',
+
+    // Bans section (admin-only)
+    'settings.bans.eyebrow': 'IP protection',
+    'settings.bans.title': 'Banned IPs',
+    'settings.bans.body':
+      "IPs that have more than 5 failed login attempts within 24h are permanently blocked. Loopback addresses are excluded so the container can't lock itself out.",
+    'settings.bans.list_title': 'Active bans',
+    'settings.bans.empty': 'No IPs banned — all quiet.',
+    'settings.bans.banned_when': 'banned {when}',
+    'settings.bans.fails': '{count} failed attempts',
+    'settings.bans.unban': 'Unban',
+    'settings.bans.unban_busy': 'unbanning …',
+    'settings.bans.unban_confirm_title': 'Unban IP?',
+    'settings.bans.unban_confirm_message':
+      'IP {ip} will be allowed to try logging in again. If the attack continues, it will be re-banned after 5 more failed attempts.',
+    'settings.bans.unban_confirm_label': 'Unban',
+    'settings.bans.error_load': 'Could not load ban list.',
+    'settings.bans.error_unban': 'Could not unban.',
 
     // Pats section (Personal Access Tokens)
     'settings.pats.eyebrow': 'Plugin auth',

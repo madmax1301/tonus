@@ -544,6 +544,18 @@ def record_login_attempt(username: str, source_ip: Optional[str], success: bool)
     finally:
         conn.close()
 
+    # Auto-Ban-Trigger: nach Insert prüfen ob die IP 5+ Failed-Logins in den
+    # letzten 24h hat. Lifetime-Ban — Admin muss manuell unbannen.
+    # Loopback ist immun (Container-internal-Calls dürfen nie sperren).
+    if not success and source_ip and not _is_loopback_ip(source_ip):
+        recent_fails = _count_failed_logins_for_ip(source_ip, window_ms=24 * 60 * 60 * 1000)
+        if recent_fails >= 5:
+            ban_ip(
+                source_ip,
+                reason=f"Auto-banned after {recent_fails} failed logins in 24h",
+                failed_count=recent_fails,
+            )
+
 
 def is_rate_limited(username: str) -> bool:
     """True wenn der User in den letzten 15 min config.LOGIN_RATE_LIMIT_PER_15MIN
@@ -560,3 +572,89 @@ def is_rate_limited(username: str) -> bool:
     finally:
         conn.close()
     return int(row["n"]) >= config.LOGIN_RATE_LIMIT_PER_15MIN if row else False
+
+
+# ─────────────────────────────────────────────────────────────────────
+# IP-Banning (Brute-Force-Defense, Lifetime)
+# ─────────────────────────────────────────────────────────────────────
+
+def _is_loopback_ip(ip: str) -> bool:
+    """Loopback-Adressen werden nie automatisch gebannt — Container-internal-
+    Calls (Worker-Self-Calls, Health-Checks) sollen nicht zum Self-Lockout
+    führen. Admin kann sie aber manuell bannen wenn er das wirklich will
+    (würde aber den Container quasi un-administrierbar machen)."""
+    if not ip:
+        return False
+    return ip in ("127.0.0.1", "::1", "localhost", "0.0.0.0")
+
+
+def _count_failed_logins_for_ip(ip: str, window_ms: int) -> int:
+    """Anzahl der Fail-Login-Attempts pro IP innerhalb des Fensters.
+    Nutzt die existing login_attempts-Tabelle ohne extra Index — das
+    Volumen ist klein (24h-rolling, nur Login-Endpoint)."""
+    cutoff = _now_ms() - window_ms
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM login_attempts "
+            "WHERE source_ip = ? AND success = 0 AND attempted_at_ms >= ?",
+            (ip, cutoff),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row["n"]) if row else 0
+
+
+def is_ip_banned(ip: Optional[str]) -> bool:
+    """Pre-Auth-Check. Loopback ist nie gebannt (siehe _is_loopback_ip)."""
+    if not ip or _is_loopback_ip(ip):
+        return False
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM banned_ips WHERE ip = ? LIMIT 1", (ip,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return row is not None
+
+
+def ban_ip(ip: str, reason: str = "manual", failed_count: int = 0) -> None:
+    """Idempotent — INSERT OR IGNORE, weil PRIMARY KEY = ip. Re-Banning
+    derselben IP überschreibt NICHT (banned_at_ms bleibt erste Erkennung)."""
+    if _is_loopback_ip(ip):
+        return  # safety-net: Loopback nie bannen, auch nicht auf direkten Aufruf
+    conn = _db()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO banned_ips (ip, reason, banned_at_ms, failed_count) "
+            "VALUES (?, ?, ?, ?)",
+            (ip, reason, _now_ms(), failed_count),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_banned_ips() -> List[Dict[str, Any]]:
+    """Alle Bans, neueste zuerst. Admin-only-Endpoint nutzt das."""
+    conn = _db()
+    try:
+        rows = conn.execute(
+            "SELECT ip, reason, banned_at_ms, failed_count FROM banned_ips "
+            "ORDER BY banned_at_ms DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def unban_ip(ip: str) -> bool:
+    """Returns True wenn ein Ban gelöscht wurde, False wenn IP nicht gebannt war."""
+    conn = _db()
+    try:
+        cur = conn.execute("DELETE FROM banned_ips WHERE ip = ?", (ip,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()

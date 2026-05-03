@@ -57,7 +57,7 @@ from utils.job_store import (
     count_csv_results,
 )
 from utils.worker import JobWorker
-from utils.auth import require_token, auth_required
+from utils.auth import require_token, require_admin, auth_required
 
 ALLOWED_METADATA_PROVIDERS = frozenset({"deezer", "spotify"})
 
@@ -3365,8 +3365,15 @@ async def auth_setup(req: AuthSetupRequest):
 @app.post("/api/auth/login")
 async def auth_login(req: AuthLoginRequest, request: Request):
     """Username + Password (+ TOTP wenn aktiv) → JWT pair. Wirft 401 bei
-    falschen Creds. 429 bei Rate-Limit nach 5 Failed-Attempts/15min."""
+    falschen Creds. 429 bei Rate-Limit nach 5 Failed-Attempts/15min.
+    403 wenn die IP bereits gebannt ist (Lifetime-Ban nach 5+ Fails/24h)."""
     from utils import auth_users as au
+    from utils.auth import assert_ip_not_banned
+
+    # Pre-Auth IP-Ban-Check — gebannte IPs erst gar nicht in den Username/
+    # Password-Pfad lassen. Verhindert auch dass record_login_attempt sie
+    # weiter mitzählt und u.U. ein Recovery via "alter ttl" möglich wäre.
+    assert_ip_not_banned(request)
 
     username = req.username.strip()
     if not username or not req.password:
@@ -3583,10 +3590,15 @@ def _user_id_from_request(request: Request) -> int:
 
 @app.post("/api/auth/pats")
 async def auth_pats_create(req: PatCreateRequest, request: Request,
-                            _: None = Depends(require_token)):
+                            _: None = Depends(require_token),
+                            __: None = Depends(require_admin)):
     """Erstellt einen neuen Personal Access Token. Plain-Token wird NUR
     in dieser Antwort zurückgegeben — Backend speichert nur den sha256-Hash.
-    Caller (Frontend) muss den Plain-Token einmalig anzeigen + verwerfen."""
+    Caller (Frontend) muss den Plain-Token einmalig anzeigen + verwerfen.
+
+    Admin-only: PATs sind System-zu-System-Credentials (Plugin-Auth) und
+    sollten nur vom Admin angelegt werden. Reguläre User haben keinen
+    Use-Case für eigene Long-Lived-Tokens."""
     from utils import auth_users as au
     user_id = _user_id_from_request(request)
     name = (req.name or "").strip()
@@ -3605,8 +3617,10 @@ async def auth_pats_create(req: PatCreateRequest, request: Request,
 
 
 @app.get("/api/auth/pats")
-async def auth_pats_list(request: Request, _: None = Depends(require_token)):
-    """Liste aller PATs des eingeloggten Users — ohne Plain-Token (gibt's nicht
+async def auth_pats_list(request: Request,
+                          _: None = Depends(require_token),
+                          __: None = Depends(require_admin)):
+    """Liste aller PATs des eingeloggten Admins — ohne Plain-Token (gibt's nicht
     mehr, nur prefix für Identifikation)."""
     from utils import auth_users as au
     user_id = _user_id_from_request(request)
@@ -3615,14 +3629,42 @@ async def auth_pats_list(request: Request, _: None = Depends(require_token)):
 
 @app.delete("/api/auth/pats/{pat_id}")
 async def auth_pats_revoke(pat_id: int, request: Request,
-                            _: None = Depends(require_token)):
-    """Hard-Delete eines PATs. Owner-Check ist im SQL — der User kann nur
+                            _: None = Depends(require_token),
+                            __: None = Depends(require_admin)):
+    """Hard-Delete eines PATs. Owner-Check ist im SQL — der Admin kann nur
     seine eigenen Tokens widerrufen, fremde IDs returnieren 404."""
     from utils import auth_users as au
     user_id = _user_id_from_request(request)
     ok = au.revoke_pat(pat_id, user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Token nicht gefunden.")
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Banned-IPs (Admin-only)
+# ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/auth/banned-ips")
+async def auth_banned_ips_list(request: Request,
+                                _: None = Depends(require_token),
+                                __: None = Depends(require_admin)):
+    """Liste aller lifetime-gebannten IPs (5+ Failed-Logins/24h). Admin-only."""
+    from utils import auth_users as au
+    return {"banned": au.list_banned_ips()}
+
+
+@app.delete("/api/auth/banned-ips/{ip:path}")
+async def auth_banned_ips_unban(ip: str, request: Request,
+                                  _: None = Depends(require_token),
+                                  __: None = Depends(require_admin)):
+    """Entbannt eine IP. Path-Parameter mit `:path`-Converter, weil IPv6-Adressen
+    Doppelpunkte enthalten und sonst von FastAPI's Default-Path-Matcher
+    falsch geparst würden. 404 wenn IP nicht gebannt war."""
+    from utils import auth_users as au
+    ok = au.unban_ip(ip)
+    if not ok:
+        raise HTTPException(status_code=404, detail="IP war nicht gebannt.")
     return {"ok": True}
 
 

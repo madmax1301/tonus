@@ -11,7 +11,8 @@
     type HealthResponse,
     type AuthUser,
     type Pat,
-    type PatCreateResponse
+    type PatCreateResponse,
+    type BannedIp
   } from '$lib/api';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
@@ -28,11 +29,12 @@
     ShieldCheck,
     KeyRound,
     Copy,
-    AlertTriangle
+    AlertTriangle,
+    Ban
   } from 'lucide-svelte';
 
-  type Section = 'defaults' | 'backend' | 'language' | 'pats' | 'security';
-  let section = $state<Section>('defaults');
+  type Section = 'defaults' | 'backend' | 'language' | 'pats' | 'security' | 'bans';
+  let section = $state<Section>('language');
 
   // Backend-Info (read-only)
   let providers = $state<MetadataProvidersResponse | null>(null);
@@ -168,7 +170,97 @@
     if (section === 'pats' && !patsLoaded) {
       loadPats();
     }
+    if (section === 'bans' && !bansLoaded) {
+      loadBans();
+    }
   });
+
+  // ── Section-Permissions ─────────────────────────────────────────
+  // adminOnly-Sections: nur sichtbar wenn me.is_admin. Frontend-Filter ist
+  // UX, der harte Check sitzt im Backend (require_admin Dependency).
+  type TabDef = {
+    id: Section;
+    key:
+      | 'settings.section.defaults'
+      | 'settings.section.backend'
+      | 'settings.section.language'
+      | 'settings.section.pats'
+      | 'settings.section.security'
+      | 'settings.section.bans';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    icon: any;
+    adminOnly: boolean;
+  };
+  const allTabs: TabDef[] = [
+    { id: 'defaults', key: 'settings.section.defaults', icon: Sliders, adminOnly: true },
+    { id: 'backend', key: 'settings.section.backend', icon: Server, adminOnly: true },
+    { id: 'language', key: 'settings.section.language', icon: Globe, adminOnly: false },
+    { id: 'pats', key: 'settings.section.pats', icon: KeyRound, adminOnly: true },
+    { id: 'security', key: 'settings.section.security', icon: ShieldCheck, adminOnly: false },
+    { id: 'bans', key: 'settings.section.bans', icon: Ban, adminOnly: true }
+  ];
+  const visibleTabs = $derived(
+    me === null
+      ? allTabs.filter((t) => !t.adminOnly) // bevor me da ist: konservativ User-View
+      : me.is_admin
+        ? allTabs
+        : allTabs.filter((t) => !t.adminOnly)
+  );
+
+  // Permission-Redirect: wenn me geladen ist und die aktuelle Section ist
+  // admin-only aber User ist kein Admin → switch zur ersten visible Section.
+  // Default-Mount ist 'language' (immer visible), aber nach Tab-Wechsel über
+  // URL-State / SessionStorage könnte ein User auf einer admin-only Section
+  // landen.
+  $effect(() => {
+    if (me && !me.is_admin) {
+      const currentTab = allTabs.find((t) => t.id === section);
+      if (currentTab?.adminOnly) {
+        section = 'language';
+      }
+    }
+  });
+
+  // ── Banned-IPs (Brute-Force-Schutz, Admin-only) ────────────────────
+  let bans = $state<BannedIp[]>([]);
+  let bansLoaded = $state(false);
+  let bansError = $state<string | null>(null);
+  let unbanningIp = $state<string | null>(null);
+
+  async function loadBans() {
+    bansError = null;
+    try {
+      const res = await authApi.bansList();
+      bans = res.banned;
+      bansLoaded = true;
+    } catch (err) {
+      // 403 für non-admin: Section ist eh ausgeblendet, also stillschweigend
+      // ignorieren. Andere Fehler dem User anzeigen.
+      if (!(err instanceof ApiError && err.status === 403)) {
+        bansError = $t('settings.bans.error_load');
+      }
+      bansLoaded = true;
+    }
+  }
+
+  async function unbanIp(ip: string) {
+    const ok = await showConfirm({
+      title: $t('settings.bans.unban_confirm_title'),
+      message: $t('settings.bans.unban_confirm_message', { ip }),
+      confirmLabel: $t('settings.bans.unban_confirm_label'),
+      destructive: false
+    });
+    if (!ok) return;
+    unbanningIp = ip;
+    try {
+      await authApi.bansUnban(ip);
+      await loadBans();
+    } catch {
+      bansError = $t('settings.bans.error_unban');
+    } finally {
+      unbanningIp = null;
+    }
+  }
 
   // TOTP-Setup-Wizard-State (öffnet inline in der Security-Section).
   // initData != null ⇒ Wizard läuft (QR + Code-Eingabe sichtbar).
@@ -361,13 +453,7 @@
     class="flex items-center"
     style="gap: 24px; font-size: 13px; margin-bottom: 24px; border-bottom: 1px solid var(--color-border-soft); padding-bottom: 14px; flex-wrap: wrap;"
   >
-    {#each [
-      { id: 'defaults' as Section, key: 'settings.section.defaults' as const, icon: Sliders },
-      { id: 'backend' as Section, key: 'settings.section.backend' as const, icon: Server },
-      { id: 'language' as Section, key: 'settings.section.language' as const, icon: Globe },
-      { id: 'pats' as Section, key: 'settings.section.pats' as const, icon: KeyRound },
-      { id: 'security' as Section, key: 'settings.section.security' as const, icon: ShieldCheck }
-    ] as s}
+    {#each visibleTabs as s}
       {@const active = section === s.id}
       <button
         onclick={() => (section = s.id)}
@@ -1260,6 +1346,90 @@
               : $t('settings.security.setup.button')}
           </button>
         </div>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- ─── Section: Bans (Brute-Force-Schutz, Admin-only) ─── -->
+  {#if section === 'bans' && me?.is_admin}
+    <div
+      class="tonus-fadein"
+      style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
+    >
+      <div
+        class="font-semibold uppercase"
+        style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary); margin-bottom: 6px;"
+      >
+        {$t('settings.bans.eyebrow')}
+      </div>
+      <div
+        style="font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--color-fg-primary); margin-bottom: 18px;"
+      >
+        {$t('settings.bans.title')}
+      </div>
+      <p
+        style="font-size: 13px; color: var(--color-fg-secondary); margin-bottom: 22px; line-height: 1.55; max-width: 620px;"
+      >
+        {$t('settings.bans.body')}
+      </p>
+
+      {#if bansError}
+        <p style="font-size: 12px; color: #f87171; margin: 0 0 12px;">{bansError}</p>
+      {/if}
+      {#if !bansLoaded}
+        <p style="font-size: 12px; color: var(--color-fg-tertiary); margin: 0;">…</p>
+      {:else if bans.length === 0}
+        <p style="font-size: 13px; color: var(--color-fg-tertiary); margin: 0;">
+          {$t('settings.bans.empty')}
+        </p>
+      {:else}
+        <div
+          class="font-semibold uppercase"
+          style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary); margin-bottom: 10px;"
+        >
+          {$t('settings.bans.list_title')}
+        </div>
+        <ul class="flex flex-col" style="gap: 10px; margin: 0; padding: 0; list-style: none;">
+          {#each bans as b (b.ip)}
+            {@const now = Date.now()}
+            {@const bannedAgo = now - b.banned_at_ms}
+            <li
+              class="flex items-center justify-between gap-4 flex-wrap"
+              style="background: rgba(248, 113, 113, 0.05); border: 1px solid rgba(248, 113, 113, 0.2); border-radius: 14px; padding: 14px 18px;"
+            >
+              <div class="flex flex-col" style="gap: 4px; min-width: 0; flex: 1;">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <Ban size={14} strokeWidth={2} style="color: #f87171;" />
+                  <code
+                    style="font-family: var(--font-mono); font-size: 14px; font-weight: 500; color: var(--color-fg-primary); letter-spacing: 0.04em;"
+                    >{b.ip}</code
+                  >
+                </div>
+                <div
+                  class="flex items-center gap-2 flex-wrap"
+                  style="font-size: 11.5px; color: var(--color-fg-secondary);"
+                >
+                  <span>{$t('settings.bans.banned_when', { when: formatRelative(bannedAgo) })}</span>
+                  {#if b.failed_count > 0}
+                    <span style="color: var(--color-fg-tertiary);">·</span>
+                    <span>{$t('settings.bans.fails', { count: String(b.failed_count) })}</span>
+                  {/if}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={unbanningIp === b.ip}
+                onclick={() => unbanIp(b.ip)}
+                class="inline-flex items-center gap-1.5 transition-opacity flex-shrink-0"
+                style="background: rgba(255, 255, 255, 0.06); color: var(--color-fg-primary); padding: 8px 16px; border-radius: 999px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--color-border-soft); opacity: {unbanningIp === b.ip ? 0.6 : 1};"
+              >
+                {unbanningIp === b.ip
+                  ? $t('settings.bans.unban_busy')
+                  : $t('settings.bans.unban')}
+              </button>
+            </li>
+          {/each}
+        </ul>
       {/if}
     </div>
   {/if}

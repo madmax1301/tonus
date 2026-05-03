@@ -203,8 +203,23 @@ export const authApi = {
     }),
   /** Auth — Widerruft PAT (hard delete). 404 wenn nicht ownership. */
   patsRevoke: (pat_id: number) =>
-    request<{ ok: boolean }>(`/api/auth/pats/${pat_id}`, { method: 'DELETE' })
+    request<{ ok: boolean }>(`/api/auth/pats/${pat_id}`, { method: 'DELETE' }),
+  /** Admin-only — Liste aller lifetime-gebannten IPs. */
+  bansList: () => request<{ banned: BannedIp[] }>('/api/auth/banned-ips'),
+  /** Admin-only — Hebt einen Lifetime-Ban auf. IP wird URL-encoded ans Path-
+   *  Parameter gehängt (kann IPv6 mit Doppelpunkten sein). */
+  bansUnban: (ip: string) =>
+    request<{ ok: boolean }>(`/api/auth/banned-ips/${encodeURIComponent(ip)}`, {
+      method: 'DELETE'
+    })
 };
+
+export interface BannedIp {
+  ip: string;
+  reason: string | null;
+  banned_at_ms: number;
+  failed_count: number;
+}
 
 export interface Pat {
   id: number;

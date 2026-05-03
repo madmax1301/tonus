@@ -91,6 +91,32 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
     return None
 
 
+def client_ip(request: Request) -> Optional[str]:
+    """Extract client IP from request, respecting Reverse-Proxy-Header. Best-effort.
+    Wird sowohl von require_token (für Pre-Auth-Ban-Check) als auch vom
+    Login-Endpoint genutzt — daher Public-Helper hier statt Duplikat in app.py."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()
+    return request.client.host if request.client else None
+
+
+def assert_ip_not_banned(request: Request) -> None:
+    """Pre-Auth-Hook gegen Brute-Force. Wird VOR Token-Verify aufgerufen, damit
+    gebannte IPs erst gar keine Auth-Versuche timen können (kein Timing-Leak).
+    Wirft 403 statt 401 — semantische Trennung: Ban ≠ falsche Credentials.
+    Loopback ist immun (siehe auth_users._is_loopback_ip)."""
+    ip = client_ip(request)
+    if auth_users.is_ip_banned(ip):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Diese IP ist nach mehreren fehlgeschlagenen Login-Versuchen gesperrt.",
+        )
+
+
 def require_token(
     request: Request,
     authorization: Optional[str] = Header(default=None),
@@ -98,6 +124,10 @@ def require_token(
     """FastAPI-Dependency. Per ``Depends(require_token)`` an Mutate-Routen
     anhängen. Setzt bei Erfolg ``request.state.user`` mit dem authenticierten
     User-Record (siehe Modul-Docstring für Format)."""
+
+    # Pre-Auth-Ban-Check: gebannte IPs kommen erst gar nicht zur Token-Verify.
+    # Verhindert Timing-Leaks und entlastet die JWT/PAT-Pfade von Junk-Traffic.
+    assert_ip_not_banned(request)
 
     # Setup-Mode: noch kein User in DB UND kein Legacy-Token gesetzt → offen.
     # Erlaubt /api/auth/setup beim ersten Start. Sobald der erste Admin

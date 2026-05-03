@@ -180,6 +180,20 @@ def init_jobs_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)")
 
+        # banned_ips — lifetime-Bans nach 5+ Failed-Logins/24h pro IP.
+        # PRIMARY KEY auf ip macht Re-Bans idempotent (INSERT OR IGNORE).
+        # Loopback-Adressen (127.0.0.1, ::1) werden vom Auto-Bann-Code
+        # ausgeschlossen — Container-internal-Calls sollen nie ausgesperrt
+        # werden. Admin entfernt Bans manuell über Settings → Brute-Force.
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS banned_ips (
+            ip TEXT PRIMARY KEY,
+            reason TEXT,
+            banned_at_ms INTEGER NOT NULL,
+            failed_count INTEGER NOT NULL DEFAULT 0
+        )
+        """)
+
         conn.commit()
     finally:
         conn.close()
