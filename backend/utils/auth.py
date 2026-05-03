@@ -129,13 +129,13 @@ def require_token(
     # Verhindert Timing-Leaks und entlastet die JWT/PAT-Pfade von Junk-Traffic.
     assert_ip_not_banned(request)
 
-    # Setup-Mode: noch kein User in DB UND kein Legacy-Token gesetzt → offen.
-    # Erlaubt /api/auth/setup beim ersten Start. Sobald der erste Admin
-    # angelegt ist, greift Auth.
-    legacy_active = bool(config.TONUS_API_TOKEN)
+    # Setup-Mode: noch kein User in der DB → Onboarding-Wizard öffnen, auch
+    # wenn TONUS_API_TOKEN gesetzt ist. Damit kann der Operator den ersten
+    # Admin-Account selbst über die UI anlegen statt aus den Container-Logs
+    # ein Auto-Bootstrap-Password fischen zu müssen. Plugin-Auth via Legacy-
+    # Token funktioniert parallel weiter.
     setup_pending = auth_users.setup_required()
-    if setup_pending and not legacy_active:
-        # Nur wenn der User noch nicht angelegt ist — Setup-Endpoint kommt durch.
+    if setup_pending:
         request.state.user = {"id": 0, "username": "_setup", "is_admin": True,
                               "auth_method": "setup"}
         return

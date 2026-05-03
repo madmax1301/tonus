@@ -70,7 +70,7 @@ Settings → API-Tokens → *Neuen Token anlegen* (name + expiry). The plain tok
 
 The legacy static-token path stays available for backward compatibility, but is deprecated:
 
-1. **First boot with `TONUS_API_TOKEN` set + empty user-table** auto-creates an `_admin` account. The random password is printed once to the container stdout — `docker logs tonus | grep -A8 'FIRST-RUN ADMIN'`. Save it, log in via the UI, change the password.
+1. **Open the Tonus UI** — even with `TONUS_API_TOKEN` set, the onboarding wizard opens as long as the user table is empty. Create your admin account through the wizard (set a strong password, enable 2FA if you want). Plugin auth via the legacy token continues to work in parallel.
 2. Configure your Navidrome plugin to use a **PAT** instead of `TONUS_API_TOKEN` (Settings → API-Tokens). Restart the plugin and verify queue jobs come through with the user-tagged origin.
 3. Remove `TONUS_API_TOKEN` from `backend/.env` and restart Tonus. The legacy path is now closed; all calls require JWT or PAT.
 
