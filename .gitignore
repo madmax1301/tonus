@@ -1,33 +1,50 @@
-# Backend — Python
+# ---- Secrets & local config ------------------------------------------------
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# ---- Local dev overrides ---------------------------------------------------
+docker-compose.override.yml
+test-music/
+test-downloads/
+test-data/
+
+# ---- Python ----------------------------------------------------------------
 __pycache__/
 *.pyc
 *.pyo
 *.bak
 *.bak.*
 *.pid
+.venv/
+venv/
 
-# Backend — Data + Secrets
-backend/.env
+# ---- Pytest / coverage -----------------------------------------------------
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# ---- Backend data folders --------------------------------------------------
 backend/downloads/
 downloads/
 
-# Frontend — Build artefacts
+# ---- Frontend build artefacts ----------------------------------------------
 frontend/node_modules/
 frontend/.svelte-kit/
 frontend/build/
 
-# Local dev
-docker-compose.override.yml
-test-music/
-test-downloads/
+# ---- Logs ------------------------------------------------------------------
+*.log
+logs/
 
-# OS
+# ---- OS --------------------------------------------------------------------
 .DS_Store
 Thumbs.db
 
-# Editor
+# ---- Editors ---------------------------------------------------------------
 .vscode/
 .idea/
 *.swp
-
-.env
+*.swo
