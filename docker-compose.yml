@@ -10,7 +10,7 @@ services:
     # docker-compose.override.yml für lokale Entwicklung.
     network_mode: host
     env_file:
-      - backend/.env
+      - .env
     environment:
       - API_HOST=0.0.0.0
       - API_PORT=8088
