@@ -75,3 +75,7 @@ The legacy static-token path stays available for backward compatibility, but is 
 3. Remove `TONUS_API_TOKEN` from `backend/.env` and restart Tonus. The legacy path is now closed; all calls require JWT or PAT.
 
 Rollback: revoke the PAT, set `TONUS_API_TOKEN` back, restart. The static path resumes.
+
+## License
+
+Released under the [MIT License](LICENSE) — © 2026 madmax1301.
