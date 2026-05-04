@@ -75,11 +75,9 @@
     return { icon: HardDrive, label: tt('queue.dest.local') };
   }
 
-  type Filter = 'active' | 'all' | 'queued' | 'processing' | 'completed' | 'error';
+  type Filter = 'all' | 'queued' | 'processing' | 'completed' | 'error';
 
-  /** `active` = queued+processing kombiniert. Default-View: User sieht
-   *  nur was gerade in Bewegung ist und vermeidet 15k-completed-DOM-Lag. */
-  let activeFilter = $state<Filter>('active');
+  let activeFilter = $state<Filter>('all');
   let data = $state<QueueResponse | null>(null);
   let lanes = $state<LaneStatusResponse | null>(null);
   let loadError = $state<string | null>(null);
@@ -107,14 +105,7 @@
   async function fetchQueue(showSpinner = false) {
     if (showSpinner) initialLoading = true;
     try {
-      // 'active' wird Backend-seitig als comma-CSV-Filter gesendet — das
-      // Backend kennt 'all' nicht als Eigenwert, deshalb undefined dafür.
-      const status =
-        activeFilter === 'all'
-          ? undefined
-          : activeFilter === 'active'
-            ? 'queued,processing'
-            : activeFilter;
+      const status = activeFilter === 'all' ? undefined : activeFilter;
       const [q, l] = await Promise.all([
         queueApi.list(status),
         queueApi.lanes().catch(() => null) // optional — älteres backend hat den endpoint nicht
@@ -171,20 +162,36 @@
       .sort((a, b) => (a.created_at_ms ?? 0) - (b.created_at_ms ?? 0));
   });
 
+  /** Wartende Jobs in FIFO-Reihenfolge (created_at ASC). Wir mappen die
+   *  ersten N (= laneCount) auf die Lane-Slots — als "Up next"-Preview
+   *  damit User auch in der Cooldown-Phase schon sehen was als nächstes
+   *  kommt. Nicht 100% akkurat (Lane-Pickup hängt am Worker-Round-Robin),
+   *  aber visuell richtig: erste-zwei-queued landen in Lane A/B. */
+  const queuedJobs = $derived.by<QueueJob[]>(() => {
+    if (!data?.items) return [];
+    return data.items
+      .filter((j) => j.status === 'queued')
+      .sort((a, b) => (a.created_at_ms ?? 0) - (b.created_at_ms ?? 0));
+  });
+
   /** Lane-Slots: N = Anzahl Lanes (1 single, 2 dual). Slot[i] zeigt
    *  processingJobs[i] wenn vorhanden, sonst die Lane als idle/cooldown.
-   *  Damit sieht der User immer wie viele Lanes parallel laufen können. */
+   *  Plus immer ein Up-Next aus queuedJobs[i] — auch sichtbar wenn die
+   *  Lane gerade läuft (zeigt was direkt nach dem aktuellen Job kommt)
+   *  oder wenn Cooldown läuft (zeigt was beim Aufwachen losgeht). */
   type LaneSlot = {
     laneName: string;
     remainingMs: number;
     job: QueueJob | null;
+    upNext: QueueJob | null;
   };
   const laneSlots = $derived.by<LaneSlot[]>(() => {
     const lanesArr = liveLanes.length > 0 ? liveLanes : [{ name: 'default', remaining_ms: 0 }];
     return lanesArr.map((l, i) => ({
       laneName: l.name,
       remainingMs: l.remaining_ms,
-      job: processingJobs[i] ?? null
+      job: processingJobs[i] ?? null,
+      upNext: queuedJobs[i] ?? null
     }));
   });
 
@@ -333,14 +340,12 @@
 
   const filterDefs = $derived.by<FilterDef[]>(() => {
     const tt = $t;
-    const activeCount = (counts.processing ?? 0) + (counts.queued ?? 0);
     return [
-      { id: 'active', label: tt('queue.filter.active'), count: activeCount, color: accent },
+      { id: 'all', label: tt('queue.filter.all'), count: total, color: accent },
       { id: 'processing', label: tt('queue.filter.processing'), count: counts.processing ?? 0, color: accent },
       { id: 'queued', label: tt('queue.filter.queued'), count: counts.queued ?? 0, color: 'var(--color-fg-tertiary)' },
       { id: 'completed', label: tt('queue.filter.completed'), count: counts.completed ?? 0, color: 'var(--color-status-done)' },
-      { id: 'error', label: tt('queue.filter.error'), count: counts.error ?? 0, color: 'var(--color-status-error)' },
-      { id: 'all', label: tt('queue.filter.all'), count: (counts.processing ?? 0) + (counts.queued ?? 0) + (counts.completed ?? 0) + (counts.error ?? 0), color: 'var(--color-fg-secondary)' }
+      { id: 'error', label: tt('queue.filter.error'), count: counts.error ?? 0, color: 'var(--color-status-error)' }
     ];
   });
 
@@ -566,7 +571,7 @@
       {@const isCooldown = !job && slot.remainingMs >= 1000}
       {@const cardAccent = job ? accent : 'var(--color-fg-tertiary)'}
       <div
-        class="flex items-center gap-5"
+        class="flex flex-col"
         style="
           background: linear-gradient(135deg, {job ? tint(featuredHue, 0.18) : 'rgba(20, 20, 24, 0.55)'}, rgba(15, 15, 18, 0.7));
           backdrop-filter: blur(40px) saturate(1.2);
@@ -578,6 +583,7 @@
           min-height: 158px;
         "
       >
+        <div class="flex items-center gap-5" style="min-width: 0;">
         {#if job}
           {@const tr = job.payload?.track ?? {}}
           {@const origin = jobOrigin(job)}
@@ -736,14 +742,40 @@
             {/if}
           </div>
         {/if}
+        </div>
+        <!-- Up next: nächster wartender Track der in dieser Lane laufen wird.
+             Sichtbar sowohl wenn die Lane gerade läuft (zeigt was direkt
+             nach dem aktuellen Job kommt) als auch in Cooldown/Idle (zeigt
+             was beim Aufwachen losgeht). Mapping: queuedJobs[i] auf Lane[i]. -->
+        {#if slot.upNext}
+          {@const nx = slot.upNext.payload?.track ?? {}}
+          <div
+            class="flex items-center gap-2 min-w-0"
+            style="
+              margin-top: 12px;
+              padding-top: 10px;
+              border-top: 1px dashed var(--color-border-soft);
+              font-size: 11.5px;
+              color: var(--color-fg-tertiary);
+            "
+          >
+            <span
+              class="font-semibold uppercase"
+              style="letter-spacing: 0.16em; flex-shrink: 0; font-size: 9.5px; color: var(--color-fg-tertiary);"
+            >
+              {$t('queue.lane.up_next')}
+            </span>
+            <span class="truncate" style="color: var(--color-fg-secondary); min-width: 0;" title={nx.name ?? ''}>
+              {nx.name ?? slot.upNext.job_id}
+            </span>
+            {#if nx.artist}
+              <span class="truncate" style="color: var(--color-fg-tertiary); flex-shrink: 1; min-width: 0;">· {nx.artist}</span>
+            {/if}
+          </div>
+        {/if}
       </div>
     {/each}
   </div>
-
-  <!-- Wenn überhaupt keine Lanes etwas tun und auch nichts queued ist,
-       zeigen wir einen kompakten "alles ruhig"-Hinweis (statt einer
-       weiteren Komponente). Im single-lane-Mode wird der Hinweis nicht
-       gebraucht weil der einzelne Slot oben schon "Bereit" anzeigt. -->
 
   <!-- Job list -->
   {#if loadError}
