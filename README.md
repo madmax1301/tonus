@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="frontend/static/icon-512.png" alt="Tonus" width="160" />
+  <img src="frontend/static/repo-icon.png" alt="Tonus" width="520" />
 </p>
-
-<h1 align="center">Tonus</h1>
 
 <p align="center">
   <strong>Self-hosted music acquisition. Pairs with Navidrome.</strong><br/>
