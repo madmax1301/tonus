@@ -75,7 +75,7 @@ docker compose up -d
 # UI: http://<host>:8088
 ```
 
-The shipped `docker-compose.yml` pulls a prebuilt image from [GitHub Container Registry](https://ghcr.io/madmax1301/tonus). To build from local source instead, append `--build`.
+The shipped `docker-compose.yml` pulls a prebuilt image from [GitHub Container Registry](https://ghcr.io/madmax1301/tonus). To build from a local checkout instead, see [Building from source](#building-from-source) below.
 
 On first open the **setup wizard** creates your admin account and walks you through 2FA + provider connections. After that everything is configurable from *Settings*.
 
@@ -228,13 +228,19 @@ cd backend && python -m pytest
 cd frontend && npm run check
 ```
 
-### Build for production
+### Building from source
+
+The shipped `docker-compose.yml` only references the GHCR image (no `build:` directive). To build a local image — useful when you've forked the repo and want to test changes before pushing:
 
 ```bash
-docker compose build --no-cache
+# Build and tag with the same name docker-compose expects
+docker build -t ghcr.io/madmax1301/tonus:latest .
+
+# Now `docker compose up -d` uses the local image instead of pulling
+docker compose up -d
 ```
 
-The frontend is bundled into the container at build time (multi-stage). No separate frontend deploy needed.
+The Dockerfile is multi-stage: SvelteKit is built in stage 1 (`node:20-alpine`) and copied into the runtime image (`python:3.11-slim`). No separate frontend deploy needed.
 
 ## Updates
 
@@ -246,12 +252,6 @@ docker compose up -d            # restart with the new image
 ```
 
 `/app/data/jobs.db` lives on a host bind-mount and survives image swaps. **Do not skip the `mkdir /volume1/docker/tonus/data` step on first install** — without the volume the DB dies on every container recreation.
-
-To force a rebuild from local source instead of pulling:
-
-```bash
-docker compose up -d --build
-```
 
 ## Container images
 

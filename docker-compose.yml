@@ -1,11 +1,9 @@
 services:
   tonus:
-    # Default: pull from GHCR (built by .github/workflows/build.yml).
-    # Override locally with `docker compose build` to rebuild from source —
-    # the resulting image is tagged with the same name, so subsequent
-    # `docker compose up` uses the local build instead of pulling.
+    # Image is built and pushed to GHCR by .github/workflows/build.yml on
+    # every push to main and every vX.Y.Z tag. Pin to :0.1 (or similar)
+    # for production to get patches without minor-version surprises.
     image: ghcr.io/madmax1301/tonus:latest
-    build: .
     container_name: tonus
     restart: unless-stopped
     # Dual-VPN-Splitting: host-mode gibt dem Container direkten Zugriff
