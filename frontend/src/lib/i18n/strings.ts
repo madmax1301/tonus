@@ -388,6 +388,23 @@ export const strings = {
     'settings.defaults.audio.note':
       'FLAC ignoriert die Bitrate (lossless). Opus & OGG mappen auf andere Skalen — der Backend-Wert wird passend übersetzt.',
 
+    'settings.defaults.cooldown.eyebrow': 'Worker-Pacing',
+    'settings.defaults.cooldown.title': 'Lane-Cooldown nach Jobs',
+    'settings.defaults.cooldown.description':
+      'Pause pro Download-Lane nach jedem Job. Bei 429-Antworten (Rate-Limit) wird die längere Range genutzt. Hot-Reload — Worker greift die neuen Werte beim nächsten Cooldown-Tick.',
+    'settings.defaults.cooldown.normal_label': 'Standard (Sekunden)',
+    'settings.defaults.cooldown.normal_hint': 'Random-Range nach success / unauffälligem error',
+    'settings.defaults.cooldown.rl_label': '429-Rate-Limit (Sekunden)',
+    'settings.defaults.cooldown.rl_hint': 'Längere Range nach erkanntem 429',
+    'settings.defaults.cooldown.min': 'Min',
+    'settings.defaults.cooldown.max': 'Max',
+    'settings.defaults.cooldown.save': 'Speichern',
+    'settings.defaults.cooldown.saving': 'speichere …',
+    'settings.defaults.cooldown.saved': 'gespeichert',
+    'settings.defaults.cooldown.reset': 'auf Defaults zurück',
+    'settings.defaults.cooldown.error_save':
+      'Konnte nicht speichern. Sind Min ≤ Max in beiden Ranges?',
+
     // Backend-Info section
     'settings.backend.eyebrow': 'Read-Only · backend/.env',
     'settings.backend.title': 'Was das Backend gerade nutzt',
@@ -837,6 +854,23 @@ export const strings = {
     'settings.defaults.audio.bitrate_label': 'Bitrate',
     'settings.defaults.audio.note':
       'FLAC ignores bitrate (lossless). Opus & OGG map to different scales — the backend value is translated accordingly.',
+
+    'settings.defaults.cooldown.eyebrow': 'Worker pacing',
+    'settings.defaults.cooldown.title': 'Lane cooldown after jobs',
+    'settings.defaults.cooldown.description':
+      'Pause per download lane after each job. The longer range applies after 429 (rate limit) responses. Hot-reload — the worker picks up new values at the next cooldown tick.',
+    'settings.defaults.cooldown.normal_label': 'Standard (seconds)',
+    'settings.defaults.cooldown.normal_hint': 'Random range after success / unflagged error',
+    'settings.defaults.cooldown.rl_label': '429 rate limit (seconds)',
+    'settings.defaults.cooldown.rl_hint': 'Longer range after a detected 429',
+    'settings.defaults.cooldown.min': 'Min',
+    'settings.defaults.cooldown.max': 'Max',
+    'settings.defaults.cooldown.save': 'Save',
+    'settings.defaults.cooldown.saving': 'saving …',
+    'settings.defaults.cooldown.saved': 'saved',
+    'settings.defaults.cooldown.reset': 'reset to defaults',
+    'settings.defaults.cooldown.error_save':
+      "Couldn't save. Make sure Min ≤ Max in both ranges.",
 
     // Backend-Info section
     'settings.backend.eyebrow': 'Read-only · backend/.env',

@@ -29,9 +29,40 @@ from utils.job_store import (
 )
 
 
-# Cooldown-Bereiche
+# Cooldown-Bereiche (defaults — können via Settings → Standard-Verhalten
+# überschrieben werden; siehe _load_cooldown_ranges)
 _COOLDOWN_NORMAL = (60, 300)        # 1–5 min nach success / unauffälligem error
 _COOLDOWN_429 = (300, 600)          # 5–10 min nach erkanntem 429
+
+
+def _load_cooldown_ranges() -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """Lädt die Cooldown-Ranges aus app_settings, fallback auf Module-Defaults.
+    Wird bei jedem Cooldown-Aufruf live aufgerufen — User-Änderungen in der UI
+    wirken sofort, kein Container-Restart nötig.
+
+    Bei kaputten Werten (negativ, min > max, nicht-numerisch) → Defaults."""
+    from utils.app_settings import get_setting
+
+    def _read(key: str, fallback: int) -> int:
+        try:
+            v = get_setting(f'cooldown.{key}')
+            if v is None:
+                return fallback
+            n = int(v)
+            return n if n >= 0 else fallback
+        except (ValueError, TypeError):
+            return fallback
+
+    n_min = _read('normal_min_s', _COOLDOWN_NORMAL[0])
+    n_max = _read('normal_max_s', _COOLDOWN_NORMAL[1])
+    r_min = _read('rl_min_s', _COOLDOWN_429[0])
+    r_max = _read('rl_max_s', _COOLDOWN_429[1])
+    # Sanity: min ≤ max, sonst die Default-Range nehmen
+    if n_min > n_max:
+        n_min, n_max = _COOLDOWN_NORMAL
+    if r_min > r_max:
+        r_min, r_max = _COOLDOWN_429
+    return (n_min, n_max), (r_min, r_max)
 
 # CSV-Match-Tuning. Dual-Lane: 8 parallel über 2 Source-IPs (4/Lane) liegen
 # bei Deezer (~50 req / 5s soft-limit) komfortabel drunter. Single-Lane: alle
@@ -106,12 +137,13 @@ class JobWorker(threading.Thread):
             })
         # Wenn mind. eine Lane ready: 0 ms bis nächste Lane verfügbar.
         next_ready = min((l["remaining_ms"] for l in lanes), default=0)
+        normal_range, rl_range = _load_cooldown_ranges()
         return {
             "lanes": lanes,
             "next_ready_in_ms": next_ready,
             "cooldown": {
-                "normal_seconds": list(_COOLDOWN_NORMAL),
-                "rate_limited_seconds": list(_COOLDOWN_429),
+                "normal_seconds": list(normal_range),
+                "rate_limited_seconds": list(rl_range),
             },
         }
 
@@ -761,12 +793,13 @@ class JobWorker(threading.Thread):
         # nächsten Job picken (siehe _pick_download_lane). Das halbiert effektiv
         # die Idle-Zeit zwischen Downloads, ohne parallele yt-dlp-Prozesse.
         finished = get_job(track_id) or {}
+        normal_range, rl_range = _load_cooldown_ranges()
         if _looks_like_429(finished.get("message", ""), finished.get("error", "")):
-            lo, hi = _COOLDOWN_429
+            lo, hi = rl_range
             cooldown = random.uniform(lo, hi)
             print(f"[worker] 429 on '{track_id}' (lane {lane}) — extended cooldown {cooldown:.0f}s")
         else:
-            lo, hi = _COOLDOWN_NORMAL
+            lo, hi = normal_range
             cooldown = random.uniform(lo, hi)
             tag = finished.get("status", "?")
             print(f"[worker] lane {lane} cooldown {cooldown:.0f}s (last status={tag})")

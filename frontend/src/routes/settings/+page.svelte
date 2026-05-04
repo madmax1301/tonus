@@ -6,6 +6,7 @@
     systemApi,
     authApi,
     providersConfigApi,
+    cooldownApi,
     ApiError,
     type MetadataProvidersResponse,
     type FormatsInfo,
@@ -15,7 +16,8 @@
     type PatCreateResponse,
     type BannedIp,
     type ManagedUser,
-    type ProviderConfig
+    type ProviderConfig,
+    type CooldownValues
   } from '$lib/api';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
@@ -265,6 +267,57 @@
       providerSaveBusy = null;
     }
   }
+
+  // ── Worker-Cooldown-Konfig ────────────────────────────────────────
+  let cooldownCurrent = $state<CooldownValues | null>(null);
+  let cooldownDefaults = $state<CooldownValues | null>(null);
+  let cooldownLoaded = $state(false);
+  let cooldownBusy = $state(false);
+  let cooldownSaved = $state(false);
+  let cooldownError = $state<string | null>(null);
+
+  async function loadCooldown() {
+    cooldownError = null;
+    try {
+      const res = await cooldownApi.get();
+      cooldownCurrent = { ...res.current };
+      cooldownDefaults = res.defaults;
+      cooldownLoaded = true;
+    } catch {
+      cooldownLoaded = true;
+      // 403 für non-admin: Section ist eh ausgeblendet, stillschweigend ignorieren
+    }
+  }
+
+  async function saveCooldown() {
+    if (!cooldownCurrent) return;
+    cooldownBusy = true;
+    cooldownError = null;
+    cooldownSaved = false;
+    try {
+      await cooldownApi.update(cooldownCurrent);
+      cooldownSaved = true;
+      setTimeout(() => (cooldownSaved = false), 2200);
+    } catch {
+      cooldownError = $t('settings.defaults.cooldown.error_save');
+    } finally {
+      cooldownBusy = false;
+    }
+  }
+
+  function resetCooldownDefaults() {
+    if (cooldownDefaults) {
+      cooldownCurrent = { ...cooldownDefaults };
+    }
+  }
+
+  // Cooldown lazy-load nur wenn User die Defaults-Section öffnet —
+  // konsistent mit den anderen Lazy-Loads (PATs, Bans, Users, Providers).
+  $effect(() => {
+    if (section === 'defaults' && !cooldownLoaded && me?.is_admin) {
+      loadCooldown();
+    }
+  });
 
   /** Heuristik fürs Status-Pill: alle non-secret Felder mit Werten +
    *  alle secret Felder is_set ⇒ configured. Mind. eines gesetzt aber
@@ -962,6 +1015,143 @@
           {$t('settings.defaults.audio.note')}
         </p>
       </div>
+
+      <!-- Worker-Cooldown — admin-only, hot-reload via app_settings -->
+      {#if cooldownLoaded && cooldownCurrent}
+        <div
+          style="background: rgba(20, 20, 24, 0.5); backdrop-filter: blur(40px) saturate(1.2); -webkit-backdrop-filter: blur(40px) saturate(1.2); border: 1px solid var(--color-border-soft); border-radius: 22px; padding: 28px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);"
+        >
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
+          >
+            {$t('settings.defaults.cooldown.eyebrow')}
+          </div>
+          <div
+            class="mt-1"
+            style="font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--color-fg-primary);"
+          >
+            {$t('settings.defaults.cooldown.title')}
+          </div>
+          <p
+            class="mt-2"
+            style="font-size: 12.5px; color: var(--color-fg-secondary); line-height: 1.55; max-width: 620px;"
+          >
+            {$t('settings.defaults.cooldown.description')}
+          </p>
+
+          <div class="grid mt-4" style="grid-template-columns: 1fr 1fr; gap: 18px; max-width: 560px;">
+            <!-- Normal-Range -->
+            <div class="flex flex-col" style="gap: 8px;">
+              <div
+                class="uppercase"
+                style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+              >
+                {$t('settings.defaults.cooldown.normal_label')}
+              </div>
+              <div class="flex items-center" style="gap: 8px;">
+                <label class="flex flex-col" style="gap: 3px; flex: 1;">
+                  <span style="font-size: 10px; color: var(--color-fg-tertiary);"
+                    >{$t('settings.defaults.cooldown.min')}</span
+                  >
+                  <input
+                    type="number"
+                    min="0"
+                    bind:value={cooldownCurrent.normal_min_s}
+                    class="outline-none"
+                    style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 12px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 10px 14px; letter-spacing: 0.04em;"
+                  />
+                </label>
+                <label class="flex flex-col" style="gap: 3px; flex: 1;">
+                  <span style="font-size: 10px; color: var(--color-fg-tertiary);"
+                    >{$t('settings.defaults.cooldown.max')}</span
+                  >
+                  <input
+                    type="number"
+                    min="0"
+                    bind:value={cooldownCurrent.normal_max_s}
+                    class="outline-none"
+                    style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 12px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 10px 14px; letter-spacing: 0.04em;"
+                  />
+                </label>
+              </div>
+              <p style="font-size: 10.5px; color: var(--color-fg-tertiary); line-height: 1.4;">
+                {$t('settings.defaults.cooldown.normal_hint')}
+              </p>
+            </div>
+
+            <!-- Rate-Limit-Range -->
+            <div class="flex flex-col" style="gap: 8px;">
+              <div
+                class="uppercase"
+                style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+              >
+                {$t('settings.defaults.cooldown.rl_label')}
+              </div>
+              <div class="flex items-center" style="gap: 8px;">
+                <label class="flex flex-col" style="gap: 3px; flex: 1;">
+                  <span style="font-size: 10px; color: var(--color-fg-tertiary);"
+                    >{$t('settings.defaults.cooldown.min')}</span
+                  >
+                  <input
+                    type="number"
+                    min="0"
+                    bind:value={cooldownCurrent.rl_min_s}
+                    class="outline-none"
+                    style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 12px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 10px 14px; letter-spacing: 0.04em;"
+                  />
+                </label>
+                <label class="flex flex-col" style="gap: 3px; flex: 1;">
+                  <span style="font-size: 10px; color: var(--color-fg-tertiary);"
+                    >{$t('settings.defaults.cooldown.max')}</span
+                  >
+                  <input
+                    type="number"
+                    min="0"
+                    bind:value={cooldownCurrent.rl_max_s}
+                    class="outline-none"
+                    style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 12px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 10px 14px; letter-spacing: 0.04em;"
+                  />
+                </label>
+              </div>
+              <p style="font-size: 10.5px; color: var(--color-fg-tertiary); line-height: 1.4;">
+                {$t('settings.defaults.cooldown.rl_hint')}
+              </p>
+            </div>
+          </div>
+
+          {#if cooldownError}
+            <p class="mt-3" style="font-size: 12px; color: #f87171;">{cooldownError}</p>
+          {/if}
+
+          <div class="flex items-center mt-4" style="gap: 10px; flex-wrap: wrap;">
+            <button
+              type="button"
+              disabled={cooldownBusy}
+              onclick={saveCooldown}
+              class="inline-flex items-center transition-opacity"
+              style="background: {accent}; color: #1a1410; padding: 10px 20px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25); opacity: {cooldownBusy ? 0.6 : 1}; cursor: {cooldownBusy ? 'wait' : 'pointer'};"
+            >
+              {#if cooldownSaved}
+                <Check size={13} strokeWidth={2} />
+                {$t('settings.defaults.cooldown.saved')}
+              {:else if cooldownBusy}
+                {$t('settings.defaults.cooldown.saving')}
+              {:else}
+                {$t('settings.defaults.cooldown.save')}
+              {/if}
+            </button>
+            <button
+              type="button"
+              onclick={resetCooldownDefaults}
+              class="inline-flex items-center transition-colors"
+              style="background: transparent; color: var(--color-fg-secondary); padding: 10px 18px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; border: 1px solid var(--color-border-soft);"
+            >
+              {$t('settings.defaults.cooldown.reset')}
+            </button>
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 

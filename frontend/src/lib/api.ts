@@ -488,6 +488,28 @@ export const providersConfigApi = {
     )
 };
 
+// ── Worker-Cooldown-Konfig (admin-only) ───────────────────────────
+export interface CooldownValues {
+  normal_min_s: number;
+  normal_max_s: number;
+  rl_min_s: number;
+  rl_max_s: number;
+}
+export interface CooldownConfigResponse {
+  current: CooldownValues;
+  defaults: CooldownValues;
+}
+
+export const cooldownApi = {
+  get: () => api.get<CooldownConfigResponse>('/api/settings/cooldown'),
+  update: (values: CooldownValues) =>
+    request<{ ok: boolean }>('/api/settings/cooldown', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values)
+    })
+};
+
 // ─── Import / URL / Reverse ────────────────────────────────
 
 export interface CsvImportStartResponse {

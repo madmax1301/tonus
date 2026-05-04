@@ -3709,6 +3709,67 @@ async def providers_config_put(provider_name: str, req: ProviderUpdateRequest,
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Worker-Cooldown-Konfig (Admin-only) — UI-editierbar
+# ─────────────────────────────────────────────────────────────────────
+
+# DB-Keys synchron mit utils/worker.py:_load_cooldown_ranges
+_COOLDOWN_KEYS = ('normal_min_s', 'normal_max_s', 'rl_min_s', 'rl_max_s')
+
+
+class CooldownUpdateRequest(BaseModel):
+    normal_min_s: int
+    normal_max_s: int
+    rl_min_s: int
+    rl_max_s: int
+
+
+@app.get("/api/settings/cooldown")
+async def settings_cooldown_get(_: None = Depends(require_token),
+                                  __: None = Depends(require_admin)):
+    """Liefert aktuelle Cooldown-Werte + Defaults (für Reset-Buttons)."""
+    from utils.app_settings import get_setting
+    from utils.worker import _COOLDOWN_NORMAL, _COOLDOWN_429
+
+    defaults = {
+        'normal_min_s': _COOLDOWN_NORMAL[0],
+        'normal_max_s': _COOLDOWN_NORMAL[1],
+        'rl_min_s': _COOLDOWN_429[0],
+        'rl_max_s': _COOLDOWN_429[1],
+    }
+    current = {}
+    for k in _COOLDOWN_KEYS:
+        v = get_setting(f'cooldown.{k}')
+        try:
+            current[k] = int(v) if v is not None else defaults[k]
+        except (ValueError, TypeError):
+            current[k] = defaults[k]
+    return {'current': current, 'defaults': defaults}
+
+
+@app.put("/api/settings/cooldown")
+async def settings_cooldown_put(req: CooldownUpdateRequest,
+                                  _: None = Depends(require_token),
+                                  __: None = Depends(require_admin)):
+    """Schreibt die 4 Cooldown-Werte. Sanity-Checks: alle non-negative,
+    min ≤ max in beiden Ranges. Hot-Reload — Worker liest beim nächsten
+    Cooldown-Tick die neuen Werte."""
+    from utils.app_settings import set_setting
+
+    if any(v < 0 for v in (req.normal_min_s, req.normal_max_s, req.rl_min_s, req.rl_max_s)):
+        raise HTTPException(status_code=400, detail='Werte müssen ≥ 0 sein.')
+    if req.normal_min_s > req.normal_max_s:
+        raise HTTPException(status_code=400, detail='Normal-Min darf nicht größer als Normal-Max sein.')
+    if req.rl_min_s > req.rl_max_s:
+        raise HTTPException(status_code=400, detail='Rate-Limit-Min darf nicht größer als Rate-Limit-Max sein.')
+
+    set_setting('cooldown.normal_min_s', str(req.normal_min_s))
+    set_setting('cooldown.normal_max_s', str(req.normal_max_s))
+    set_setting('cooldown.rl_min_s', str(req.rl_min_s))
+    set_setting('cooldown.rl_max_s', str(req.rl_max_s))
+    return {'ok': True}
+
+
+# ─────────────────────────────────────────────────────────────────────
 # User-Management (Admin-only)
 # ─────────────────────────────────────────────────────────────────────
 
