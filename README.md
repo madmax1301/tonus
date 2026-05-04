@@ -54,19 +54,22 @@ It's a single-tenant tool you self-host on a NAS (or any Docker host). All crede
 ### One-time setup on the host
 
 ```bash
-# Persistent volumes (NAS path; adjust for your host)
-sudo mkdir -p /volume1/docker/tonus/data       # auth DB, jobs, settings
-sudo mkdir -p /volume1/docker/tonus/downloads  # in-flight audio cache
-sudo mkdir -p /volume1/docker/music            # your Navidrome library
-
 # Get the code
 git clone https://github.com/madmax1301/tonus.git
 cd tonus
+
+# Local data folders next to the compose file (matches default volume paths)
+mkdir -p tonus-data downloads
+
+# Point the music volume at your Navidrome library
+$EDITOR docker-compose.yml   # replace /path/to/music with your actual library path
 
 # Configure
 cp .env.example .env
 $EDITOR .env   # at minimum: NAVIDROME_* + a strong TONUS_API_TOKEN
 ```
+
+On a Synology NAS where absolute paths are nicer, either edit `docker-compose.yml` directly to point at `/volume1/docker/...` or drop a `docker-compose.override.yml` next to it that only overrides the `volumes:` section.
 
 ### Boot
 
@@ -251,7 +254,7 @@ docker compose pull             # fetch the new image from GHCR
 docker compose up -d            # restart with the new image
 ```
 
-`/app/data/jobs.db` lives on a host bind-mount and survives image swaps. **Do not skip the `mkdir /volume1/docker/tonus/data` step on first install** — without the volume the DB dies on every container recreation.
+`/app/data/jobs.db` lives on a host bind-mount (the `./tonus-data` folder by default) and survives image swaps. **Do not skip the `mkdir tonus-data downloads` step on first install** — without those bind-mount targets, the DB dies on every container recreation.
 
 ## Container images
 
