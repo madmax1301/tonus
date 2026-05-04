@@ -1485,6 +1485,45 @@
                 </span>
               </div>
 
+              {#if p.name === 'spotify'}
+                <details
+                  style="background: rgba(30, 215, 96, 0.04); border: 1px solid rgba(30, 215, 96, 0.18); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px;"
+                >
+                  <summary
+                    class="cursor-pointer uppercase"
+                    style="font-size: 10.5px; letter-spacing: 0.18em; color: rgba(134, 239, 172, 0.95); list-style: none; font-weight: 600;"
+                  >
+                    {$t('settings.connections.spotify.help_title')}
+                  </summary>
+                  <ol
+                    style="margin: 12px 0 0 18px; padding: 0; font-size: 12.5px; color: var(--color-fg-secondary); line-height: 1.6;"
+                  >
+                    <li style="margin-bottom: 6px;">
+                      {$t('settings.connections.spotify.help_step1')}
+                    </li>
+                    <li style="margin-bottom: 6px;">
+                      {$t('settings.connections.spotify.help_step2')}
+                    </li>
+                    <li style="margin-bottom: 6px;">
+                      {$t('settings.connections.spotify.help_step3')}
+                    </li>
+                    <li style="margin-bottom: 6px;">
+                      {$t('settings.connections.spotify.help_step4')}
+                    </li>
+                    <li>{$t('settings.connections.spotify.help_step5')}</li>
+                  </ol>
+                  <a
+                    href="https://developer.spotify.com/dashboard"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center"
+                    style="margin-top: 10px; font-size: 12px; color: rgba(134, 239, 172, 0.95); text-decoration: underline; text-underline-offset: 3px;"
+                  >
+                    {$t('settings.connections.spotify.help_link')}
+                  </a>
+                </details>
+              {/if}
+
               <div class="flex flex-col" style="gap: 12px;">
                 {#each p.fields as f (f.key)}
                   <label class="flex flex-col gap-1.5" for="prov-{p.name}-{f.key}">

@@ -210,6 +210,20 @@ export const strings = {
     'settings.connections.error_save': 'Konnte nicht speichern — Backend nicht erreichbar?',
     'settings.connections.reset_field': 'auf env-Default zurücksetzen',
 
+    // Per-Provider Setup-Anleitungen — werden über den Form-Feldern gerendert
+    'settings.connections.spotify.help_title': 'So legst du eine Spotify-App an',
+    'settings.connections.spotify.help_step1':
+      'Öffne das Spotify Developer Dashboard und melde dich mit deinem Spotify-Account an.',
+    'settings.connections.spotify.help_step2':
+      'Klick auf "Create app". Name + Beschreibung sind frei wählbar (z.B. "Tonus"). Bei "Redirect URI" trag z.B. http://localhost:8088 ein — Spotify verlangt mindestens eine, auch wenn Tonus sie aktuell nicht für OAuth nutzt.',
+    'settings.connections.spotify.help_step3':
+      'Wähl "Web API" als API/SDK und akzeptier die Terms.',
+    'settings.connections.spotify.help_step4':
+      'Im App-Dashboard → "Settings" siehst du die Client ID. "View client secret" zeigt das Secret an.',
+    'settings.connections.spotify.help_step5':
+      'Beide Werte in die Felder unten eintragen, Speichern, Container-Restart — fertig.',
+    'settings.connections.spotify.help_link': 'Spotify Developer Dashboard öffnen →',
+
     // Users section (admin-only)
     'settings.users.eyebrow': 'Konten',
     'settings.users.title': 'Benutzer & Admins',
@@ -645,6 +659,20 @@ export const strings = {
     'settings.connections.error_load': 'Could not load provider configuration.',
     'settings.connections.error_save': "Couldn't save — backend not reachable?",
     'settings.connections.reset_field': 'reset to env default',
+
+    // Per-provider setup help blocks — rendered above the form fields
+    'settings.connections.spotify.help_title': 'How to create a Spotify app',
+    'settings.connections.spotify.help_step1':
+      'Open the Spotify Developer Dashboard and sign in with your Spotify account.',
+    'settings.connections.spotify.help_step2':
+      'Click "Create app". Name + description are up to you (e.g. "Tonus"). For "Redirect URI" add e.g. http://localhost:8088 — Spotify requires at least one, even though Tonus does not currently use it for OAuth.',
+    'settings.connections.spotify.help_step3':
+      'Select "Web API" as the API/SDK and accept the terms.',
+    'settings.connections.spotify.help_step4':
+      'In your app dashboard → "Settings" you\'ll find the Client ID. "View client secret" reveals the secret.',
+    'settings.connections.spotify.help_step5':
+      'Paste both values into the fields below, save, restart the container — done.',
+    'settings.connections.spotify.help_link': 'Open Spotify Developer Dashboard →',
 
     // Users section (admin-only)
     'settings.users.eyebrow': 'Accounts',
