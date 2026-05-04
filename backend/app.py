@@ -936,13 +936,29 @@ async def list_queue(
             tuple(wanted),
         ).fetchone()["n"]
 
+        # Sortierung in zwei Gruppen:
+        #   1) processing + queued: FIFO ASC — ältester ist als nächstes zu
+        #      pullen (matched Worker-ORDER BY created_at_ms ASC). Damit
+        #      stimmt Lane-Card-UpNext mit dem Top der Liste überein.
+        #   2) completed + error: DESC — neueste Erlebnisse zuerst, klassischer
+        #      Newsfeed-Style fürs Aufräumen / Debuggen.
         rows = conn.execute(
             f"""
             SELECT job_id, status, stage, progress, message, download_url,
                    created_at_ms, updated_at_ms, payload_json
             FROM download_jobs
             WHERE status IN ({placeholders})
-            ORDER BY created_at_ms DESC, rowid DESC
+            ORDER BY
+              CASE status
+                WHEN 'processing' THEN 1
+                WHEN 'queued'     THEN 2
+                WHEN 'completed'  THEN 3
+                WHEN 'error'      THEN 4
+                ELSE 5
+              END ASC,
+              CASE WHEN status IN ('queued', 'processing') THEN created_at_ms END ASC,
+              CASE WHEN status IN ('completed', 'error')   THEN created_at_ms END DESC,
+              rowid DESC
             LIMIT ? OFFSET ?
             """,
             (*wanted, limit, offset),

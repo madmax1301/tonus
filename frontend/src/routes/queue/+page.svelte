@@ -174,11 +174,19 @@
       .sort((a, b) => (a.created_at_ms ?? 0) - (b.created_at_ms ?? 0));
   });
 
-  /** Lane-Slots: N = Anzahl Lanes (1 single, 2 dual). Slot[i] zeigt
-   *  processingJobs[i] wenn vorhanden, sonst die Lane als idle/cooldown.
-   *  Plus immer ein Up-Next aus queuedJobs[i] — auch sichtbar wenn die
-   *  Lane gerade läuft (zeigt was direkt nach dem aktuellen Job kommt)
-   *  oder wenn Cooldown läuft (zeigt was beim Aufwachen losgeht). */
+  /** Lane-Slots: N = Anzahl Lanes (1 single, 2 dual). Slot.job kommt
+   *  aus processingJobs[i]. Slot.upNext wird in **Pull-Order** zugewiesen:
+   *  die Lane die als nächstes ein Job zieht bekommt queuedJobs[0],
+   *  die zweit-bereit Lane queuedJobs[1] usw. Pull-Order:
+   *
+   *    1. Idle-Lanes (kein Job, keine Cooldown)  — pullen sofort
+   *    2. Cooldown-Lanes  — pullen wenn ihre remainingMs abgelaufen sind
+   *    3. Processing-Lanes  — pullen erst nach dem aktuellen Job
+   *
+   *  Damit stimmt der Lane-A-Up-Next visuell mit dem überein was der
+   *  Worker tatsächlich als nächstes zieht (innerhalb der Annahme dass
+   *  Cooldown-Reste die einzige Wartezeit sind — Worker-Round-Robin
+   *  zwischen idle-Lanes ist nicht UI-sichtbar). */
   type LaneSlot = {
     laneName: string;
     remainingMs: number;
@@ -187,12 +195,21 @@
   };
   const laneSlots = $derived.by<LaneSlot[]>(() => {
     const lanesArr = liveLanes.length > 0 ? liveLanes : [{ name: 'default', remaining_ms: 0 }];
-    return lanesArr.map((l, i) => ({
+    const slots: LaneSlot[] = lanesArr.map((l, i) => ({
       laneName: l.name,
       remainingMs: l.remaining_ms,
       job: processingJobs[i] ?? null,
-      upNext: queuedJobs[i] ?? null
+      upNext: null
     }));
+    // Pull-Order-Score: idle/ready=0, cooldown=remainingMs, processing=∞
+    // (Processing-Lanes wissen wir nicht wann sie wieder pullen — ans Ende.)
+    const pullOrder = slots
+      .map((s, idx) => ({ idx, score: s.job ? Number.POSITIVE_INFINITY : s.remainingMs }))
+      .sort((a, b) => a.score - b.score);
+    pullOrder.forEach(({ idx }, pullPos) => {
+      slots[idx].upNext = queuedJobs[pullPos] ?? null;
+    });
+    return slots;
   });
 
   const isDualLane = $derived(laneSlots.length >= 2);
@@ -275,12 +292,15 @@
     }
   }
 
-  // Liste ohne die processing-Jobs (die landen oben in der Lane-Strip)
+  // Liste ohne die Jobs die schon in der Lane-Strip oben sichtbar sind:
+  // alle processing + alle upNext-Slots. Sonst Doppel-Render im Card und List.
   const filtered = $derived.by<QueueJob[]>(() => {
     if (!data) return [];
     const q = filterText.trim().toLowerCase();
-    const featuredIds = new Set(processingJobs.map((j) => j.job_id));
-    let items = data.items.filter((j) => !featuredIds.has(j.job_id));
+    const stripIds = new Set<string>();
+    for (const j of processingJobs) stripIds.add(j.job_id);
+    for (const s of laneSlots) if (s.upNext) stripIds.add(s.upNext.job_id);
+    let items = data.items.filter((j) => !stripIds.has(j.job_id));
     if (q) {
       items = items.filter((j) => {
         const t = j.payload?.track ?? {};
@@ -684,9 +704,113 @@
               </span>
             </div>
           </div>
+        {:else if slot.upNext}
+          <!-- Idle / Cooldown MIT upNext — der nächste wartende Track wird
+               als vollwertiger Preview gezeigt: Album-Cover, Track, Artist,
+               Origin/Dest. Lane-Status (Cooldown 2:24 / Bereit) lebt im
+               eyebrow oberhalb, statt einer dashed-circle-Platzhalter-Card. -->
+          {@const nx = slot.upNext.payload?.track ?? {}}
+          {@const nxOrigin = jobOrigin(slot.upNext)}
+          {@const nxDest = jobDest(slot.upNext)}
+          <VinylWithCover
+            src={nx.album_art}
+            alt={nx.album}
+            artist={nx.artist ?? ''}
+            size={84}
+            spinning={false}
+          />
+          <div class="flex-1 min-w-0">
+            <div
+              class="font-semibold uppercase flex items-center gap-2"
+              style="
+                font-size: 10.5px;
+                letter-spacing: 0.18em;
+                color: var(--color-fg-tertiary);
+                margin-bottom: 4px;
+              "
+            >
+              {#if isDualLane}
+                <span style="font-family: var(--font-mono); letter-spacing: 0.1em;">
+                  {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+                </span>
+                <span>·</span>
+              {/if}
+              <span>{isCooldown ? $t('queue.lane.cooldown') : $t('queue.lane.idle')}</span>
+              {#if isCooldown}
+                <span
+                  class="tabular-nums"
+                  style="font-family: var(--font-mono); letter-spacing: 0.05em; color: var(--color-fg-secondary); font-weight: 500; text-transform: none;"
+                >
+                  {fmtMs(slot.remainingMs)}
+                </span>
+              {/if}
+            </div>
+            <div
+              class="font-semibold truncate"
+              style="
+                font-family: var(--font-display);
+                font-size: 20px;
+                letter-spacing: -0.025em;
+                line-height: 1.15;
+              "
+              title={nx.name ?? ''}
+            >
+              {nx.name ?? slot.upNext.job_id}
+            </div>
+            <div
+              class="truncate"
+              style="font-size: 12.5px; color: var(--color-fg-secondary); margin-top: 2px;"
+            >
+              {nx.artist ?? ''}
+            </div>
+            <div class="mt-2 flex items-center gap-2 flex-wrap" style="font-size: 10.5px;">
+              <span
+                class="inline-flex items-center gap-1.5"
+                style="
+                  padding: 2.5px 9px;
+                  border-radius: 999px;
+                  background: rgba(255, 255, 255, 0.06);
+                  border: 1px solid var(--color-border-soft);
+                  color: var(--color-fg-secondary);
+                "
+                title="Quelle"
+              >
+                <svelte:component this={nxOrigin.icon} size={10.5} strokeWidth={1.6} />
+                {nxOrigin.label}
+              </span>
+              <span style="color: var(--color-fg-tertiary); font-size: 10px;">→</span>
+              <span
+                class="inline-flex items-center gap-1.5"
+                style="
+                  padding: 2.5px 9px;
+                  border-radius: 999px;
+                  background: rgba(255, 255, 255, 0.04);
+                  border: 1px solid var(--color-border-soft);
+                  color: var(--color-fg-tertiary);
+                "
+                title="Ziel"
+              >
+                <svelte:component this={nxDest.icon} size={10.5} strokeWidth={1.6} />
+                {nxDest.label}
+              </span>
+              <span
+                class="font-semibold uppercase ml-auto"
+                style="
+                  padding: 2.5px 10px;
+                  border-radius: 999px;
+                  background: color-mix(in oklab, {accent} 10%, transparent);
+                  border: 1px dashed color-mix(in oklab, {accent} 36%, transparent);
+                  color: var(--color-fg-secondary);
+                  font-size: 9px;
+                  letter-spacing: 0.18em;
+                "
+              >
+                {$t('queue.lane.up_next')}
+              </span>
+            </div>
+          </div>
         {:else}
-          <!-- Idle / Cooldown — Lane hat gerade nichts laufen.
-               Zeigt Lane-Name (im Dual-Mode) und Cooldown-Counter wenn aktiv. -->
+          <!-- Truly idle — keine Lane läuft, queue ist leer. -->
           <div
             class="flex items-center justify-center"
             style="
@@ -726,11 +850,7 @@
                 color: var(--color-fg-secondary);
               "
             >
-              {#if isCooldown}
-                {$t('queue.lane.cooldown')}
-              {:else}
-                {$t('queue.lane.idle')}
-              {/if}
+              {isCooldown ? $t('queue.lane.cooldown') : $t('queue.lane.idle')}
             </div>
             {#if isCooldown}
               <div
