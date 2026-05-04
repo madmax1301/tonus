@@ -73,9 +73,11 @@ $EDITOR .env   # at minimum: NAVIDROME_* + a strong TONUS_API_TOKEN
 ### Boot
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 # UI: http://<host>:8088
 ```
+
+The shipped `docker-compose.yml` pulls a prebuilt image from [GitHub Container Registry](https://ghcr.io/madmax1301/tonus). To build from local source instead, append `--build`.
 
 On first open the **setup wizard** creates your admin account and walks you through 2FA + provider connections. After that everything is configurable from *Settings*.
 
@@ -240,12 +242,42 @@ The frontend is bundled into the container at build time (multi-stage). No separ
 
 ```bash
 cd /opt/GitHub/tonus
-git pull
-docker compose build --no-cache
-docker compose up -d
+git pull                        # only needed if compose file or .env changed
+docker compose pull             # fetch the new image from GHCR
+docker compose up -d            # restart with the new image
 ```
 
-`/app/data/jobs.db` lives on a host bind-mount and survives `--no-cache` rebuilds. **Do not skip the `mkdir /volume1/docker/tonus/data` step on first install** — without the volume the DB dies on every rebuild.
+`/app/data/jobs.db` lives on a host bind-mount and survives image swaps. **Do not skip the `mkdir /volume1/docker/tonus/data` step on first install** — without the volume the DB dies on every container recreation.
+
+To force a rebuild from local source instead of pulling:
+
+```bash
+docker compose up -d --build
+```
+
+## Container images
+
+Images are built and published to GHCR by [`.github/workflows/build.yml`](.github/workflows/build.yml) on every push to `main` and on every `vX.Y.Z` git tag. Multi-arch: `linux/amd64` + `linux/arm64`.
+
+| Tag | Stable? | Points to |
+|---|---|---|
+| `:latest` | rolling | Most recent commit on `main` |
+| `:main` | rolling | Same as `:latest` |
+| `:0.1.0` | yes | A specific tagged release (immutable) |
+| `:0.1` | rolling within minor | Latest patch in the `0.1.x` series |
+| `:sha-abc1234` | yes | A specific commit (immutable) |
+
+### Pin to a release
+
+For a NAS running production, prefer a fixed minor:
+
+```yaml
+services:
+  tonus:
+    image: ghcr.io/madmax1301/tonus:0.1
+```
+
+You'll get every patch release automatically (`0.1.0` → `0.1.1` → `0.1.2`) but stay locked out of `0.2.x` until you opt in. Cutting a new release is a `git tag -a v0.1.1 -m "..." && git push origin v0.1.1` away.
 
 ## License
 

@@ -2,6 +2,7 @@
 frontend/node_modules
 frontend/.svelte-kit
 frontend/build
+
 # Backend
 backend/__pycache__
 backend/**/__pycache__
@@ -10,11 +11,25 @@ backend/*.pyc
 backend/*.bak
 backend/*.bak.*
 backend/downloads
-# Misc
-.DS_Store
-.git
-.gitignore
-*.md
+
+# Python venvs
+.venv
+venv
+
+# Local dev
 docker-compose.override.yml
 test-music
 test-downloads
+test-data
+
+# Repo metadata — not needed at runtime
+.git
+.gitignore
+.github
+docs
+*.md
+
+# OS / editor noise
+.DS_Store
+.vscode
+.idea

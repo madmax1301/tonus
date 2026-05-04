@@ -49,6 +49,11 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 - `.env` lives in repo root (no longer `backend/.env`)
 - Logo + 4 README screenshots (library, onboarding, album, settings)
 - `.gitignore` reorganized by topic; `test-data/`, `.venv/`, pytest outputs, log files now ignored
+- GitHub Actions pipeline (`.github/workflows/build.yml`) — multi-arch (amd64+arm64) build & push to GHCR on every push to `main` and every `vX.Y.Z` git tag
+- `docker-compose.yml` now references `ghcr.io/madmax1301/tonus:latest` — NAS updates become `docker compose pull && up -d` instead of slow `--no-cache` rebuilds
+- `.dockerignore` extended (`docs/`, `.github/`, `test-data/`, venvs) — image no longer carries Repo-Metadata or screenshots
+- Issue & PR templates (`.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`)
+- MIT License + comprehensive README with logo, screenshots, ASCII architecture diagram, full `.env` table, two-layer configuration explanation
 
 ### Changed
 - `.env` location: `backend/.env` → repo root `.env`
