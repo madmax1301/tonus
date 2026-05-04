@@ -863,11 +863,11 @@
           </div>
         {/if}
         </div>
-        <!-- Up next: nächster wartender Track der in dieser Lane laufen wird.
-             Sichtbar sowohl wenn die Lane gerade läuft (zeigt was direkt
-             nach dem aktuellen Job kommt) als auch in Cooldown/Idle (zeigt
-             was beim Aufwachen losgeht). Mapping: queuedJobs[i] auf Lane[i]. -->
-        {#if slot.upNext}
+        <!-- Up next: zeigt was direkt nach dem aktuellen Job kommt — NUR
+             wenn die Lane gerade läuft (job ist gesetzt). Im Cooldown/Idle-
+             Zustand wird der upNext schon als Haupt-Card angezeigt
+             (Album-Cover + Track), deshalb wäre der Footer dort doppelt. -->
+        {#if job && slot.upNext}
           {@const nx = slot.upNext.payload?.track ?? {}}
           <div
             class="flex items-center gap-2 min-w-0"
