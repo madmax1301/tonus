@@ -507,13 +507,6 @@
                   <AlertTriangle size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95); flex-shrink: 0;" />
                   <span>{$t('auth.onboarding.restart_required')}</span>
                 </div>
-              {:else}
-                <div
-                  style="margin-top: 18px; padding: 10px 14px; border: 1px solid var(--color-border-soft); border-radius: 8px; font-size: 11.5px; color: var(--color-fg-secondary); line-height: 1.5; font-family: var(--font-mono); letter-spacing: 0.02em;"
-                >
-                  <span style="color: var(--color-fg-tertiary);">$</span> tonus auth — Provider wählen oder
-                  überspringen
-                </div>
               {/if}
 
               <div class="flex items-center flex-wrap" style="gap: 10px; margin-top: 20px;">
