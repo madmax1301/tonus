@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions
+    url: https://github.com/madmax1301/tonus/discussions
+    about: Questions, ideas and general discussion go here, not in the issue tracker.
