@@ -13,6 +13,6 @@ services:
       - NAVIDROME_MUSIC_PATH=/music
       - NAVIDROME_API_URL=${NAVIDROME_API_URL}
     volumes:
-      - /volume1/docker/music:/music:rw
-      - /volume1/docker/tonus/downloads:/app/downloads:rw
-      - /volume1/docker/tonus/data:/app/data:rw
+      - /path/to/music:/music:rw
+      - ./downloads:/app/downloads:rw
+      - ./tonus-data:/app/data:rw
