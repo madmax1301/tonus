@@ -2,18 +2,21 @@ name: Build & publish container
 
 # Builds the Tonus image and pushes it to GitHub Container Registry (GHCR).
 #
-# Tag strategy
-#   - push to main          -> :dev, :sha-<short>            (bleeding-edge for testing)
+# Branch & tag strategy
+#   - push to dev           -> :dev, :sha-<short>            (bleeding-edge, daily work)
+#   - push to main          -> :sha-<short>                  (stable line, kein rolling-alias)
 #   - push tag vX.Y.Z       -> :X.Y.Z, :X.Y, :latest         (stable, promoted release)
-#   - pull request to main  -> build only (no push), smoke-test
+#   - pull request          -> build only (no push), smoke-test
 #
-#   :latest now ONLY moves on a semver tag. Every main-push refreshes :dev,
-#   so a `git push origin main` followed by `docker compose pull` on a dev
-#   deployment is the test-loop — production stays on :0.1 (rolling within
-#   minor) or :latest (only after a tag).
+#   :dev rollt mit dem dev-Branch. main ist die "this is shippable"-Linie:
+#   stabile Stände landen via Merge oder PR aus dev hier rein, Tags
+#   vX.Y.Z sitzen ausschließlich auf main-Commits.
+#
+#   Antwort auf "was ist gerade auf main?" = der letzte semver-Tag.
+#   Deshalb braucht main keinen rolling alias — :latest kommt vom Tag.
 #
 # Architectures: linux/amd64 + linux/arm64
-#   Synology DS220+ is amd64 (Celeron J4025); arm64 is for Pi / Apple-Silicon hosts.
+#   Synology DS220+ ist amd64 (Celeron J4025); arm64 für Pi / Apple-Silicon.
 #
 # Cache: GitHub Actions cache (type=gha) — keeps layer reuse fast and free.
 #
@@ -25,11 +28,13 @@ on:
   push:
     branches:
       - main
+      - dev
     tags:
       - 'v*.*.*'
   pull_request:
     branches:
       - main
+      - dev
 
 permissions:
   contents: read
@@ -65,11 +70,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # `flavor: latest=auto` ist Default — :latest wird NUR auf
-          # semver-Tags gesetzt, NICHT auf main-pushes. Genau das wollen
-          # wir hier (Stable-Channel kontrolliert promoted via tag).
+          # :dev nur aus dem dev-Branch, :latest nur aus semver-Tags
+          # (`flavor: latest=auto` Default — type=semver setzt :latest
+          # automatisch). Main-Pushes bekommen nur :sha-<short>.
           tags: |
-            type=raw,value=dev,enable={{is_default_branch}}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
