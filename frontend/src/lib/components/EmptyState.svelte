@@ -63,7 +63,7 @@
         height: 180px;
         border-radius: 50%;
         background:
-          radial-gradient(circle at 50% 50%, {accent} 0 14px, #18120c 14px 18px, transparent 18px),
+          radial-gradient(circle at 50% 50%, {accent} 0 24px, #18120c 24px 28px, transparent 28px),
           repeating-radial-gradient(circle at 50% 50%, #0a0a0c 0 1px, #161618 1px 3px),
           radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.08), transparent 50%),
           #0a0a0c;
@@ -73,15 +73,32 @@
         position: relative;
       "
     >
-      <span
+      <!-- Center label with glyph-name (LIBRARY / QUEUE) — gleiche Look wie
+           Library-Hero-Vinyl, nur statt Artist/Year hier der Glyph-Kontext. -->
+      <div
+        class="absolute left-1/2 top-1/2 flex flex-col items-center justify-center text-center"
         style="
-          position: absolute;
-          inset: 33%;
+          transform: translate(-50%, -50%);
+          width: 33%;
+          height: 33%;
           border-radius: 50%;
+          padding: 6px;
           background: radial-gradient(circle, oklch(40% 0.10 {DEFAULT_HUE}), oklch(22% 0.05 {DEFAULT_HUE}));
           box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
         "
-      ></span>
+      >
+        <div
+          class="font-semibold uppercase"
+          style="
+            font-size: 8px;
+            letter-spacing: 0.18em;
+            color: rgba(255, 255, 255, 0.65);
+            font-family: var(--font-display);
+          "
+        >
+          {glyph}
+        </div>
+      </div>
     </div>
   {/if}
 
