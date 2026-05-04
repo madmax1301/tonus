@@ -296,6 +296,9 @@ export interface QueueJob {
   stage?: string;
   progress?: number;
   message?: string;
+  download_url?: string;
+  created_at_ms?: number;
+  updated_at_ms?: number;
   payload?: QueueJobPayload;
 }
 

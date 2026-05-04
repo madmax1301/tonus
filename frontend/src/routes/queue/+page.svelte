@@ -75,9 +75,11 @@
     return { icon: HardDrive, label: tt('queue.dest.local') };
   }
 
-  type Filter = 'all' | 'queued' | 'processing' | 'completed' | 'error';
+  type Filter = 'active' | 'all' | 'queued' | 'processing' | 'completed' | 'error';
 
-  let activeFilter = $state<Filter>('all');
+  /** `active` = queued+processing kombiniert. Default-View: User sieht
+   *  nur was gerade in Bewegung ist und vermeidet 15k-completed-DOM-Lag. */
+  let activeFilter = $state<Filter>('active');
   let data = $state<QueueResponse | null>(null);
   let lanes = $state<LaneStatusResponse | null>(null);
   let loadError = $state<string | null>(null);
@@ -105,7 +107,14 @@
   async function fetchQueue(showSpinner = false) {
     if (showSpinner) initialLoading = true;
     try {
-      const status = activeFilter === 'all' ? undefined : activeFilter;
+      // 'active' wird Backend-seitig als comma-CSV-Filter gesendet — das
+      // Backend kennt 'all' nicht als Eigenwert, deshalb undefined dafür.
+      const status =
+        activeFilter === 'all'
+          ? undefined
+          : activeFilter === 'active'
+            ? 'queued,processing'
+            : activeFilter;
       const [q, l] = await Promise.all([
         queueApi.list(status),
         queueApi.lanes().catch(() => null) // optional — älteres backend hat den endpoint nicht
@@ -151,26 +160,39 @@
     fetchQueue(true);
   });
 
-  /** Featured-Job-Pick:
-   *   1) Wenn ≥1 processing → der mit dem **niedrigsten** Progress (gerade
-   *      gestartet → Vinyl spinnt für die ganze Verarbeitung sichtbar).
-   *   2) Sonst wenn ≥1 queued → der nächste queued Job (für Lane-Countdown).
-   *   3) Sonst null (Featured-Card ausgeblendet).
-   */
-  const featuredJob = $derived.by<QueueJob | null>(() => {
-    if (!data?.items) return null;
-    const processing = data.items.filter((j) => j.status === 'processing');
-    if (processing.length > 0) {
-      return processing.reduce((best, j) =>
-        (j.progress ?? 0) < (best.progress ?? 0) ? j : best
-      );
-    }
-    const queued = data.items.filter((j) => j.status === 'queued');
-    return queued[0] ?? null;
+  /** Alle Processing-Jobs werden in der Lane-Strip oben gepinnt — bei
+   *  VPN_SPLIT_ENABLED=true sind das bis zu 2 parallel, sonst max 1.
+   *  Stabile Sortierung nach created_at_ms damit ein Job nicht zwischen
+   *  den Lanes hin und her springt während sich der Progress ändert. */
+  const processingJobs = $derived.by<QueueJob[]>(() => {
+    if (!data?.items) return [];
+    return data.items
+      .filter((j) => j.status === 'processing')
+      .sort((a, b) => (a.created_at_ms ?? 0) - (b.created_at_ms ?? 0));
   });
 
+  /** Lane-Slots: N = Anzahl Lanes (1 single, 2 dual). Slot[i] zeigt
+   *  processingJobs[i] wenn vorhanden, sonst die Lane als idle/cooldown.
+   *  Damit sieht der User immer wie viele Lanes parallel laufen können. */
+  type LaneSlot = {
+    laneName: string;
+    remainingMs: number;
+    job: QueueJob | null;
+  };
+  const laneSlots = $derived.by<LaneSlot[]>(() => {
+    const lanesArr = liveLanes.length > 0 ? liveLanes : [{ name: 'default', remaining_ms: 0 }];
+    return lanesArr.map((l, i) => ({
+      laneName: l.name,
+      remainingMs: l.remaining_ms,
+      job: processingJobs[i] ?? null
+    }));
+  });
+
+  const isDualLane = $derived(laneSlots.length >= 2);
+
+  /** Backdrop-Hue: wenn was läuft, vom ersten processing job, sonst neutral. */
   $effect(() => {
-    const art = featuredJob?.payload?.track?.album_art;
+    const art = processingJobs[0]?.payload?.track?.album_art;
     if (!art) {
       featuredHue = DEFAULT_HUE;
       return;
@@ -246,12 +268,12 @@
     }
   }
 
-  // Liste ohne den featured-Job (der landet oben als Hero-Card)
+  // Liste ohne die processing-Jobs (die landen oben in der Lane-Strip)
   const filtered = $derived.by<QueueJob[]>(() => {
     if (!data) return [];
     const q = filterText.trim().toLowerCase();
-    let items = data.items;
-    if (featuredJob) items = items.filter((j) => j.job_id !== featuredJob.job_id);
+    const featuredIds = new Set(processingJobs.map((j) => j.job_id));
+    let items = data.items.filter((j) => !featuredIds.has(j.job_id));
     if (q) {
       items = items.filter((j) => {
         const t = j.payload?.track ?? {};
@@ -311,12 +333,14 @@
 
   const filterDefs = $derived.by<FilterDef[]>(() => {
     const tt = $t;
+    const activeCount = (counts.processing ?? 0) + (counts.queued ?? 0);
     return [
-      { id: 'all', label: tt('queue.filter.all'), count: total, color: accent },
+      { id: 'active', label: tt('queue.filter.active'), count: activeCount, color: accent },
       { id: 'processing', label: tt('queue.filter.processing'), count: counts.processing ?? 0, color: accent },
       { id: 'queued', label: tt('queue.filter.queued'), count: counts.queued ?? 0, color: 'var(--color-fg-tertiary)' },
       { id: 'completed', label: tt('queue.filter.completed'), count: counts.completed ?? 0, color: 'var(--color-status-done)' },
-      { id: 'error', label: tt('queue.filter.error'), count: counts.error ?? 0, color: 'var(--color-status-error)' }
+      { id: 'error', label: tt('queue.filter.error'), count: counts.error ?? 0, color: 'var(--color-status-error)' },
+      { id: 'all', label: tt('queue.filter.all'), count: (counts.processing ?? 0) + (counts.queued ?? 0) + (counts.completed ?? 0) + (counts.error ?? 0), color: 'var(--color-fg-secondary)' }
     ];
   });
 
@@ -524,137 +548,202 @@
     />
   </div>
 
-  <!-- Featured job card -->
-  {#if featuredJob}
-    {@const t = featuredJob.payload?.track ?? {}}
-    {@const origin = jobOrigin(featuredJob)}
-    {@const dest = jobDest(featuredJob)}
-    {@const isFeaturedQueued = featuredJob.status === 'queued'}
-    {@const isFeaturedProcessing = featuredJob.status === 'processing'}
-    <div
-      class="flex items-center gap-6 mb-6"
-      style="
-        background: linear-gradient(135deg, {tint(featuredHue, 0.18)}, rgba(15, 15, 18, 0.7));
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
-        border: 1px solid {tint(featuredHue, 0.3)};
-        border-radius: 18px;
-        padding: 22px;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
-      "
-    >
-      <VinylWithCover
-        src={t.album_art}
-        alt={t.album}
-        artist={t.artist ?? ''}
-        size={92}
-        spinning={isFeaturedProcessing}
-      />
-      <div class="flex-1 min-w-0">
-        <div
-          class="font-semibold uppercase"
-          style="
-            font-size: 11px;
-            letter-spacing: 0.18em;
-            color: {isFeaturedQueued ? 'var(--color-fg-tertiary)' : accent};
-            margin-bottom: 4px;
-          "
-        >
-          {#if isFeaturedQueued}
-            Wartet auf Lane{nextLaneReadyMs >= 1000 ? ` · ${fmtMs(nextLaneReadyMs)}` : ' · Slot frei'}
-          {:else}
-            {featuredJob.stage ?? 'Wird verarbeitet'}
-          {/if}
-        </div>
-        <div
-          class="font-semibold truncate"
-          style="
-            font-family: var(--font-display);
-            font-size: 22px;
-            letter-spacing: -0.025em;
-            line-height: 1.1;
-          "
-          title={t.name ?? ''}
-        >
-          {t.name ?? featuredJob.job_id}
-        </div>
-        <div
-          class="truncate"
-          style="font-size: 13px; color: var(--color-fg-secondary); margin-top: 2px;"
-        >
-          {t.artist ?? ''}
-        </div>
+  <!-- Lane-Strip: pro Lane einen Slot. Bei VPN_SPLIT_ENABLED=true sind das
+       2 nebeneinander, sonst 1 vollbreit. Slot zeigt entweder den aktuell
+       laufenden Job oder Lane-Idle/Cooldown. So sieht der User auf einen
+       Blick wieviele Lanes parallel aktiv sind und was jede gerade tut. -->
+  <div
+    class="tonus-lane-strip"
+    style="
+      display: grid;
+      grid-template-columns: repeat({laneSlots.length}, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    "
+  >
+    {#each laneSlots as slot, i (slot.laneName + i)}
+      {@const job = slot.job}
+      {@const isCooldown = !job && slot.remainingMs >= 1000}
+      {@const cardAccent = job ? accent : 'var(--color-fg-tertiary)'}
+      <div
+        class="flex items-center gap-5"
+        style="
+          background: linear-gradient(135deg, {job ? tint(featuredHue, 0.18) : 'rgba(20, 20, 24, 0.55)'}, rgba(15, 15, 18, 0.7));
+          backdrop-filter: blur(40px) saturate(1.2);
+          -webkit-backdrop-filter: blur(40px) saturate(1.2);
+          border: 1px solid {job ? tint(featuredHue, 0.3) : 'var(--color-border-soft)'};
+          border-radius: 18px;
+          padding: 20px;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+          min-height: 158px;
+        "
+      >
+        {#if job}
+          {@const tr = job.payload?.track ?? {}}
+          {@const origin = jobOrigin(job)}
+          {@const dest = jobDest(job)}
+          <VinylWithCover
+            src={tr.album_art}
+            alt={tr.album}
+            artist={tr.artist ?? ''}
+            size={84}
+            spinning={true}
+          />
+          <div class="flex-1 min-w-0">
+            <div
+              class="font-semibold uppercase flex items-center gap-2"
+              style="
+                font-size: 10.5px;
+                letter-spacing: 0.18em;
+                color: {accent};
+                margin-bottom: 4px;
+              "
+            >
+              {#if isDualLane}
+                <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.1em;">
+                  {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+                </span>
+                <span style="color: var(--color-fg-tertiary);">·</span>
+              {/if}
+              <span>{job.stage ?? $t('queue.eyebrow.live')}</span>
+            </div>
+            <div
+              class="font-semibold truncate"
+              style="
+                font-family: var(--font-display);
+                font-size: 20px;
+                letter-spacing: -0.025em;
+                line-height: 1.15;
+              "
+              title={tr.name ?? ''}
+            >
+              {tr.name ?? job.job_id}
+            </div>
+            <div
+              class="truncate"
+              style="font-size: 12.5px; color: var(--color-fg-secondary); margin-top: 2px;"
+            >
+              {tr.artist ?? ''}
+            </div>
 
-        <!-- Origin → Dest -->
-        <div class="mt-2.5 flex items-center gap-2.5 flex-wrap" style="font-size: 11px;">
-          <span
-            class="inline-flex items-center gap-1.5"
-            style="
-              padding: 3px 10px;
-              border-radius: 999px;
-              background: rgba(255, 255, 255, 0.06);
-              border: 1px solid var(--color-border-soft);
-              color: var(--color-fg-secondary);
-            "
-            title="Quelle"
-          >
-            <svelte:component this={origin.icon} size={11} strokeWidth={1.6} />
-            {origin.label}
-            {#if origin.detail}
-              <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono);">· {origin.detail}</span>
-            {/if}
-          </span>
-          <span style="color: var(--color-fg-tertiary); font-size: 10px;">→</span>
-          <span
-            class="inline-flex items-center gap-1.5"
-            style="
-              padding: 3px 10px;
-              border-radius: 999px;
-              background: color-mix(in oklab, {accent} 10%, transparent);
-              border: 1px solid color-mix(in oklab, {accent} 33%, transparent);
-              color: {accent};
-            "
-            title="Ziel"
-          >
-            <svelte:component this={dest.icon} size={11} strokeWidth={1.6} />
-            {dest.label}
-            {#if dest.detail}
-              <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono);">· {dest.detail}</span>
-            {/if}
-          </span>
-        </div>
+            <!-- Origin → Dest -->
+            <div class="mt-2 flex items-center gap-2 flex-wrap" style="font-size: 10.5px;">
+              <span
+                class="inline-flex items-center gap-1.5"
+                style="
+                  padding: 2.5px 9px;
+                  border-radius: 999px;
+                  background: rgba(255, 255, 255, 0.06);
+                  border: 1px solid var(--color-border-soft);
+                  color: var(--color-fg-secondary);
+                "
+                title="Quelle"
+              >
+                <svelte:component this={origin.icon} size={10.5} strokeWidth={1.6} />
+                {origin.label}
+              </span>
+              <span style="color: var(--color-fg-tertiary); font-size: 10px;">→</span>
+              <span
+                class="inline-flex items-center gap-1.5"
+                style="
+                  padding: 2.5px 9px;
+                  border-radius: 999px;
+                  background: color-mix(in oklab, {accent} 10%, transparent);
+                  border: 1px solid color-mix(in oklab, {accent} 33%, transparent);
+                  color: {accent};
+                "
+                title="Ziel"
+              >
+                <svelte:component this={dest.icon} size={10.5} strokeWidth={1.6} />
+                {dest.label}
+              </span>
+            </div>
 
-        <!-- Pareto bar 5px featured. Smooth Animation 0→95% via CSS-keyframe;
-             snap auf 100% bei done. Kein visueller Sprung mehr von 30%→100%. -->
-        <div class="mt-3 flex items-center gap-3">
-          <div class="flex-1">
-            <ProgressLine
-              pareto={isFeaturedProcessing}
-              done={featuredJob.status === 'completed'}
-              color={accent}
-              height={5}
-              glow
-            />
+            <!-- Progress -->
+            <div class="mt-2.5 flex items-center gap-3">
+              <div class="flex-1">
+                <ProgressLine
+                  pareto={true}
+                  done={false}
+                  color={accent}
+                  height={5}
+                  glow
+                />
+              </div>
+              <span
+                class="tabular-nums"
+                style="font-size: 12.5px; color: {accent}; font-weight: 600; min-width: 50px; text-align: right;"
+              >
+                {$t('queue.row.processing')}
+              </span>
+            </div>
           </div>
-          {#if isFeaturedQueued}
-            <span
-              class="tabular-nums"
-              style="font-size: 13px; color: var(--color-fg-tertiary); font-weight: 500; min-width: 60px; text-align: right; font-family: var(--font-mono);"
+        {:else}
+          <!-- Idle / Cooldown — Lane hat gerade nichts laufen.
+               Zeigt Lane-Name (im Dual-Mode) und Cooldown-Counter wenn aktiv. -->
+          <div
+            class="flex items-center justify-center"
+            style="
+              width: 84px;
+              height: 84px;
+              border-radius: 50%;
+              border: 2px dashed var(--color-border-soft);
+              opacity: 0.55;
+              flex-shrink: 0;
+            "
+          >
+            <Disc size={28} strokeWidth={1.4} color="var(--color-fg-tertiary)" />
+          </div>
+          <div class="flex-1 min-w-0">
+            <div
+              class="font-semibold uppercase"
+              style="
+                font-size: 10.5px;
+                letter-spacing: 0.18em;
+                color: var(--color-fg-tertiary);
+                margin-bottom: 4px;
+              "
             >
-              {nextLaneReadyMs >= 1000 ? fmtMs(nextLaneReadyMs) : 'frei'}
-            </span>
-          {:else}
-            <span
-              class="tabular-nums"
-              style="font-size: 13px; color: {accent}; font-weight: 600; min-width: 60px; text-align: right;"
+              {#if isDualLane}
+                {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+              {:else}
+                {$t('queue.eyebrow.idle')}
+              {/if}
+            </div>
+            <div
+              class="font-semibold"
+              style="
+                font-family: var(--font-display);
+                font-size: 20px;
+                letter-spacing: -0.025em;
+                line-height: 1.15;
+                color: var(--color-fg-secondary);
+              "
             >
-              {featuredJob.status === 'completed' ? '100%' : 'läuft'}
-            </span>
-          {/if}
-        </div>
+              {#if isCooldown}
+                {$t('queue.lane.cooldown')}
+              {:else}
+                {$t('queue.lane.idle')}
+              {/if}
+            </div>
+            {#if isCooldown}
+              <div
+                class="tabular-nums mt-2"
+                style="font-size: 13px; color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.05em;"
+              >
+                {fmtMs(slot.remainingMs)}
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
-    </div>
-  {/if}
+    {/each}
+  </div>
+
+  <!-- Wenn überhaupt keine Lanes etwas tun und auch nichts queued ist,
+       zeigen wir einen kompakten "alles ruhig"-Hinweis (statt einer
+       weiteren Komponente). Im single-lane-Mode wird der Hinweis nicht
+       gebraucht weil der einzelne Slot oben schon "Bereit" anzeigt. -->
 
   <!-- Job list -->
   {#if loadError}
@@ -689,7 +778,7 @@
         </a>
       {/snippet}
     </EmptyState>
-  {:else if filtered.length === 0 && !featuredJob}
+  {:else if filtered.length === 0 && processingJobs.length === 0}
     <!-- Filter-empty (es gibt Jobs, nur nicht im aktiven Filter). Kompakter
          Hinweis statt full-page EmptyState — der User soll den Filter
          wechseln können, nicht zur Library wandern. -->

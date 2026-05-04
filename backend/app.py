@@ -900,14 +900,22 @@ async def queue_lanes():
 @app.get("/api/queue")
 async def list_queue(
     offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=2000, ge=1, le=10000),
+    limit: int = Query(default=500, ge=1, le=10000),
     status: Optional[str] = Query(default=None),
 ):
     """Return queued/active/recent jobs (paginiert).
 
-    Default-Limit erhöht von 200 auf 2000, damit CSV-Bulk-Imports vollständig sichtbar
-    sind. Optionaler offset für echte Pagination, optionaler status-Filter (csv-werte
-    'queued','processing','completed','error' oder kombiniert wie 'queued,processing').
+    Default-Limit ist 500 — bei größeren Bulk-Imports (CSV mit 15k+ Tracks)
+    laggt das UI sonst weil das Frontend pro Polling-Tick alle Items als
+    DOM-Nodes rendert. Die Standard-Frontend-Ansicht ist der `active`-Filter
+    (status='queued,processing'), der typischerweise nur 50–200 Items
+    enthält. Completed/error-Listen lädt das UI nur on-demand.
+
+    Optionaler offset für echte Pagination, optionaler status-Filter
+    (csv-werte 'queued','processing','completed','error' oder kombiniert
+    wie 'queued,processing'). `status_counts` zählt IMMER über ALLE
+    Statuses, unabhängig vom Filter — so weiß das UI wie viele Jobs in
+    jedem Bucket liegen ohne separat /api/queue/stats zu pollen.
     """
     import json as _json
     from utils.job_store import _db as _queue_db
@@ -962,10 +970,11 @@ async def list_queue(
                     "payload": payload,
                 }
             )
-        # Status-Aggregat fürs UI (wie viele queued/processing/completed/error)
+        # Status-Aggregat über ALLE Statuses, nicht nur den gefilterten —
+        # das UI braucht alle Counts für die Filter-Pills auch wenn der
+        # aktuelle Filter z.B. nur 'queued,processing' anfragt.
         agg_rows = conn.execute(
-            f"SELECT status, COUNT(*) AS n FROM download_jobs WHERE status IN ({placeholders}) GROUP BY status",
-            tuple(wanted),
+            "SELECT status, COUNT(*) AS n FROM download_jobs GROUP BY status",
         ).fetchall()
         status_counts = {r["status"]: r["n"] for r in agg_rows}
         return {
