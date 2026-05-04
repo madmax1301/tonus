@@ -169,6 +169,49 @@ from utils.navidrome_library_sync import start_navidrome_library_sync_background
 
 app = FastAPI(title="Tonus API", version="1.0.0")
 
+def _migrate_legacy_jobs_db() -> None:
+    """Einmalige Migration alter jobs.db-Standorte auf JOBS_DB_PATH (/app/data/).
+
+    Bis Mai 2026 lag jobs.db unter $DOWNLOAD_DIR/jobs.db (relativ zum CWD).
+    Der CWD im Container war /app/backend → DB landete in /app/backend/downloads,
+    NICHT im gemounteten /app/downloads. Bei jedem `--no-cache` Container-Rebuild
+    war damit die Auth-DB weg.
+
+    Neuer Pfad: /app/data/jobs.db, eigenes Bind-Mount-Volume.
+
+    Diese Funktion: wenn neue DB nicht existiert UND alte (an einem von zwei
+    Legacy-Pfaden) gefunden wird, einmalig kopieren. Idempotent — Re-Run No-Op."""
+    import shutil
+    from utils.job_store import JOBS_DB_PATH as new_path
+
+    if os.path.exists(new_path):
+        return  # neue DB existiert ⇒ nichts migrieren
+
+    # Mögliche Legacy-Pfade durchprobieren — Reihenfolge nach Wahrscheinlichkeit.
+    candidates = [
+        os.path.abspath(os.path.join(config.DOWNLOAD_DIR, "jobs.db")),  # "./downloads/jobs.db"
+        "/app/backend/downloads/jobs.db",
+        "/app/downloads/jobs.db",
+    ]
+    seen = set()
+    for legacy in candidates:
+        if legacy in seen or not os.path.isfile(legacy):
+            continue
+        seen.add(legacy)
+        try:
+            os.makedirs(os.path.dirname(new_path), exist_ok=True)
+            shutil.copy2(legacy, new_path)
+            # WAL/SHM mitkopieren falls vorhanden — sonst ginge in-flight WAL verloren
+            for ext in ("-wal", "-shm"):
+                if os.path.isfile(legacy + ext):
+                    shutil.copy2(legacy + ext, new_path + ext)
+            print(f"[migrate] Legacy jobs.db von {legacy} → {new_path} kopiert", flush=True)
+            return
+        except Exception as e:
+            print(f"[migrate] Konnte {legacy} → {new_path} nicht kopieren: {e}", flush=True)
+
+
+_migrate_legacy_jobs_db()
 init_jobs_db()
 _stale = reset_stale_inflight_jobs()
 if _stale:

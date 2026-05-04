@@ -2,11 +2,18 @@ import os
 import sqlite3
 import json
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import config
 
-JOBS_DB_PATH = os.path.join(config.DOWNLOAD_DIR, "jobs.db")
+# Persistente App-Daten (Auth-DB, Queue-Jobs, Settings) leben getrennt vom
+# Audio-Download-Verzeichnis. /app/data ist ein eigenes Bind-Mount-Volume in
+# docker-compose.yml — überlebt damit jeden `docker compose build --no-cache`,
+# während DOWNLOAD_DIR nur für temporäre Audio-Files (während Processing) ist.
+# JOBS_DB_PATH überschreibbar via env für nicht-Docker-Setups.
+JOBS_DB_PATH = os.getenv("JOBS_DB_PATH", "/app/data/jobs.db")
+Path(os.path.dirname(JOBS_DB_PATH)).mkdir(parents=True, exist_ok=True)
 
 
 def _now_ms() -> int:
