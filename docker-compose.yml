@@ -1,16 +1,8 @@
 services:
   tonus:
-    # Image is built and pushed to GHCR by .github/workflows/build.yml on
-    # every push to main and every vX.Y.Z tag. Pin to :0.1 (or similar)
-    # for production to get patches without minor-version surprises.
     image: ghcr.io/madmax1301/tonus:latest
     container_name: tonus
     restart: unless-stopped
-    # Dual-VPN-Splitting: host-mode gibt dem Container direkten Zugriff
-    # auf beide NAS-Interfaces (eth0=192.168.1.200, eth1=192.168.1.201).
-    # Source-IP-Bind im Code (services/deezer.py + utils/worker.py) wählt
-    # pro Thread die Lane. Auf macOS Docker Desktop nicht verfügbar — siehe
-    # docker-compose.override.yml für lokale Entwicklung.
     network_mode: host
     env_file:
       - .env
@@ -20,10 +12,6 @@ services:
       - NAVIDROME_MUSIC_PATH=/music
       - NAVIDROME_API_URL=${NAVIDROME_API_URL}
     volumes:
-      - /volume1/docker/music:/music:rw
-      - /volume1/docker/tonus/downloads:/app/downloads:rw
-      # Persistente App-Daten (Auth-DB, Queue-Jobs, App-Settings, Banned-IPs).
-      # Getrennt von /app/downloads damit Auth-State nicht beim Aufräumen der
-      # Audio-Downloads verloren geht. Auf NAS: `mkdir -p /volume1/docker/tonus/data`
-      # vor dem ersten `docker compose up` ausführen.
-      - /volume1/docker/tonus/data:/app/data:rw
+      - /path/to/music:/music:rw
+      - ./downloads:/app/downloads:rw
+      - ./tonus-data:/app/data:rw
