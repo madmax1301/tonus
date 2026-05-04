@@ -260,15 +260,17 @@ docker compose up -d            # restart with the new image
 
 Images are built and published to GHCR by [`.github/workflows/build.yml`](.github/workflows/build.yml) on every push to `main` and on every `vX.Y.Z` git tag. Multi-arch: `linux/amd64` + `linux/arm64`.
 
-| Tag | Stable? | Points to |
-|---|---|---|
-| `:latest` | rolling | Most recent commit on `main` |
-| `:main` | rolling | Same as `:latest` |
-| `:0.1.0` | yes | A specific tagged release (immutable) |
-| `:0.1` | rolling within minor | Latest patch in the `0.1.x` series |
-| `:sha-abc1234` | yes | A specific commit (immutable) |
+Tonus uses two release channels — bleeding-edge `:dev` for testing, and immutable semver tags (`:X.Y.Z`, `:X.Y`, `:latest`) for production.
 
-### Pin to a release
+| Tag | Channel | Updates when | Points to |
+|---|---|---|---|
+| `:dev` | dev (bleeding-edge) | Every push to `main` | Latest commit on `main` |
+| `:sha-abc1234` | dev (pinned) | Never (immutable) | A specific commit |
+| `:0.1.0` | stable (pinned) | Never (immutable) | A specific tagged release |
+| `:0.1` | stable (rolling within minor) | New patch tags `v0.1.x` | Latest patch in `0.1.x` |
+| `:latest` | stable (rolling) | New semver tag `vX.Y.Z` | Most recent tagged release |
+
+### Production: pin to a release
 
 For a NAS running production, prefer a fixed minor:
 
@@ -278,7 +280,54 @@ services:
     image: ghcr.io/madmax1301/tonus:0.1
 ```
 
-You'll get every patch release automatically (`0.1.0` → `0.1.1` → `0.1.2`) but stay locked out of `0.2.x` until you opt in. Cutting a new release is a `git tag -a v0.1.1 -m "..." && git push origin v0.1.1` away.
+You'll get every patch release automatically (`0.1.0` → `0.1.1` → `0.1.2`) but stay locked out of `0.2.x` until you opt in. Cutting a new release is a `git tag -a v0.1.2 -m "..." && git push origin v0.1.2` away.
+
+### Testing: run the `:dev` channel
+
+For a parallel dev/staging deployment that tracks `main` automatically — without ever needing to cut a tag — pin to `:dev`. Every `git push origin main` triggers a fresh build, then `docker compose pull` on the dev host fetches it.
+
+Example minimal `docker-compose.dev.yml` next to a separate test setup:
+
+```yaml
+services:
+  tonus:
+    image: ghcr.io/madmax1301/tonus:dev
+    container_name: tonus-dev
+    restart: unless-stopped
+    ports:
+      - "8089:8088"           # different host port so it can run alongside production
+    env_file:
+      - .env
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8088
+      - VPN_SPLIT_ENABLED=false
+    volumes:
+      - ./test-music:/music:rw
+      - ./test-downloads:/app/downloads:rw
+      - ./test-data:/app/data:rw
+```
+
+Test-Loop:
+
+```bash
+# 1. Push changes to main
+git push origin main
+
+# 2. Wait ~5–10 min for the GHCR build to complete
+#    (github.com/madmax1301/tonus/actions)
+
+# 3. On the dev host:
+docker compose -f docker-compose.dev.yml pull
+docker compose -f docker-compose.dev.yml up -d
+
+# 4. Smoke-test in the browser
+# 5. If happy, cut a stable tag — that promotes the same code to :latest / :0.1
+git tag -a v0.1.2 -m "..."
+git push origin v0.1.2
+```
+
+Production stays untouched the whole time — `:0.1` only moves when you explicitly tag.
 
 ## License
 

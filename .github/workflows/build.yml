@@ -2,10 +2,15 @@ name: Build & publish container
 
 # Builds the Tonus image and pushes it to GitHub Container Registry (GHCR).
 #
-# Triggers
-#   - push to main          -> :latest, :main, :sha-<short>
-#   - push tag vX.Y.Z       -> :X.Y.Z, :X.Y, :latest
+# Tag strategy
+#   - push to main          -> :dev, :sha-<short>            (bleeding-edge for testing)
+#   - push tag vX.Y.Z       -> :X.Y.Z, :X.Y, :latest         (stable, promoted release)
 #   - pull request to main  -> build only (no push), smoke-test
+#
+#   :latest now ONLY moves on a semver tag. Every main-push refreshes :dev,
+#   so a `git push origin main` followed by `docker compose pull` on a dev
+#   deployment is the test-loop — production stays on :0.1 (rolling within
+#   minor) or :latest (only after a tag).
 #
 # Architectures: linux/amd64 + linux/arm64
 #   Synology DS220+ is amd64 (Celeron J4025); arm64 is for Pi / Apple-Silicon hosts.
@@ -60,9 +65,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # `flavor: latest=auto` ist Default — :latest wird NUR auf
+          # semver-Tags gesetzt, NICHT auf main-pushes. Genau das wollen
+          # wir hier (Stable-Channel kontrolliert promoted via tag).
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=dev,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

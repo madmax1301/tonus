@@ -50,6 +50,7 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 - Logo + 4 README screenshots (library, onboarding, album, settings)
 - `.gitignore` reorganized by topic; `test-data/`, `.venv/`, pytest outputs, log files now ignored
 - GitHub Actions pipeline (`.github/workflows/build.yml`) — multi-arch (amd64+arm64) build & push to GHCR on every push to `main` and every `vX.Y.Z` git tag
+- Two-channel release model: `:dev` rolls with `main` (every push triggers a fresh build), `:latest` / `:X.Y.Z` / `:X.Y` move only on semver-tags. Production stays on `:0.1` (rolling within minor) for safe auto-patches; testing uses `:dev` via a separate `docker-compose.dev.yml` (documented in README → Container images)
 - `docker-compose.yml` now references `ghcr.io/madmax1301/tonus:latest` — NAS updates become `docker compose pull && up -d` instead of slow `--no-cache` rebuilds
 - `.dockerignore` extended (`docs/`, `.github/`, `test-data/`, venvs) — image no longer carries Repo-Metadata or screenshots
 - Issue & PR templates (`.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`)
