@@ -409,7 +409,7 @@
 
 <CinemaBackdrop hue={featuredHue} intensity={0.7} />
 
-<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 40px 36px 50px;">
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: clamp(20px, 4vw, 40px) clamp(14px, 4vw, 36px) clamp(28px, 5vw, 50px);">
   <!-- Hero header -->
   <div class="flex items-end justify-between flex-wrap gap-4" style="margin-bottom: 28px;">
     <div>
@@ -450,7 +450,7 @@
         class="font-semibold m-0"
         style="
           font-family: var(--font-display);
-          font-size: 48px;
+          font-size: clamp(32px, 7vw, 48px);
           letter-spacing: -0.035em;
           line-height: 1;
         "
@@ -598,7 +598,8 @@
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid var(--color-border-soft);
         color: var(--color-fg-primary);
-        min-width: 200px;
+        min-width: clamp(140px, 40vw, 200px);
+        flex: 1 1 140px;
       "
     />
   </div>
@@ -1142,6 +1143,19 @@
     }
     50% {
       opacity: 1;
+    }
+  }
+
+  /* Mobile: Lane-Strip stacked statt nebeneinander — !important schlägt
+     den dynamisch generierten Inline-style mit repeat(N, ...). */
+  @media (max-width: 640px) {
+    .tonus-lane-strip {
+      grid-template-columns: 1fr !important;
+      gap: 10px !important;
+    }
+    .tonus-lane-strip > div {
+      padding: 14px !important;
+      min-height: 0 !important;
     }
   }
 </style>
