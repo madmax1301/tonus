@@ -733,11 +733,11 @@
 
 <CinemaBackdrop hue={DEFAULT_HUE} />
 
-<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 40px 36px 50px;">
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: clamp(20px, 4vw, 40px) clamp(14px, 4vw, 36px) clamp(28px, 5vw, 50px);">
   <!-- ─── Editorial Hero ───────────────────────────────────── -->
   <div
-    class="grid items-center"
-    style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: 48px;"
+    class="grid items-center tonus-settings-hero"
+    style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: clamp(28px, 5vw, 48px);"
   >
     <div>
       <div
@@ -748,7 +748,7 @@
       </div>
       <h1
         class="font-semibold m-0"
-        style="font-family: var(--font-display); font-size: 48px; font-weight: 600; line-height: 0.95; letter-spacing: -0.035em;"
+        style="font-family: var(--font-display); font-size: clamp(30px, 7vw, 48px); font-weight: 600; line-height: 0.95; letter-spacing: -0.035em;"
       >
         {$t('settings.title.before')}<br />
         <em style="color: {accent}; font-weight: 400; font-style: italic;"
@@ -766,7 +766,7 @@
         {$t('settings.description.suffix')}
       </p>
     </div>
-    <div class="flex justify-center">
+    <div class="flex justify-center tonus-settings-vinyl">
       <VinylWithCover
         src={null}
         alt=""
@@ -1040,7 +1040,7 @@
             {$t('settings.defaults.cooldown.description')}
           </p>
 
-          <div class="grid mt-4" style="grid-template-columns: 1fr 1fr; gap: 18px; max-width: 560px;">
+          <div class="grid mt-4 tonus-settings-twocol" style="grid-template-columns: 1fr 1fr; gap: 18px; max-width: 560px;">
             <!-- Normal-Range -->
             <div class="flex flex-col" style="gap: 8px;">
               <div
@@ -2395,3 +2395,28 @@
     </div>
   {/if}
 </section>
+
+<style>
+  /* Mobile-Pass: Hero stacked, Vinyl ausgeblendet (zu groß für Phone),
+     Cooldown-Inputs in einer Spalte, Card-Padding kompakter. */
+  @media (max-width: 640px) {
+    .tonus-settings-hero {
+      grid-template-columns: 1fr !important;
+      gap: 18px !important;
+    }
+    .tonus-settings-vinyl {
+      display: none !important;
+    }
+    .tonus-settings-twocol {
+      grid-template-columns: 1fr !important;
+      gap: 14px !important;
+    }
+    /* Glass-Cards: alle .rounded-22 / Karten-Container haben padding 28px/32px.
+       Reduzierte Karten-Padding via Attribute-Selector — alle Karten haben
+       border-radius: 22px im inline-style. Greifen auf padding-Werte. */
+    section [style*="border-radius: 22px"] {
+      padding: 18px !important;
+    }
+  }
+</style>
+
