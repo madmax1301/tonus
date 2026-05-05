@@ -30,6 +30,19 @@
   let albumState = $state<DownloadState | null>(null);
   let albumHue: number = $state(DEFAULT_HUE);
 
+  // Viewport-aware Vinyl-Size — auf Phone shrinkt das 280px-Cover (das mit
+  // Disc-Offset 434px Gesamtbreite hat) sonst über den Container. SSR-safe:
+  // Default 280, $effect läuft nur clientside.
+  let vinylSize = $state(280);
+  $effect(() => {
+    const update = () => {
+      vinylSize = window.innerWidth < 640 ? 180 : 280;
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  });
+
   $effect(() => {
     albumId; // dependency
     fetchAlbum();
@@ -189,7 +202,7 @@
 
 <CinemaBackdrop hue={albumHue} intensity={1.2} />
 
-<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 24px 36px 60px;">
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: clamp(16px, 4vw, 24px) clamp(14px, 4vw, 36px) clamp(36px, 6vw, 60px);">
   <!-- Back link -->
   <button
     onclick={goBack}
@@ -209,8 +222,8 @@
   {:else if album}
     <!-- Hero: Vinyl-with-cover left, oversized type right -->
     <div
-      class="grid items-center"
-      style="grid-template-columns: auto 1fr; gap: 56px; margin-bottom: 48px;"
+      class="grid items-center tonus-album-hero"
+      style="grid-template-columns: auto 1fr; gap: 56px; margin-bottom: clamp(28px, 5vw, 48px);"
     >
       <div data-album-cover>
         <VinylWithCover
@@ -218,7 +231,7 @@
           alt={album.name}
           artist={album.artist}
           year={album.release_date?.slice(0, 4) ?? ''}
-          size={280}
+          size={vinylSize}
           spinning
           onhue={(h) => (albumHue = h)}
         />
@@ -249,10 +262,10 @@
         </div>
 
         <h1
-          class="font-semibold m-0 truncate"
+          class="font-semibold m-0 truncate tonus-album-title"
           style="
             font-family: var(--font-display);
-            font-size: 64px;
+            font-size: clamp(32px, 8vw, 64px);
             line-height: 0.95;
             letter-spacing: -0.04em;
           "
@@ -264,7 +277,7 @@
         <div
           class="mt-3.5"
           style="
-            font-size: 22px;
+            font-size: clamp(16px, 3.6vw, 22px);
             font-weight: 300;
             letter-spacing: -0.005em;
             color: var(--color-fg-primary);
@@ -360,7 +373,7 @@
         {@const isDone = state?.kind === 'done' || state?.kind === 'exists'}
         {@const isLast = idx === album.tracks.length - 1}
         <div
-          class="grid items-center transition-colors group"
+          class="grid items-center transition-colors group tonus-track-row"
           style="
             grid-template-columns: 44px 1fr 70px 130px;
             gap: 16px;
@@ -420,7 +433,7 @@
           </div>
 
           <span
-            class="tabular-nums text-right"
+            class="tabular-nums text-right tonus-track-duration"
             style="
               color: var(--color-fg-tertiary);
               font-size: 11.5px;
@@ -495,6 +508,33 @@
     }
     50% {
       opacity: 1;
+    }
+  }
+
+  /* Mobile-Pass: Hero stacked, Title nicht mehr truncated, Tracklist
+     kompakter (Duration-Spalte ausgeblendet, kleinerer Padding/Gap). */
+  @media (max-width: 640px) {
+    .tonus-album-hero {
+      grid-template-columns: 1fr !important;
+      gap: 18px !important;
+      justify-items: start;
+    }
+    .tonus-album-title {
+      overflow: visible !important;
+      text-overflow: clip !important;
+      white-space: normal !important;
+    }
+    .tonus-track-row {
+      grid-template-columns: 32px 1fr auto !important;
+      gap: 10px !important;
+      padding: 10px 14px !important;
+    }
+    .tonus-track-duration {
+      display: none !important;
+    }
+    .tonus-track-row button {
+      min-width: 0 !important;
+      padding: 5px 10px !important;
     }
   }
 </style>
