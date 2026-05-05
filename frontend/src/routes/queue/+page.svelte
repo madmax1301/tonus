@@ -164,7 +164,20 @@
    *  niedrigster rowid ist gleichzeitig "nächster im UI" und "nächster
    *  beim Worker-Pull". */
   const processingJobs = $derived<QueueJob[]>(data?.live?.processing ?? []);
-  const queuedJobs = $derived<QueueJob[]>(data?.live?.queued_head ?? []);
+  /** queued_head als Up-Next-Quelle, aber Jobs die in lane.current_job_id
+   *  oder live.processing stehen werden defensiv rausgefiltert — schließt
+   *  die Race-Window-Lücke zwischen DB-UPDATE und in-memory-Update im
+   *  Worker. Verhindert dass derselbe Track gleichzeitig als "running"
+   *  in der Lane-Card UND als "up next" in einer anderen Lane erscheint. */
+  const queuedJobs = $derived.by<QueueJob[]>(() => {
+    const head = data?.live?.queued_head ?? [];
+    const exclude = new Set<string>();
+    for (const l of (lanes?.lanes ?? [])) {
+      if (l.current_job_id) exclude.add(l.current_job_id);
+    }
+    for (const j of (data?.live?.processing ?? [])) exclude.add(j.job_id);
+    return head.filter((j) => !exclude.has(j.job_id));
+  });
 
   /** Lane-Slots: N = Anzahl Lanes (1 single, 2 dual).
    *
@@ -294,14 +307,15 @@
   }
 
   // Liste ohne die Jobs die schon in der Lane-Strip oben sichtbar sind:
-  // slot.job + slot.upNext aus jeder Lane. Sonst Doppel-Render im Card
-  // und List. Quelle ist jetzt strikt die Lane-Strip — wenn ein Job in
-  // DB den Status 'processing' hat aber auf keiner Lane gepinnt ist
-  // (Race-Window beim Übergang), darf er ruhig in der Liste auftauchen.
+  // alle live.processing-Jobs (auch wenn die Lane-Zuordnung im Race-
+  // Window noch fehlt) + alle slot.upNext-Tracks. Sonst sieht man einen
+  // Job kurz in der Liste auftauchen sobald Lane A pulled aber bevor
+  // _lane_current_job synchron mit der DB ist.
   const filtered = $derived.by<QueueJob[]>(() => {
     if (!data) return [];
     const q = filterText.trim().toLowerCase();
     const stripIds = new Set<string>();
+    for (const j of (data.live?.processing ?? [])) stripIds.add(j.job_id);
     for (const s of laneSlots) {
       if (s.job) stripIds.add(s.job.job_id);
       if (s.upNext) stripIds.add(s.upNext.job_id);
