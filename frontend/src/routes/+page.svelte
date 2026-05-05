@@ -436,9 +436,9 @@
 
 <CinemaBackdrop hue={accentHue} />
 
-<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 40px 36px 50px;">
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: clamp(20px, 4vw, 40px) clamp(14px, 4vw, 36px) clamp(28px, 5vw, 50px);">
   <!-- Editorial Hero: oversized title + featured vinyl -->
-  <div class="grid items-center" style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: 48px;">
+  <div class="grid items-center tonus-library-hero" style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: clamp(28px, 5vw, 48px);">
     <div>
       <div
         class="font-semibold uppercase"
@@ -455,7 +455,7 @@
         class="font-semibold m-0"
         style="
           font-family: var(--font-display);
-          font-size: 48px;
+          font-size: clamp(30px, 7vw, 48px);
           font-weight: 600;
           line-height: 0.95;
           letter-spacing: -0.035em;
@@ -478,7 +478,7 @@
         {$t('library.description')}
       </p>
     </div>
-    <div class="flex justify-center">
+    <div class="flex justify-center tonus-library-vinyl">
       <VinylWithCover
         src={featured?.src ?? null}
         alt={featured?.artist ?? ''}
@@ -649,7 +649,7 @@
 
   <!-- ─── Album grid (Direction-B signature) ─── -->
   {#if mode === 'albums' && albumResults.length > 0}
-    <div class="grid" style="grid-template-columns: repeat(4, 1fr); gap: 20px;">
+    <div class="grid tonus-album-grid" style="grid-template-columns: repeat(4, 1fr); gap: 20px;">
       {#each albumResults as album, i (album.id)}
         <AlbumGridCard
           {album}
@@ -930,4 +930,23 @@
     </EmptyState>
   {/if}
 </section>
+
+<style>
+  /* Mobile-Pass: Hero stacked, Vinyl ausgeblendet (zu groß für Phone),
+     Album-Grid auto-fill statt fixe 4 Spalten. !important schlägt
+     die Inline-Styles. */
+  @media (max-width: 640px) {
+    .tonus-library-hero {
+      grid-template-columns: 1fr !important;
+      gap: 20px !important;
+    }
+    .tonus-library-vinyl {
+      display: none !important;
+    }
+    .tonus-album-grid {
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
+      gap: 12px !important;
+    }
+  }
+</style>
 
