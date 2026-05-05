@@ -33,7 +33,7 @@
   type="button"
   data-vinyl-puck
   onclick={gotoQueue}
-  class="tonus-vinyl-puck"
+  class="tonus-vinyl-puck-shell"
   aria-label="Queue öffnen — {$queueCount} Jobs"
   style="
     position: fixed;
@@ -46,10 +46,7 @@
     border: none;
     cursor: pointer;
     padding: 0;
-    background:
-      radial-gradient(circle at 50% 50%, {$flashAccent ?? goldAccent} 0 6px, #18120c 6px 8px, transparent 8px),
-      repeating-radial-gradient(circle at 50% 50%, #0a0a0c 0 1px, #161618 1px 3px),
-      #0a0a0c;
+    background: transparent;
     box-shadow:
       0 12px 40px rgba(0, 0, 0, 0.6),
       0 0 0 1px rgba(255, 255, 255, 0.06){$flashAccent ? `, 0 0 60px ${$flashAccent}` : ''};
@@ -57,9 +54,27 @@
     align-items: center;
     justify-content: center;
     transition: box-shadow 0.4s ease;
-    will-change: transform;
+    contain: layout paint;
   "
 >
+  <!-- Spinning grooves layer — pure transform animation, eigene
+       Compositor-Layer durch will-change + translate3d in Keyframes.
+       Bleibt smooth auch wenn Main-Thread durch große Listen blockt. -->
+  <span
+    class="tonus-vinyl-puck"
+    aria-hidden="true"
+    style="
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 50%, {$flashAccent ?? goldAccent} 0 6px, #18120c 6px 8px, transparent 8px),
+      repeating-radial-gradient(circle at 50% 50%, #0a0a0c 0 1px, #161618 1px 3px),
+      #0a0a0c;
+      will-change: transform;
+    "
+  ></span>
+
   <span
     class="tonus-vinyl-puck__disc"
     style="
@@ -117,31 +132,40 @@
 </div>
 
 <style>
-  /* spin only the outer disc + grooves; the counter label stays upright
-     via reverse-spin on the inner disc.
+  /* Architektur: outer button (.tonus-vinyl-puck-shell) ist statisch und
+     trägt den box-shadow (mit transition). Innerer .tonus-vinyl-puck
+     trägt die Grooves und rotiert — pure transform-only animation, läuft
+     auf Compositor-Thread. Damit bleibt die Rotation smooth auch wenn
+     der Main-Thread durch große Queue-Listen (15k+ Items) blockt.
 
-     Wichtig: animation-duration ändert sich NICHT bei :hover. Vorher
-     hatte das Rule die Duration auf 2s reduziert, was bei Mobile-Touch
-     (sticky-hover) die Animation beim End-of-touch neu starten ließ —
-     der User sah den Vinyl "wackeln statt drehen" weil die Animation
-     pro Touch von Frame 0 startete. Jetzt konstant 4s. */
+     Inner .tonus-vinyl-puck__disc spinnt reverse damit die Counter-
+     Zahl aufrecht bleibt. */
+
+  .tonus-vinyl-puck-shell:hover {
+    /* dezenter Hover-Hinweis ohne animation-duration-Switch (der hat
+       vorher beim Mobile-Touch sticky-hover die Animation neu gestartet) */
+    box-shadow:
+      0 16px 48px rgba(0, 0, 0, 0.7),
+      0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+  }
+
   .tonus-vinyl-puck {
     animation: tonus-puck-spin 4s linear infinite;
   }
   .tonus-vinyl-puck__disc {
-    /* counter readable trotz parent-spin — gleiche Geschwindigkeit
-       in Gegenrichtung. */
     animation: tonus-puck-spin 4s linear infinite reverse;
   }
-  /* from-Keyframe explizit — manche Browser starten die Animation
-     anders interpoliert wenn from fehlt und initial transform nicht
-     identity ist (z.B. parent-transformed). */
+
+  /* Keyframes mit translate3d(0,0,0) zwingen den Browser, das Element auf
+     eine eigene Compositor-Layer zu heben — UND zwar für die Dauer der
+     gesamten Animation, nicht nur als initial-state. Pure-transform =
+     compositor-only = unbeeinflusst von Main-Thread-Lag. */
   @keyframes tonus-puck-spin {
     from {
-      transform: rotate(0deg);
+      transform: translate3d(0, 0, 0) rotate(0deg);
     }
     to {
-      transform: rotate(360deg);
+      transform: translate3d(0, 0, 0) rotate(360deg);
     }
   }
   @media (prefers-reduced-motion: reduce) {
