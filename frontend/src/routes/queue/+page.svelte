@@ -151,28 +151,20 @@
     fetchQueue(true);
   });
 
-  /** Alle Processing-Jobs werden in der Lane-Strip oben gepinnt — bei
-   *  VPN_SPLIT_ENABLED=true sind das bis zu 2 parallel, sonst max 1.
-   *  Stabile Sortierung nach created_at_ms damit ein Job nicht zwischen
-   *  den Lanes hin und her springt während sich der Progress ändert. */
-  const processingJobs = $derived.by<QueueJob[]>(() => {
-    if (!data?.items) return [];
-    return data.items
-      .filter((j) => j.status === 'processing')
-      .sort((a, b) => (a.created_at_ms ?? 0) - (b.created_at_ms ?? 0));
-  });
-
-  /** Wartende Jobs in FIFO-Reihenfolge (created_at ASC). Wir mappen die
-   *  ersten N (= laneCount) auf die Lane-Slots — als "Up next"-Preview
-   *  damit User auch in der Cooldown-Phase schon sehen was als nächstes
-   *  kommt. Nicht 100% akkurat (Lane-Pickup hängt am Worker-Round-Robin),
-   *  aber visuell richtig: erste-zwei-queued landen in Lane A/B. */
-  const queuedJobs = $derived.by<QueueJob[]>(() => {
-    if (!data?.items) return [];
-    return data.items
-      .filter((j) => j.status === 'queued')
-      .sort((a, b) => (a.created_at_ms ?? 0) - (b.created_at_ms ?? 0));
-  });
+  /** Lane-Strip-Quelle: data.live wird vom Backend IMMER mitgeliefert,
+   *  unabhängig vom User-Filter. Damit bleiben "läuft gerade" und
+   *  "kommt als nächstes" auch in den Done/Error-Tabs sichtbar — vorher
+   *  blendete der Filter sie aus weil data.items dann nur noch
+   *  completed/error enthielt.
+   *
+   *  Auch der Tiebreaker stimmt jetzt mit dem Worker überein: Backend
+   *  sortiert beide Listen nach (created_at_ms ASC, rowid ASC), genau wie
+   *  worker.py:_poll_next_queued_download. Bei CSV-Bulk-Inserts mit
+   *  identischer ms-Timestamp entscheidet rowid ASC → der Job mit
+   *  niedrigster rowid ist gleichzeitig "nächster im UI" und "nächster
+   *  beim Worker-Pull". */
+  const processingJobs = $derived<QueueJob[]>(data?.live?.processing ?? []);
+  const queuedJobs = $derived<QueueJob[]>(data?.live?.queued_head ?? []);
 
   /** Lane-Slots: N = Anzahl Lanes (1 single, 2 dual).
    *

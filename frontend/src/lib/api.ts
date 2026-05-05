@@ -307,6 +307,13 @@ export interface QueueResponse {
   total: number;
   shown: number;
   status_counts: Partial<Record<QueueJob['status'], number>>;
+  /** Live-State unabhängig vom Filter — Backend liefert immer alle
+   *  currently-processing Jobs und die Top-N queued (FIFO ASC) mit, damit
+   *  die Lane-Strip auch beim "Done"/"Error"-Filter sichtbar bleibt. */
+  live?: {
+    processing: QueueJob[];
+    queued_head: QueueJob[];
+  };
 }
 
 export interface Track {
