@@ -51,11 +51,17 @@
     | 'not_found'
     | 'timeout'
     | 'fs'
+    | 'interrupted'
     | 'unknown';
 
   function classifyError(message: string | null | undefined): ErrorKind {
     const m = (message ?? '').toLowerCase();
     if (!m) return 'unknown';
+    // "Interrupted — server restarted" entsteht wenn der Backend-Container
+    // beim Boot stehengebliebene processing-Jobs auf error setzt. Eigene
+    // Kategorie weil hier der User-Hinweis "einfach Retry" ist und nicht
+    // auf Provider-Probleme verweist.
+    if (/(interrupted|server restart|boot|stale.?process)/.test(m)) return 'interrupted';
     if (/(rate.?limit|429|too many requests|throttl)/.test(m)) return 'rate_limited';
     if (/(geo|region|country|not available in your)/.test(m)) return 'geo';
     if (/(private|removed|deleted|terminated|withdrawn)/.test(m)) return 'private';
@@ -1299,6 +1305,20 @@
     .tonus-queue-actions {
       margin-left: auto;
       order: 4;
+    }
+    /* Error-Block: auf Phone der friendly-Hinweis full-width statt
+       neben dem nowrap-Toggle gequetscht in eine wort-pro-zeile-spalte.
+       Toggle "Technische Details ▾" rückt drunter rechtsbündig. */
+    .tonus-queue-error-block summary {
+      flex-direction: column !important;
+      align-items: stretch !important;
+      gap: 4px !important;
+    }
+    .tonus-queue-error-block summary > span:last-child {
+      align-self: flex-end;
+    }
+    .tonus-queue-error-block {
+      padding: 8px 10px !important;
     }
   }
 </style>
