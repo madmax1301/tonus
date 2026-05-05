@@ -12,22 +12,16 @@ RUN npm run build
 # ── Stage 2: Backend-Runtime ───────────────────────────────────────
 FROM python:3.11-slim AS runtime
 
-# ffmpeg installieren, dann Mesa-GPU-Treiber wieder runterputzen — die ziehen
-# CRITICAL CVE-2026-40393 ein und brauchen wir nicht (Audio-Conversion läuft
-# pure CPU, kein VAAPI/CUDA). Wenn ein Mesa-Paket hard-dep von ffmpeg wäre,
-# würde apt-get den purge verweigern und ffmpeg bliebe drin — der ffmpeg-
-# version-Smoke-Test am Ende verifiziert dass das Binary noch funktioniert.
+# ffmpeg in debian:trixie hat libgbm1/libgl1-mesa-dri/libglx-mesa0/mesa-
+# libgallium als hard-deps — Versuch sie zu purgen würde ffmpeg mit-killen.
+# Daher bleiben die 4 Mesa-CRITICAL-CVEs (CVE-2026-40393, will_not_fix
+# upstream) Teil des Images. Mitigation: Mesa wird im Backend nirgends
+# aufgerufen (kein OpenGL/VAAPI), also ist die Vuln nicht im Code-Pfad.
+# Bei Wunsch nach kleinerer Attack-Surface wäre ein eigener ffmpeg-Build
+# ohne GPU-deps oder Wechsel zu Alpine die nächste Eskalations-Stufe.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
- && apt-get remove -y --purge \
-      libgbm1 \
-      libgl1-mesa-dri \
-      libglx-mesa0 \
-      mesa-libgallium \
-    || echo "WARN: Mesa-Pakete waren nicht entfernbar — ggf. hard-dep, manuell prüfen" \
- && apt-get autoremove -y --purge \
- && rm -rf /var/lib/apt/lists/* \
- && ffmpeg -version >/dev/null
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY backend/requirements.txt ./backend/requirements.txt
