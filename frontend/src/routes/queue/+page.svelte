@@ -333,6 +333,14 @@
 
   const counts = $derived(data?.status_counts ?? {});
   const total = $derived(data?.total ?? 0);
+  // Filter-unabhängige Gesamt-Summe für Header, "All"-Pill und Clear-All —
+  // `total` ist filter-abhängig (Pagination des aktuellen Views).
+  const totalAll = $derived(
+    (counts.queued ?? 0) +
+      (counts.processing ?? 0) +
+      (counts.completed ?? 0) +
+      (counts.error ?? 0)
+  );
   const shown = $derived(data?.shown ?? 0);
   const accent = $derived(tint(featuredHue));
   const accentSoft = $derived(tint(featuredHue, 0.5));
@@ -383,7 +391,7 @@
   const filterDefs = $derived.by<FilterDef[]>(() => {
     const tt = $t;
     return [
-      { id: 'all', label: tt('queue.filter.all'), count: total, color: accent },
+      { id: 'all', label: tt('queue.filter.all'), count: totalAll, color: accent },
       { id: 'processing', label: tt('queue.filter.processing'), count: counts.processing ?? 0, color: accent },
       { id: 'queued', label: tt('queue.filter.queued'), count: counts.queued ?? 0, color: 'var(--color-fg-tertiary)' },
       { id: 'completed', label: tt('queue.filter.completed'), count: counts.completed ?? 0, color: 'var(--color-status-done)' },
@@ -454,7 +462,7 @@
           class="mt-2 tabular-nums"
           style="font-size: 12px; color: var(--color-fg-secondary); font-family: var(--font-mono); letter-spacing: 0.02em;"
         >
-          {$t('queue.total_jobs', { count: total.toLocaleString('de-DE') })}
+          {$t('queue.total_jobs', { count: totalAll.toLocaleString('de-DE') })}
           {#if shown < total}
             · {$t('queue.shown', { count: shown.toLocaleString('de-DE') })}
           {/if}
@@ -517,7 +525,7 @@
 
       <button
         onclick={clearAll}
-        disabled={busy.clearAll || total === 0}
+        disabled={busy.clearAll || totalAll === 0}
         class="inline-flex items-center gap-2 transition-colors disabled:opacity-40"
         style="
           font-size: 12px;
