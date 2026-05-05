@@ -48,3 +48,10 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# ---- Internal docs (lives outside repo, never commit) ---------------------
+discoverability-sprint/
+marketing-sprint/
+sprint-*/
+internal-drafts/
+CLAUDE.md

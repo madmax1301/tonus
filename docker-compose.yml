@@ -15,3 +15,21 @@ services:
       - /path/to/music:/music:rw
       - ./downloads:/app/downloads:rw
       - ./tonus-data:/app/data:rw
+    # ─── Security-Hardening ─────────────────────────────────────────
+    # no-new-privileges: blockt SUID-Binaries im Container, sodass selbst
+    # ein erfolgreicher RCE keine privilege-escalation auslösen kann.
+    # cap_drop ALL: kein einziger Linux-Capability bleibt — uvicorn als
+    # Web-Server braucht keine. NET_BIND_SERVICE wäre nur nötig wenn
+    # API_PORT < 1024 wäre (wir nutzen 8088, also nicht).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Optional read-only root-fs: die rw-mounts oben sind schon dediziert
+    # für die Daten, der Rest des Containers braucht keine Schreibrechte.
+    # PYTHONDONTWRITEBYTECODE im Image verhindert __pycache__-Writes.
+    # Auf manchen NAS-Setups (vor allem mit unklaren tmp-Mount-Pfaden)
+    # kann das Probleme machen — daher als Kommentar, nicht aktiv.
+    # read_only: true
+    # tmpfs:
+    #   - /tmp:size=64M,mode=1777

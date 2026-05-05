@@ -114,6 +114,12 @@ class JobWorker(threading.Thread):
         self._lane_ready_at: Dict[str, int] = {l: 0 for l in _DOWNLOAD_LANES}
         # Round-robin-Tiebreaker wenn beide Lanes gleichzeitig ready sind.
         self._lane_rr_idx: int = 0
+        # Welcher Job läuft gerade auf welcher Lane? Nötig damit das UI
+        # einen Processing-Job korrekt der visuellen Lane (a/b) zuordnen kann.
+        # Vorher hat das Frontend die Reihenfolge nach created_at_ms erraten,
+        # was falsch war wenn nur Lane B lief — der Job landete dann in
+        # Slot[0] = Lane A, Lane B sah "Ready" obwohl sie aktiv war.
+        self._lane_current_job: Dict[str, Optional[str]] = {l: None for l in _DOWNLOAD_LANES}
 
     # ------------------------------------------------------------------
     # Lane selection (Download-Worker, Dual-VPN)
@@ -134,6 +140,7 @@ class JobWorker(threading.Thread):
                 "name": name,
                 "ready_at_ms": ready_at,
                 "remaining_ms": max(0, ready_at - now),
+                "current_job_id": self._lane_current_job.get(name),
             })
         # Wenn mind. eine Lane ready: 0 ms bis nächste Lane verfügbar.
         next_ready = min((l["remaining_ms"] for l in lanes), default=0)
@@ -179,7 +186,7 @@ class JobWorker(threading.Thread):
                     # Restwartezeit, dann erneut prüfen.
                     self._stop.wait(timeout=max(0.5, wait_ms / 1000.0))
                     continue
-                job = self._poll_next_queued_download()
+                job = self._poll_next_queued_download(lane=lane)
                 if job:
                     self._process_download(job, lane=lane)
                     continue
@@ -198,7 +205,7 @@ class JobWorker(threading.Thread):
     # Download job polling
     # ------------------------------------------------------------------
 
-    def _poll_next_queued_download(self) -> Optional[Dict[str, Any]]:
+    def _poll_next_queued_download(self, lane: str = "default") -> Optional[Dict[str, Any]]:
         conn = _db()
         try:
             row = conn.execute(
@@ -206,7 +213,7 @@ class JobWorker(threading.Thread):
                 SELECT job_id, payload_json
                 FROM download_jobs
                 WHERE status = 'queued'
-                ORDER BY created_at_ms ASC
+                ORDER BY created_at_ms ASC, rowid ASC
                 LIMIT 1
                 """
             ).fetchone()
@@ -218,6 +225,13 @@ class JobWorker(threading.Thread):
                 (_now_ms(), row["job_id"]),
             )
             conn.commit()
+            # Lane-Mapping IM SELBEN STACK-FRAME wie der COMMIT setzen — kein
+            # Funktions-Call-Boundary mehr zwischen DB-Transition und In-
+            # Memory-Update. Eliminiert das Race-Fenster wo /api/queue X als
+            # processing zeigt aber /api/queue/lanes die Lane noch idle
+            # reportet (was vorher zu UI-Sprüngen führte: queuedJobs[0]
+            # wurde fälschlich auf die "scheinbar idle" Lane gemappt). */
+            self._lane_current_job[lane] = row["job_id"]
 
             params: Dict[str, Any] = {}
             if row["payload_json"]:
@@ -771,42 +785,57 @@ class JobWorker(threading.Thread):
         # Deezer source-bind. "default" → kein Bind (Status-quo-Verhalten).
         propagated_lane = lane if lane in ("a", "b") else None
 
-        with self._lock:
-            from app import download_and_process
+        # Lane-Tracking für die UI: _lane_current_job[lane] wurde bereits
+        # in _poll_next_queued_download direkt nach dem SQL-COMMIT gesetzt
+        # (gleicher Stack-Frame, kein Race-Window). Wir geben es erst nach
+        # dem Setzen der Cooldown wieder frei — siehe Reorder-Block unten.
+        try:
+            with self._lock:
+                from app import download_and_process
 
-            download_and_process(
-                track_id=track_id,
-                location=params.get("location", "local"),
-                video_id=params.get("video_id"),
-                output_format=params.get("output_format"),
-                audio_quality=params.get("audio_quality"),
-                metadata_provider=params.get("metadata_provider", "deezer"),
-                max_retries=params.get("max_retries", 0),
-                navidrome_library_path=params.get("navidrome_library_path"),
-                source_lane=propagated_lane,
-            )
+                download_and_process(
+                    track_id=track_id,
+                    location=params.get("location", "local"),
+                    video_id=params.get("video_id"),
+                    output_format=params.get("output_format"),
+                    audio_quality=params.get("audio_quality"),
+                    metadata_provider=params.get("metadata_provider", "deezer"),
+                    max_retries=params.get("max_retries", 0),
+                    navidrome_library_path=params.get("navidrome_library_path"),
+                    source_lane=propagated_lane,
+                )
+        finally:
+            # ----- Per-Lane-Cooldown -----
+            # Greift IMMER, egal ob success oder error. Bei 429 wird's deutlich
+            # länger, damit Retry-Wellen YouTube nicht weiter eskalieren. Im
+            # Dual-Lane-Modus läuft der Cooldown pro Lane separat — die andere
+            # Lane kann sofort den nächsten Job picken (siehe
+            # _pick_download_lane). Das halbiert effektiv die Idle-Zeit
+            # zwischen Downloads, ohne parallele yt-dlp-Prozesse.
+            #
+            # Wichtig fürs UI: ready_at MUSS gesetzt werden BEVOR
+            # current_job_id auf None geht. Sonst gibt es ein Frame in dem
+            # die Lane als "idle, score=0" erscheint (kein Job, keine
+            # Cooldown), was das Frontend als "frei → assignt queuedJobs[0]"
+            # interpretiert und visuelle Sprünge zwischen Lanes auslöst.
+            finished = get_job(track_id) or {}
+            normal_range, rl_range = _load_cooldown_ranges()
+            if _looks_like_429(finished.get("message", ""), finished.get("error", "")):
+                lo, hi = rl_range
+                cooldown = random.uniform(lo, hi)
+                print(f"[worker] 429 on '{track_id}' (lane {lane}) — extended cooldown {cooldown:.0f}s")
+            else:
+                lo, hi = normal_range
+                cooldown = random.uniform(lo, hi)
+                tag = finished.get("status", "?")
+                print(f"[worker] lane {lane} cooldown {cooldown:.0f}s (last status={tag})")
 
-        # ----- Per-Lane-Cooldown -----
-        # Greift IMMER, egal ob success oder error. Bei 429 wird's deutlich länger,
-        # damit Retry-Wellen YouTube nicht weiter eskalieren. Im Dual-Lane-Modus
-        # läuft der Cooldown pro Lane separat — die andere Lane kann sofort den
-        # nächsten Job picken (siehe _pick_download_lane). Das halbiert effektiv
-        # die Idle-Zeit zwischen Downloads, ohne parallele yt-dlp-Prozesse.
-        finished = get_job(track_id) or {}
-        normal_range, rl_range = _load_cooldown_ranges()
-        if _looks_like_429(finished.get("message", ""), finished.get("error", "")):
-            lo, hi = rl_range
-            cooldown = random.uniform(lo, hi)
-            print(f"[worker] 429 on '{track_id}' (lane {lane}) — extended cooldown {cooldown:.0f}s")
-        else:
-            lo, hi = normal_range
-            cooldown = random.uniform(lo, hi)
-            tag = finished.get("status", "?")
-            print(f"[worker] lane {lane} cooldown {cooldown:.0f}s (last status={tag})")
+            self._lane_ready_at[lane] = _now_ms() + int(cooldown * 1000)
+            # ATOMIC für die UI: ready_at ist gesetzt, JETZT erst current_job_id
+            # freigeben — Lane geht nahtlos vom 'processing'-State in den
+            # 'cooldown'-State, ohne zwischenzeitliches "idle"-Snapshot.
+            self._lane_current_job[lane] = None
 
-        # Cooldown am Lane-Slot ablegen — die andere Lane bleibt durch das
-        # while-Loop in run() weiterhin pickbar; kein blocking-sleep mehr hier.
-        self._lane_ready_at[lane] = _now_ms() + int(cooldown * 1000)
         # Kurze Yield-Pause, damit run() in einem stoppable-sleep landet wenn
         # beide Lanes Cooldown haben (sonst busy-Loop).
         self._stop.wait(timeout=0.1)

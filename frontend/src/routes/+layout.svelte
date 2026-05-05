@@ -133,11 +133,11 @@
       contain: layout paint;
     "
   >
-    <div class="mx-auto max-w-[1180px] px-7 h-[54px] flex items-center gap-7">
+    <div class="tonus-header-inner mx-auto max-w-[1180px] h-[54px] flex items-center">
       <!-- Tonus mark + wordmark -->
       <a
         href="{base}/"
-        class="flex items-center gap-[9px]"
+        class="tonus-brand flex items-center gap-[9px]"
         style="color: var(--color-fg-primary);"
         aria-label="Tonus — Startseite"
       >
@@ -148,6 +148,7 @@
             height: 22px;
             border-radius: 6px;
             background: linear-gradient(135deg, var(--color-accent), oklch(35% 0.15 30));
+            flex-shrink: 0;
           "
         >
           <span
@@ -156,7 +157,7 @@
           ></span>
         </span>
         <span
-          class="font-semibold"
+          class="tonus-wordmark font-semibold"
           style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.02em;"
         >
           Tonus
@@ -164,7 +165,7 @@
       </a>
 
       <!-- Underline tabs -->
-      <nav class="flex items-center text-[12.5px] ml-5">
+      <nav class="tonus-top-nav flex items-center text-[12.5px]">
         {#each tabs as tab}
           {@const active = isActive(tab.href, $page.url.pathname)}
           <a
@@ -194,10 +195,10 @@
         {/each}
       </nav>
 
-      <div class="ml-auto flex items-center gap-2">
+      <div class="tonus-header-actions ml-auto flex items-center gap-2">
         {#if $currentUser}
           <span
-            class="inline-flex items-center gap-1.5"
+            class="tonus-user-pill inline-flex items-center gap-1.5"
             style="
               padding: 4px 10px;
               font-size: 11px;
@@ -205,11 +206,12 @@
               border: 1px solid var(--color-border-soft);
               background: rgba(255, 255, 255, 0.02);
               color: var(--color-fg-secondary);
+              flex-shrink: 0;
             "
             title={$t('auth.user_menu.signed_in_as') + ' ' + $currentUser.username}
           >
             <KeyRound size={11} strokeWidth={1.5} />
-            {$currentUser.username}{$currentUser.is_admin ? ' · admin' : ''}
+            <span class="tonus-username">{$currentUser.username}{$currentUser.is_admin ? ' · admin' : ''}</span>
           </span>
           <button
             onclick={handleLogout}
@@ -279,3 +281,66 @@
   <TokenSheet />
   <ConfirmDialog />
 </div>
+
+<style>
+  /* Header-Layout: drei Zonen — Brand, scrollbarer Tab-Bereich, Actions.
+     Tabs sollen niemals overflow-versteckt werden, sonst ist Settings
+     auf Phone unerreichbar (Issue: User konnte Settings-Tab nicht klicken). */
+  .tonus-header-inner {
+    padding-left: 28px;
+    padding-right: 28px;
+    gap: 28px;
+  }
+  .tonus-top-nav {
+    margin-left: 20px;
+    flex-shrink: 1;
+    min-width: 0;
+    overflow-x: auto;
+    /* overflow-y: hidden — sonst kann der Browser bei
+       overflow-x:auto die y-Achse implizit auf "scroll" setzen,
+       was vertikales Pan-Verhalten beim diagonalen Touch erlaubt
+       und den Header bouncy aussehen lässt. */
+    overflow-y: hidden;
+    /* Touch-Pan auf horizontale Achse einschränken — verhindert
+       dass diagonale Swipes den Header vertikal wegziehen.
+       overscroll-behavior-x: contain stoppt zusätzlich das
+       Übertragen des Scroll-Events auf den Parent (Page-Body). */
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+  }
+  .tonus-top-nav::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
+  .tonus-top-nav > a {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .tonus-header-actions {
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 640px) {
+    .tonus-header-inner {
+      padding-left: 12px;
+      padding-right: 12px;
+      gap: 10px;
+    }
+    .tonus-top-nav {
+      margin-left: 0;
+    }
+    /* Wordmark-Text auf Phone weglassen — nur Logo-Pille reicht.
+       Der ganze a-Tag bleibt klickbar und führt zur Library. */
+    .tonus-wordmark {
+      display: none;
+    }
+    /* Username-Text aus User-Pill ausblenden — Icon + KeyRound bleibt
+       sichtbar als Indikator, dass eingeloggt. Logout-Button daneben
+       weiterhin tappbar. */
+    .tonus-username {
+      display: none;
+    }
+  }
+</style>
+

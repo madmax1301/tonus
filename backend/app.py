@@ -936,13 +936,32 @@ async def list_queue(
             tuple(wanted),
         ).fetchone()["n"]
 
+        # Sortierung in zwei Gruppen:
+        #   1) processing + queued: FIFO ASC — ältester ist als nächstes zu
+        #      pullen (matched Worker-ORDER BY created_at_ms ASC, rowid ASC).
+        #      Beim CSV-Bulk-Import landen viele Jobs in derselben Millisekunde,
+        #      also MUSS der Tiebreaker rowid ASC sein damit die UI denselben
+        #      "next pull" anzeigt den der Worker tatsächlich zieht.
+        #   2) completed + error: DESC — neueste Erlebnisse zuerst, klassischer
+        #      Newsfeed-Style fürs Aufräumen / Debuggen.
         rows = conn.execute(
             f"""
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json
+                   created_at_ms, updated_at_ms, payload_json, rowid AS _rowid
             FROM download_jobs
             WHERE status IN ({placeholders})
-            ORDER BY created_at_ms DESC, rowid DESC
+            ORDER BY
+              CASE status
+                WHEN 'processing' THEN 1
+                WHEN 'queued'     THEN 2
+                WHEN 'completed'  THEN 3
+                WHEN 'error'      THEN 4
+                ELSE 5
+              END ASC,
+              CASE WHEN status IN ('queued', 'processing') THEN created_at_ms END ASC,
+              CASE WHEN status IN ('queued', 'processing') THEN _rowid END ASC,
+              CASE WHEN status IN ('completed', 'error')   THEN created_at_ms END DESC,
+              CASE WHEN status IN ('completed', 'error')   THEN _rowid END DESC
             LIMIT ? OFFSET ?
             """,
             (*wanted, limit, offset),
@@ -977,6 +996,56 @@ async def list_queue(
             "SELECT status, COUNT(*) AS n FROM download_jobs GROUP BY status",
         ).fetchall()
         status_counts = {r["status"]: r["n"] for r in agg_rows}
+
+        # Live-Block: alle processing-Jobs + Top-N queued-Jobs (FIFO).
+        # Wird IMMER mitgeliefert, unabhängig vom User-Filter — damit die
+        # Lane-Strip auch beim "Done"- oder "Error"-Filter sichtbar bleibt
+        # ("Was läuft gerade" + "Was kommt als nächstes" sollen nie
+        # ausgeblendet werden). N=4 reicht für 2 Lanes (je 1 running +
+        # 1 upNext) plus etwas Puffer.
+        def _row_to_item(r):
+            payload = None
+            if r["payload_json"]:
+                try:
+                    payload = _json.loads(r["payload_json"])
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+            return {
+                "job_id": r["job_id"],
+                "status": r["status"],
+                "stage": r["stage"],
+                "progress": r["progress"],
+                "message": r["message"],
+                "download_url": r["download_url"],
+                "created_at_ms": r["created_at_ms"],
+                "updated_at_ms": r["updated_at_ms"],
+                "payload": payload,
+            }
+
+        proc_rows = conn.execute(
+            """
+            SELECT job_id, status, stage, progress, message, download_url,
+                   created_at_ms, updated_at_ms, payload_json
+            FROM download_jobs
+            WHERE status = 'processing'
+            ORDER BY created_at_ms ASC, rowid ASC
+            """
+        ).fetchall()
+        head_rows = conn.execute(
+            """
+            SELECT job_id, status, stage, progress, message, download_url,
+                   created_at_ms, updated_at_ms, payload_json
+            FROM download_jobs
+            WHERE status = 'queued'
+            ORDER BY created_at_ms ASC, rowid ASC
+            LIMIT 4
+            """
+        ).fetchall()
+        live = {
+            "processing": [_row_to_item(r) for r in proc_rows],
+            "queued_head": [_row_to_item(r) for r in head_rows],
+        }
+
         return {
             "items": items,
             "total": total,
@@ -984,6 +1053,7 @@ async def list_queue(
             "offset": offset,
             "limit": limit,
             "status_counts": status_counts,
+            "live": live,
         }
     finally:
         conn.close()

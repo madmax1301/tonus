@@ -1,0 +1,81 @@
+name: Tests
+
+# Schnelle Smoke-Tests — laufen auf jedem Push und PR. Trennt sich
+# absichtlich vom build.yml (Multi-Arch-Image-Build, ~10 min): Tests
+# müssen unter 3 min sein damit sie auf jeden Push aushaltbar sind,
+# Image-Builds laufen nur auf main + Tags.
+#
+# Was hier läuft entspricht den Checkboxen im PR-Template:
+#   backend/tests   → backend-tests-Job
+#   npm run check   → frontend-tests-Job
+#   docker compose  → später als Smoke-Step ergänzen, falls nötig
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    name: Backend (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Compile-check (py_compile)
+        working-directory: backend
+        run: python -m py_compile app.py utils/worker.py utils/auth.py utils/job_store.py
+
+      - name: Run pytest
+        working-directory: backend
+        run: python -m pytest -v
+
+  frontend-tests:
+    name: Frontend (Node 20)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Type & Svelte check
+        working-directory: frontend
+        run: npm run check
+
+      - name: Production build
+        working-directory: frontend
+        run: npm run build

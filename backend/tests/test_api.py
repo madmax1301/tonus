@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
+
+
+# Frontend-Bundle liegt unter backend/frontend/build/index.html nach
+# `npm run build`. Backend-Tests laufen unabhängig vom Frontend-Build —
+# fehlt das Bundle (z.B. in CI's Backend-Job), wird der "/"-Test
+# geskipped statt zu failen. Lokal mit gebautem Frontend läuft er.
+_FRONTEND_BUILD = Path(__file__).resolve().parent.parent / "frontend" / "build" / "index.html"
+_HAS_FRONTEND_BUNDLE = _FRONTEND_BUILD.is_file()
 
 
 @pytest.fixture(scope="module")
@@ -41,6 +51,10 @@ def test_metadata_providers(client: TestClient) -> None:
     assert "deezer" in ids and "spotify" in ids
 
 
+@pytest.mark.skipif(
+    not _HAS_FRONTEND_BUNDLE,
+    reason="frontend not built (backend/frontend/build/index.html missing) — run `npm run build` in frontend/",
+)
 def test_root_returns_html(client: TestClient) -> None:
     r = client.get("/")
     assert r.status_code == 200
