@@ -296,6 +296,17 @@
     flex-shrink: 1;
     min-width: 0;
     overflow-x: auto;
+    /* overflow-y: hidden — sonst kann der Browser bei
+       overflow-x:auto die y-Achse implizit auf "scroll" setzen,
+       was vertikales Pan-Verhalten beim diagonalen Touch erlaubt
+       und den Header bouncy aussehen lässt. */
+    overflow-y: hidden;
+    /* Touch-Pan auf horizontale Achse einschränken — verhindert
+       dass diagonale Swipes den Header vertikal wegziehen.
+       overscroll-behavior-x: contain stoppt zusätzlich das
+       Übertragen des Scroll-Events auf den Parent (Page-Body). */
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none; /* IE/Edge */
   }
