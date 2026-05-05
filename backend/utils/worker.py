@@ -114,6 +114,12 @@ class JobWorker(threading.Thread):
         self._lane_ready_at: Dict[str, int] = {l: 0 for l in _DOWNLOAD_LANES}
         # Round-robin-Tiebreaker wenn beide Lanes gleichzeitig ready sind.
         self._lane_rr_idx: int = 0
+        # Welcher Job läuft gerade auf welcher Lane? Nötig damit das UI
+        # einen Processing-Job korrekt der visuellen Lane (a/b) zuordnen kann.
+        # Vorher hat das Frontend die Reihenfolge nach created_at_ms erraten,
+        # was falsch war wenn nur Lane B lief — der Job landete dann in
+        # Slot[0] = Lane A, Lane B sah "Ready" obwohl sie aktiv war.
+        self._lane_current_job: Dict[str, Optional[str]] = {l: None for l in _DOWNLOAD_LANES}
 
     # ------------------------------------------------------------------
     # Lane selection (Download-Worker, Dual-VPN)
@@ -134,6 +140,7 @@ class JobWorker(threading.Thread):
                 "name": name,
                 "ready_at_ms": ready_at,
                 "remaining_ms": max(0, ready_at - now),
+                "current_job_id": self._lane_current_job.get(name),
             })
         # Wenn mind. eine Lane ready: 0 ms bis nächste Lane verfügbar.
         next_ready = min((l["remaining_ms"] for l in lanes), default=0)
@@ -771,20 +778,28 @@ class JobWorker(threading.Thread):
         # Deezer source-bind. "default" → kein Bind (Status-quo-Verhalten).
         propagated_lane = lane if lane in ("a", "b") else None
 
-        with self._lock:
-            from app import download_and_process
+        # Lane-Tracking für die UI: Job auf der Lane vermerken solange er
+        # läuft, danach wieder freigeben. Try/finally damit eine Exception
+        # in download_and_process die Lane nicht für immer als "belegt"
+        # markiert hält.
+        self._lane_current_job[lane] = track_id
+        try:
+            with self._lock:
+                from app import download_and_process
 
-            download_and_process(
-                track_id=track_id,
-                location=params.get("location", "local"),
-                video_id=params.get("video_id"),
-                output_format=params.get("output_format"),
-                audio_quality=params.get("audio_quality"),
-                metadata_provider=params.get("metadata_provider", "deezer"),
-                max_retries=params.get("max_retries", 0),
-                navidrome_library_path=params.get("navidrome_library_path"),
-                source_lane=propagated_lane,
-            )
+                download_and_process(
+                    track_id=track_id,
+                    location=params.get("location", "local"),
+                    video_id=params.get("video_id"),
+                    output_format=params.get("output_format"),
+                    audio_quality=params.get("audio_quality"),
+                    metadata_provider=params.get("metadata_provider", "deezer"),
+                    max_retries=params.get("max_retries", 0),
+                    navidrome_library_path=params.get("navidrome_library_path"),
+                    source_lane=propagated_lane,
+                )
+        finally:
+            self._lane_current_job[lane] = None
 
         # ----- Per-Lane-Cooldown -----
         # Greift IMMER, egal ob success oder error. Bei 429 wird's deutlich länger,

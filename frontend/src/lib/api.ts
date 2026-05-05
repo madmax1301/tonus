@@ -350,6 +350,11 @@ export interface LaneInfo {
   name: string;
   ready_at_ms: number;
   remaining_ms: number;
+  /** Job-ID der gerade auf dieser Lane läuft, sonst null. Backend
+   *  trackt das in worker.py:_lane_current_job, damit die UI Jobs
+   *  korrekt der visuellen Lane zuordnen kann (statt nach
+   *  created_at_ms zu raten). */
+  current_job_id?: string | null;
 }
 
 export interface LaneStatusResponse {

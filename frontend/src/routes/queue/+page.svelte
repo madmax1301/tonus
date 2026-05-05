@@ -174,19 +174,21 @@
       .sort((a, b) => (a.created_at_ms ?? 0) - (b.created_at_ms ?? 0));
   });
 
-  /** Lane-Slots: N = Anzahl Lanes (1 single, 2 dual). Slot.job kommt
-   *  aus processingJobs[i]. Slot.upNext wird in **Pull-Order** zugewiesen:
-   *  die Lane die als nächstes ein Job zieht bekommt queuedJobs[0],
-   *  die zweit-bereit Lane queuedJobs[1] usw. Pull-Order:
+  /** Lane-Slots: N = Anzahl Lanes (1 single, 2 dual).
    *
+   *  Slot.job kommt aus `lane.current_job_id` vom Backend (worker.py
+   *  trackt pro Lane welcher Job gerade läuft) — wir schlagen den Job
+   *  per ID in data.items nach. Vorher wurde processingJobs[i] nach
+   *  created_at_ms in die Slots gemappt, was falsch war wenn nur Lane
+   *  B lief: der Job landete in Slot[0] = Lane A, B sah "Ready".
+   *
+   *  Slot.upNext wird in **Pull-Order** zugewiesen: die Lane die als
+   *  nächstes ein Job zieht bekommt queuedJobs[0], die zweit-bereit
+   *  Lane queuedJobs[1] usw.
    *    1. Idle-Lanes (kein Job, keine Cooldown)  — pullen sofort
    *    2. Cooldown-Lanes  — pullen wenn ihre remainingMs abgelaufen sind
    *    3. Processing-Lanes  — pullen erst nach dem aktuellen Job
-   *
-   *  Damit stimmt der Lane-A-Up-Next visuell mit dem überein was der
-   *  Worker tatsächlich als nächstes zieht (innerhalb der Annahme dass
-   *  Cooldown-Reste die einzige Wartezeit sind — Worker-Round-Robin
-   *  zwischen idle-Lanes ist nicht UI-sichtbar). */
+   */
   type LaneSlot = {
     laneName: string;
     remainingMs: number;
@@ -194,11 +196,18 @@
     upNext: QueueJob | null;
   };
   const laneSlots = $derived.by<LaneSlot[]>(() => {
-    const lanesArr = liveLanes.length > 0 ? liveLanes : [{ name: 'default', remaining_ms: 0 }];
-    const slots: LaneSlot[] = lanesArr.map((l, i) => ({
+    const lanesArr: LaneLive[] =
+      liveLanes.length > 0
+        ? liveLanes
+        : [{ name: 'default', remaining_ms: 0, current_job_id: null }];
+    // Job-Lookup-Map: job_id → QueueJob aus data.items, damit wir den
+    // im Backend-vermerkten current_job_id sofort auflösen können.
+    const jobsById = new Map<string, QueueJob>();
+    for (const j of data?.items ?? []) jobsById.set(j.job_id, j);
+    const slots: LaneSlot[] = lanesArr.map((l) => ({
       laneName: l.name,
       remainingMs: l.remaining_ms,
-      job: processingJobs[i] ?? null,
+      job: l.current_job_id ? (jobsById.get(l.current_job_id) ?? null) : null,
       upNext: null
     }));
     // Pull-Order-Score: idle/ready=0, cooldown=remainingMs, processing=∞
@@ -293,13 +302,18 @@
   }
 
   // Liste ohne die Jobs die schon in der Lane-Strip oben sichtbar sind:
-  // alle processing + alle upNext-Slots. Sonst Doppel-Render im Card und List.
+  // slot.job + slot.upNext aus jeder Lane. Sonst Doppel-Render im Card
+  // und List. Quelle ist jetzt strikt die Lane-Strip — wenn ein Job in
+  // DB den Status 'processing' hat aber auf keiner Lane gepinnt ist
+  // (Race-Window beim Übergang), darf er ruhig in der Liste auftauchen.
   const filtered = $derived.by<QueueJob[]>(() => {
     if (!data) return [];
     const q = filterText.trim().toLowerCase();
     const stripIds = new Set<string>();
-    for (const j of processingJobs) stripIds.add(j.job_id);
-    for (const s of laneSlots) if (s.upNext) stripIds.add(s.upNext.job_id);
+    for (const s of laneSlots) {
+      if (s.job) stripIds.add(s.job.job_id);
+      if (s.upNext) stripIds.add(s.upNext.job_id);
+    }
     let items = data.items.filter((j) => !stripIds.has(j.job_id));
     if (q) {
       items = items.filter((j) => {
@@ -331,13 +345,15 @@
   type LaneLive = {
     name: string;
     remaining_ms: number;
+    current_job_id: string | null;
   };
   const liveLanes = $derived.by<LaneLive[]>(() => {
     if (!lanes) return [];
     const elapsed = nowMs - lanesAnchor;
     return lanes.lanes.map((l) => ({
       name: l.name,
-      remaining_ms: Math.max(0, l.remaining_ms - elapsed)
+      remaining_ms: Math.max(0, l.remaining_ms - elapsed),
+      current_job_id: l.current_job_id ?? null
     }));
   });
   const nextLaneReadyMs = $derived(
