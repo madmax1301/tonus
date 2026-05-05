@@ -345,6 +345,10 @@ Open question. There's a [Discussions thread](https://github.com/madmax1301/tonu
 **Does this work with Jellyfin?**
 Audio files land in a folder — any tool that scans that folder will pick them up, including Jellyfin. The Navidrome-specific integrations (scan trigger, library sync, plugin) won't fire, but the acquisition itself is library-agnostic.
 
+## Legal
+
+Tonus is intended for personal, non-commercial use against music you have a legal right to access. You are responsible for complying with the terms of service of any provider you point it at — including Deezer, Spotify, and YouTube — and with the copyright and digital-content laws of your jurisdiction. The maintainer ships the tool; how you use it is on you.
+
 ## License
 
 Released under the [MIT License](LICENSE) — © 2026 madmax1301.
