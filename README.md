@@ -3,15 +3,19 @@
 </p>
 
 <p align="center">
-  <strong>Self-hosted music acquisition. Pairs with Navidrome.</strong><br/>
-  Search across Deezer, Spotify and YouTube — drop the result straight into your library.
+  <strong>Self-hosted music acquisition for Navidrome.</strong><br/>
+  Multi-user from day one — 2FA, encrypted secrets, per-user access tokens. Spotify, Deezer or YouTube as source.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-c8a96a.svg" /></a>
+  <a href="https://github.com/madmax1301/tonus/actions/workflows/test.yml"><img alt="Tests" src="https://github.com/madmax1301/tonus/actions/workflows/test.yml/badge.svg?branch=main" /></a>
+  <a href="https://github.com/madmax1301/tonus/actions/workflows/build.yml"><img alt="Build" src="https://github.com/madmax1301/tonus/actions/workflows/build.yml/badge.svg?branch=main" /></a>
+  <a href="https://github.com/madmax1301/tonus/pkgs/container/tonus"><img alt="GHCR" src="https://img.shields.io/badge/image-ghcr.io-2496ed.svg" /></a>
   <img alt="Stack: FastAPI" src="https://img.shields.io/badge/backend-FastAPI-009688.svg" />
   <img alt="Stack: SvelteKit" src="https://img.shields.io/badge/frontend-SvelteKit-ff3e00.svg" />
   <img alt="Container: Docker" src="https://img.shields.io/badge/run-Docker-2496ed.svg" />
+  <img alt="Status: Alpha" src="https://img.shields.io/badge/status-alpha-orange.svg" />
 </p>
 
 ---
@@ -21,6 +25,50 @@
 Tonus is the **acquisition half** of a self-hosted music setup. You search, you queue, Tonus downloads and lands the file in your Navidrome library folder. Navidrome itself stays the **player** — Tonus does not stream, transcode, or expose music to clients. Think of it as the "buy/grab" workflow that sits next to your existing Navidrome instance.
 
 It's a single-tenant tool you self-host on a NAS (or any Docker host). All credentials and audio stay on your machine — no external service calls beyond the metadata APIs you opt into.
+
+## Project status
+
+**Alpha.** The core acquisition pipeline (search → download → tag → file in Navidrome library) and the multi-user auth stack (JWT + Argon2id + TOTP + PATs + brute-force ban) are stable and used in production by the maintainer. Expect breaking changes — env-var renames, DB-schema migrations — until the first `v1.0.0` tag.
+
+**Stable enough to use daily:**
+
+- Core acquisition: Deezer/Spotify search → YouTube download → Navidrome scan trigger → file delivered, tagged, and visible in your library
+- Auth: multi-user with TOTP-2FA, Personal Access Tokens, brute-force lifetime ban
+- Encrypted-at-rest provider credentials and TOTP secrets (Fernet)
+- Persistent app data on a separate volume (auth + queue + settings survive image swaps)
+- Multi-arch image (amd64 + arm64), pin to `:0.1` for production
+
+**Working but rough edges:**
+
+- YouTube bot-detection occasionally requires a manual cookie export
+- CSV-import resume after browser reload works but UI feedback is sparse
+- Dual-VPN source-IP-splitting is NAS-mode only and silently disables itself if the bind addresses are unreachable
+
+**Out of scope right now:** Subsonic-direct (without Navidrome), Ansible/Helm/non-Docker deployment.
+
+**Open question:** Soulseek / slskd integration — see [Discussions → Ideas](https://github.com/madmax1301/tonus/discussions) if this matters to you.
+
+## Why Tonus, not a Lidarr stack
+
+Most self-hosted music-acquisition setups today look like this: **Lidarr** orchestrates, with **Deemix**, **Slskd / Soulseek**, **Tubifarry** or **Naviseerr** layered on top. That works, but it's 2–5 components to deploy, monitor, and update.
+
+Tonus exists because that stack is heavy for a single-household use case, and because none of those components are designed multi-user-first. Here's how the picture compares:
+
+| | Lidarr + Deemix | Lidarr + Tubifarry | Naviseerr | MusicSeerr | **Tonus** |
+|---|---|---|---|---|---|
+| **Components to deploy** | 2 | 1 (plugin in Lidarr) | 4 (Navidrome + Lidarr + slskd + sidecar) | 1+ (Lidarr required) | **1 + Navidrome** |
+| **Requires Lidarr** | yes | yes | yes | yes | **no** |
+| **YouTube as audio source** | no (Deezer only) | yes | no | depends on Lidarr indexer | **yes** |
+| **Spotify catalog search** | no | yes (playlist import) | no | yes (as request UI) | **yes** |
+| **Soulseek / slskd** | optional | yes | required | optional | no (open question — see [Discussions](https://github.com/madmax1301/tonus/discussions)) |
+| **Per-user accounts (built-in)** | reverse-proxy only | inherits Lidarr's | reverse-proxy only | yes | **yes** |
+| **2FA / TOTP (built-in)** | no | no | no | partial | **yes** |
+| **Encrypted secrets at rest** | no | no | no | no | **yes** (Fernet) |
+| **Source-IP-splitting (built-in)** | no | no | external VPN container | external | **yes** (dual-lane) |
+| **UI for provider config** | partial (via Lidarr) | inherits | none | yes | **yes** (encrypted in DB) |
+| **Stack complexity** (1 = simple, 5 = heavy) | 3 | 3 | 5 | 4 | **2** |
+
+If your acquisition needs are already handled by a Lidarr-based stack and Soulseek is critical to you, Tonus is not a drop-in replacement — yet. If you don't need Soulseek and you're tired of orchestrating four containers, Tonus is the simpler shape.
 
 ## Screenshots
 
@@ -41,7 +89,7 @@ It's a single-tenant tool you self-host on a NAS (or any Docker host). All crede
 - **Hot-reloadable defaults** — change worker cooldowns, default provider, audio codec from the UI without a container restart
 - **Dual-VPN source-IP splitting** (optional, NAS-mode) — bind alternating download threads to two network interfaces for higher throughput on rate-limited APIs
 - **Persistent state on a separate volume** — auth DB and queue jobs live in `/app/data/`; clearing the audio download cache cannot wipe your users
-- **Navidrome plugin available separately** — [`tonus-navidrome-plugin`](https://github.com/madmax1301/tonus-navidrome-plugin) (Go), authenticates with a PAT
+- **Navidrome plugin** — Go binary that triggers per-user discovery + auto-playlist runs in Navidrome via PAT auth. *Plugin repo is being prepared for public release — track progress in [issue #1](https://github.com/madmax1301/tonus/issues/1).*
 
 ## Quick Start
 
@@ -119,7 +167,7 @@ If `TONUS_API_TOKEN` is set in `.env`, the legacy static-token plugin path remai
 
 **Why two volumes?** `/app/downloads` is a working area for in-flight files — clearing it during cleanup must not destroy your users or queue history. `/app/data` is the durable store. Bind-mount both separately.
 
-The plugin lives in its own repo: [`tonus-navidrome-plugin`](https://github.com/madmax1301/tonus-navidrome-plugin).
+The plugin lives in its own repo and will be published once it's ready for external use — track progress in [issue #1](https://github.com/madmax1301/tonus/issues/1).
 
 ## Authentication
 
@@ -278,7 +326,24 @@ services:
     image: ghcr.io/madmax1301/tonus:0.1
 ```
 
-You'll get every patch release automatically but stay locked out of `0.2.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `main` continuously, no tag cut needed.
+You'll get every patch release automatically but stay locked out of `0.2.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
+
+## FAQ
+
+**Is this a Lidarr replacement?**
+For households that don't depend on Soulseek/slskd, yes. The acquisition flow (search a catalog → download from YouTube → tag → land in Navidrome) covers what most people use Lidarr+Deemix for, with one container instead of two and built-in multi-user auth. If Soulseek is your primary source, Tonus is not there yet — see [Discussions → Ideas](https://github.com/madmax1301/tonus/discussions) for the open thread.
+
+**Does Tonus need Navidrome to work?**
+The acquisition pipeline (search, download, tag) runs without Navidrome — files just land in whatever folder you configure. The optional bits — library-scan trigger, "already downloaded" deduplication, the upcoming Subsonic playlist generation — need a Navidrome instance Tonus can reach via API. Subsonic-direct (without Navidrome) is not on the roadmap.
+
+**Can I use Tonus without Spotify credentials?**
+Yes. Deezer is the default catalog, has no API key, and covers most western music. Spotify is opt-in for a richer catalog and album art. YouTube is the audio source either way.
+
+**Is Soulseek integration planned?**
+Open question. There's a [Discussions thread](https://github.com/madmax1301/tonus/discussions) collecting demand. If enough Tonus users actually need it as primary source (not just "would be nice"), it goes on the roadmap.
+
+**Does this work with Jellyfin?**
+Audio files land in a folder — any tool that scans that folder will pick them up, including Jellyfin. The Navidrome-specific integrations (scan trigger, library sync, plugin) won't fire, but the acquisition itself is library-agnostic.
 
 ## License
 
