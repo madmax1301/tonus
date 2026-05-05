@@ -264,7 +264,7 @@ Tonus uses two release channels — bleeding-edge `:dev` for testing, and immuta
 
 | Tag | Channel | Updates when | Points to |
 |---|---|---|---|
-| `:dev` | dev (bleeding-edge) | Every push to `main` | Latest commit on `main` |
+| `:dev` | dev (bleeding-edge) | Every push to `dev` | Latest commit on `dev` |
 | `:sha-abc1234` | dev (pinned) | Never (immutable) | A specific commit |
 | `:0.1.0` | stable (pinned) | Never (immutable) | A specific tagged release |
 | `:0.1` | stable (rolling within minor) | New patch tags `v0.1.x` | Latest patch in `0.1.x` |
