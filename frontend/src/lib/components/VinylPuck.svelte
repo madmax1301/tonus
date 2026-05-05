@@ -57,6 +57,7 @@
     align-items: center;
     justify-content: center;
     transition: box-shadow 0.4s ease;
+    will-change: transform;
   "
 >
   <span
@@ -70,6 +71,7 @@
       align-items: center;
       justify-content: center;
       transition: background 0.4s ease;
+      will-change: transform;
     "
   >
     <span
@@ -115,20 +117,29 @@
 </div>
 
 <style>
+  /* spin only the outer disc + grooves; the counter label stays upright
+     via reverse-spin on the inner disc.
+
+     Wichtig: animation-duration ändert sich NICHT bei :hover. Vorher
+     hatte das Rule die Duration auf 2s reduziert, was bei Mobile-Touch
+     (sticky-hover) die Animation beim End-of-touch neu starten ließ —
+     der User sah den Vinyl "wackeln statt drehen" weil die Animation
+     pro Touch von Frame 0 startete. Jetzt konstant 4s. */
   .tonus-vinyl-puck {
-    /* spin only the outer disc + grooves; the counter label stays
-       upright via reverse-spin on the inner disc */
     animation: tonus-puck-spin 4s linear infinite;
-  }
-  .tonus-vinyl-puck:hover {
-    animation-duration: 2s;
   }
   .tonus-vinyl-puck__disc {
     /* counter readable trotz parent-spin — gleiche Geschwindigkeit
        in Gegenrichtung. */
     animation: tonus-puck-spin 4s linear infinite reverse;
   }
+  /* from-Keyframe explizit — manche Browser starten die Animation
+     anders interpoliert wenn from fehlt und initial transform nicht
+     identity ist (z.B. parent-transformed). */
   @keyframes tonus-puck-spin {
+    from {
+      transform: rotate(0deg);
+    }
     to {
       transform: rotate(360deg);
     }
