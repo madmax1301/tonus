@@ -64,6 +64,19 @@
   let csvExportProgress = $state<{ loaded: number; total: number } | null>(null);
   const PAGE_SIZE = 200;
 
+  // Viewport-aware Vinyl-size — Phone shrinkt das 260px-Cover (mit Disc-Offset
+  // ~403px Gesamt) sonst überläuft. SSR-safe via $effect (clientside-only).
+  let vinylSize = $state(260);
+  $effect(() => {
+    if (!browser) return;
+    const update = () => {
+      vinylSize = window.innerWidth < 640 ? 170 : 260;
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  });
+
   // Smooth-Counter mit svelte/motion `tweened` — Backend liefert alle 5 Calls
   // einen Status-Update, das Frontend pollt alle 1500 ms. Ohne Easing wären
   // das visuelle Sprünge (0 → 34 → 65 → 105). Tweened interpoliert zwischen
@@ -524,11 +537,11 @@
 
 <CinemaBackdrop hue={DEFAULT_HUE} />
 
-<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: 40px 36px 50px;">
+<section class="relative z-10 mx-auto max-w-[1180px] w-full" style="padding: clamp(20px, 4vw, 40px) clamp(14px, 4vw, 36px) clamp(28px, 5vw, 50px);">
   <!-- ─── Editorial Hero ───────────────────────────────────── -->
   <div
-    class="grid items-center"
-    style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: 48px;"
+    class="grid items-center tonus-import-hero"
+    style="grid-template-columns: 1.3fr 1fr; gap: 48px; margin-bottom: clamp(28px, 5vw, 48px);"
   >
     <div>
       <div
@@ -546,7 +559,7 @@
         class="font-semibold m-0"
         style="
           font-family: var(--font-display);
-          font-size: 48px;
+          font-size: clamp(30px, 7vw, 48px);
           font-weight: 600;
           line-height: 0.95;
           letter-spacing: -0.035em;
@@ -569,13 +582,13 @@
         {$t('import.description')}
       </p>
     </div>
-    <div class="flex justify-center">
+    <div class="flex justify-center tonus-import-vinyl">
       <VinylWithCover
         src={null}
         alt=""
         artist="Liste"
         year={lineCount > 0 ? lineCount : ''}
-        size={260}
+        size={vinylSize}
         spinning={!!csvJobId && csvStatus?.status !== 'completed'}
       />
     </div>
@@ -643,7 +656,7 @@
         -webkit-backdrop-filter: blur(40px) saturate(1.2);
         border: 1px solid {dragOver ? accent : 'var(--color-border-soft)'};
         border-radius: 22px;
-        padding: 28px;
+        padding: clamp(16px, 4vw, 28px);
         box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
         transition: border-color 0.18s ease;
       "
@@ -840,7 +853,7 @@
         class="font-medium mb-4"
         style="
           font-family: var(--font-display);
-          font-size: 36px;
+          font-size: clamp(24px, 6vw, 36px);
           font-weight: 500;
           letter-spacing: -0.025em;
           line-height: 1.05;
@@ -901,7 +914,7 @@
         -webkit-backdrop-filter: blur(40px) saturate(1.2);
         border: 1px solid var(--color-border-soft);
         border-radius: 22px;
-        padding: 32px;
+        padding: clamp(18px, 4vw, 32px);
         margin-bottom: 22px;
         box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
       "
@@ -923,7 +936,7 @@
             class="font-medium m-0"
             style="
               font-family: var(--font-display);
-              font-size: 56px;
+              font-size: clamp(36px, 8vw, 56px);
               font-weight: 500;
               line-height: 0.95;
               letter-spacing: -0.035em;
@@ -931,7 +944,7 @@
             "
           >
             <span class="tabular-nums">{csvResult.found.toLocaleString('de-DE')}</span>
-            <span style="font-size: 22px; color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
+            <span style="font-size: clamp(16px, 3.6vw, 22px); color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
               matched
             </span>
           </div>
@@ -1284,3 +1297,18 @@
     {/if}
   {/if}
 </section>
+
+<style>
+  /* Mobile-Pass: Hero stacked, Vinyl shrinkt via reactive size-prop. */
+  @media (max-width: 640px) {
+    .tonus-import-hero {
+      grid-template-columns: 1fr !important;
+      gap: 18px !important;
+      justify-items: start;
+    }
+    .tonus-import-vinyl {
+      justify-content: flex-start !important;
+    }
+  }
+</style>
+
