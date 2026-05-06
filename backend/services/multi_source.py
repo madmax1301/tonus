@@ -79,6 +79,20 @@ class MultiSourceResolver:
                 except Exception as e:
                     print(f"WARN: source '{src}' resolve failed: {type(e).__name__}: {e}")
 
+        # Duration-Filter VOR dem Score-Filter: Preview-Snippets (typisch 30s)
+        # haben oft perfekte Title+Artist-Scores aber sind keine echten Tracks.
+        # Hard-block hier statt nur Penalty, weil das Score-Modell allein nicht
+        # ausreicht (title=1.0 + artist=1.0 = 0.70, schon über min_score=0.65
+        # auch wenn duration_score=0 ist).
+        before = len(all_candidates)
+        all_candidates = [
+            c for c in all_candidates
+            if self._passes_duration_filter(c, track_info)
+        ]
+        rejected = before - len(all_candidates)
+        if rejected:
+            print(f"INFO: {rejected} candidate(s) rejected by duration filter (preview-snippet detection)")
+
         # min_score-Filter, dann sort by score DESC, tiebreak by source priority ASC
         filtered = [c for c in all_candidates if c.get("score", 0.0) >= self.min_score]
         filtered.sort(
@@ -88,6 +102,39 @@ class MultiSourceResolver:
             )
         )
         return filtered
+
+    def _passes_duration_filter(self, candidate: Dict, track_info: Optional[Dict]) -> bool:
+        """Reject preview-snippets and clearly-too-short tracks.
+
+        Two checks in cascade:
+          1. Hard floor at 45s — anything shorter than 45s is preview-snippet,
+             intro-jingle, sound-effect, or sample. Real music tracks aren't
+             that short, even punk/grindcore songs are typically 60s+.
+          2. Reference-based: if Deezer/Spotify gave us a duration_ms, the
+             candidate must be at least 50% of that. Catches the case where
+             the reference-track is e.g. 3:00 but a Bandcamp preview is 1:00
+             (above the 45s floor but still clearly truncated).
+
+        meta.duration field gesetzt von beiden Search-Helpers. Wenn unbekannt
+        (== 0) → durchwinken; lieber falsch-positiv als ein gutes Match
+        verwerfen weil yt-dlp keine duration ausspuckte.
+        """
+        src_duration = float((candidate.get("meta") or {}).get("duration", 0) or 0)
+        if src_duration <= 0:
+            return True  # unknown duration — give it a chance
+
+        # Hard floor for music tracks
+        if src_duration < 45:
+            return False
+
+        # Reference-based: must be at least 50% of the reference track length
+        ref_ms = (track_info or {}).get("duration_ms")
+        if ref_ms and src_duration > 0:
+            ref_sec = float(ref_ms) / 1000.0
+            if src_duration < ref_sec * 0.5:
+                return False
+
+        return True
 
     # ──────────────────────────────────────────────────────────────────
     # Per-Source Search-Helpers
