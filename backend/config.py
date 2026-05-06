@@ -112,6 +112,27 @@ YOUTUBE_PLAYER_CLIENTS = [
     c.strip() for c in os.getenv("YOUTUBE_PLAYER_CLIENTS", "default,tv_embedded,web").split(",") if c.strip()
 ]
 
+# ─── Multi-Source-Resolver (Phase 0.2.0) ──────────────────────────
+# Smart Source-Routing: pro Track werden alle aktivierten Quellen parallel
+# pre-searched, der best-scorende Treffer wird gepullt. Bei Download-Fail
+# (z.B. YouTube Age-Gate) automatisch nächst-bester aus dem Ranking. Reduziert
+# Failure-Rate signifikant ohne Login/Cookies — z.B. Age-gated YT-Tracks
+# werden auf SoundCloud/Bandcamp ausweichen wenn dort verfügbar.
+ENABLED_SOURCES = [
+    s.strip() for s in os.getenv("ENABLED_SOURCES", "youtube,soundcloud,bandcamp").split(",") if s.strip()
+]
+# Timeout pro Source-Pre-Search. Verhindert dass eine langsame Quelle
+# das ganze Resolve blockiert. Tonus' Worker hat 5-15s Cooldown, also
+# darf das Resolve Latency hinzufügen, aber nicht unbegrenzt.
+MULTI_SOURCE_TIMEOUT_S = float(os.getenv("MULTI_SOURCE_TIMEOUT_S", "10"))
+# Minimum-Match-Score (0-1). Treffer unter dem Wert werden verworfen.
+# Mit dem existing scoring-helper liegt 0.65 etwa "title + artist passen
+# halbwegs". Bei zu niedrigem Wert kommen falsche Tracks rein.
+MULTI_SOURCE_MIN_SCORE = float(os.getenv("MULTI_SOURCE_MIN_SCORE", "0.65"))
+# Wie viele Kandidaten pro Source vor dem Ranking gezogen werden. Mehr =
+# bessere Auswahl aber langsamer Pre-Search. 3 hat in Tests gut balanciert.
+MULTI_SOURCE_CANDIDATES_PER_SOURCE = int(os.getenv("MULTI_SOURCE_CANDIDATES_PER_SOURCE", "3"))
+
 # API Configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))

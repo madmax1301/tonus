@@ -602,8 +602,15 @@ class YouTubeService:
             result['warning'] = 'YouTube blocked some requests (403). Consider configuring YouTube cookies for better reliability.'
         return result
     
-    def download_by_video_id(self, video_id: str, output_path: str, output_format: str = None, audio_quality: str = None, source_lane: Optional[str] = None) -> Dict:
-        """Download a specific YouTube video by ID. source_lane∈{a,b,None} → Source-IP-Bind (Dual-VPN)."""
+    def download_by_url(self, url: str, output_path: str, output_format: str = None, audio_quality: str = None, source_lane: Optional[str] = None) -> Dict:
+        """Download from any yt-dlp-supported URL — YouTube, SoundCloud, Bandcamp, etc.
+
+        Generischer Download-Path. download_by_video_id() ist ein Wrapper der
+        die YouTube-URL aus einer video_id baut und hier aufruft. Multi-
+        Source-Resolver-Pfad kommt direkt mit URL.
+
+        source_lane∈{a,b,None} → Source-IP-Bind (Dual-VPN).
+        """
         output_format = (output_format or self.output_format or "mp3").strip().lower()
         audio_quality = audio_quality or self.audio_quality
 
@@ -617,9 +624,12 @@ class YouTubeService:
         ydl_opts = {
             # Avoid HLS (m3u8) formats that get blocked - prefer direct audio formats
             # Format priority: m4a direct > opus/webm direct > bestaudio (non-HLS) > fallback
+            # Generischer Pattern — funktioniert auch für SoundCloud (mp3/m4a) und
+            # Bandcamp (mp3-direct mit oft DRM-frei) ohne Anpassung.
             'format': 'bestaudio[ext=m4a][protocol!=m3u8]/bestaudio[ext=webm][protocol!=m3u8]/bestaudio[ext=opus][protocol!=m3u8]/bestaudio[protocol!=m3u8]/best[ext=m4a][protocol!=m3u8]/best[ext=webm][protocol!=m3u8]/best[height<=720][protocol!=m3u8]/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            # Try different YouTube clients as fallback (helps with 403 errors)
+            # YouTube-spezifische extractor-args; yt-dlp ignoriert die für andere
+            # Sources, also schadet es nicht hier zu setzen.
             'extractor_args': {
                 'youtube': {
                     'player_client': config.YOUTUBE_PLAYER_CLIENTS,
@@ -635,25 +645,20 @@ class YouTubeService:
             'noplaylist': True,
         }
 
-        # Always add the FFmpegExtractAudio postprocessor when output is m4a
-        # This ensures we get a proper .m4a file even if source was Opus/webm
         if wants_m4a_passthrough:
             ydl_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'm4a',
-                # 'preferredquality': '256',
                 'nopostoverwrites': False,
             }]
             ydl_opts['postprocessor_args'] = {
                 'ffmpeg': [
-                    # '-af', 'aresample=44100',
                     '-ac', '2',
                     '-c:a', 'copy',
                     '-q:a', '0',
                 ]
             }
         else:
-            # For other formats (mp3, flac, opus, etc.) — explicit ext>codec mapping avoids MP3 fallback
             pq = self._preferred_quality_for_extract(output_format, audio_quality)
             preferredcodec = self._ffmpeg_extract_preferredcodec(output_format)
             ydl_opts['postprocessors'] = [{
@@ -662,7 +667,6 @@ class YouTubeService:
                 'preferredquality': pq,
                 'nopostoverwrites': False,
             }]
-            # Extra ffmpeg flags can interfere with lossless encoders; keep stereo resample for lossy only.
             if output_format not in ('flac', 'wav', 'alac'):
                 ydl_opts['postprocessor_args'] = {
                     'ffmpeg': [
@@ -677,7 +681,6 @@ class YouTubeService:
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                url = f"https://www.youtube.com/watch?v={video_id}"
                 info = ydl.extract_info(url, download=True)
 
                 actual_path = self._resolve_downloaded_audio(
@@ -692,39 +695,112 @@ class YouTubeService:
                     'file_path': actual_path,
                     'title': info.get('title', ''),
                     'duration': info.get('duration', 0),
-                    'url': info.get('webpage_url', '')
+                    'url': info.get('webpage_url', url),
+                    'extractor': info.get('extractor', '') or info.get('extractor_key', ''),
                 }
 
         except Exception as e:
             error_msg = str(e)
             if '403' in error_msg or 'Forbidden' in error_msg:
-                error_msg = "YouTube blocked the request (HTTP 403). Try again in a few minutes."
+                error_msg = f"Source blocked the request (HTTP 403). Try again in a few minutes. URL: {url}"
             return {
                 'success': False,
-                'error': error_msg
+                'error': error_msg,
             }
 
+    def download_by_video_id(self, video_id: str, output_path: str, output_format: str = None, audio_quality: str = None, source_lane: Optional[str] = None) -> Dict:
+        """Backward-compat: download a specific YouTube video by ID.
+
+        Wrapper für download_by_url. Bestehende Aufrufer (Direct-Video-ID-Endpoint,
+        legacy CSV-Resume) funktionieren ohne Änderung.
+        """
+        return self.download_by_url(
+            f"https://www.youtube.com/watch?v={video_id}",
+            output_path,
+            output_format,
+            audio_quality,
+            source_lane=source_lane,
+        )
+
     def search_and_download(self, track_name: str, artist: str, output_path: str, track_info: Dict = None, video_id: str = None, output_format: str = None, audio_quality: str = None, source_lane: Optional[str] = None) -> Dict:
-        """Search YouTube for a track and download it. If video_id is provided, download that specific video."""
+        """Search across all enabled sources and download the best match.
+
+        Hard Cutover Phase 0.2.0: ignoriert die ehemalige Single-Source-Logik
+        und nutzt den MultiSourceResolver für YouTube + SoundCloud + Bandcamp
+        parallel. Resolver liefert ranked candidates; wir iterieren bis einer
+        erfolgreich downloadet wird (z.B. Age-Gated YouTube → SoundCloud-Fallback).
+
+        video_id-Param bleibt für Direct-URL/Track-Pin erhalten — wenn gesetzt,
+        skippt der Resolver-Pfad komplett (User wollte explizit DIESES Video).
+        """
         output_format = (output_format or self.output_format or "mp3").strip().lower()
         audio_quality = audio_quality or self.audio_quality
 
-        # If a specific video_id is provided, download it directly
+        # Direct-pin path: User hat explizit eine YouTube-Video-ID gegeben
+        # (z.B. via Album-Pre-Resolve). Kein Resolver, kein Fallback —
+        # einfach die ID downloaden.
         if video_id:
             return self.download_by_video_id(video_id, output_path, output_format, audio_quality, source_lane=source_lane)
 
-        # Try to find the best candidate using our search logic (YTMusic with yt-dlp fallback)
-        # This ensures album downloads and auto-downloads use the best available source
+        # Multi-Source-Resolver-Pfad: pre-search auf allen aktivierten Quellen
+        # parallel, ranked candidates, iteriere bis success.
+        # Lazy import um circular dependency mit multi_source.py zu vermeiden.
+        from services.multi_source import MultiSourceResolver
+        resolver = MultiSourceResolver(self)
+
         try:
-            search_result = self.search_candidates(track_name, artist, track_info, num_results=3)
-            if search_result.get('success') and search_result.get('candidates'):
-                best_candidate = search_result['candidates'][0]
-                # Auto-select if we have high confidence match
-                if best_candidate['score'] >= CONFIDENCE_THRESHOLD:
-                    print(f"Auto-selected best candidate for download: '{best_candidate['title']}' (Score: {best_candidate['score']}, Source: {best_candidate.get('source')})")
-                    return self.download_by_video_id(best_candidate['video_id'], output_path, output_format, audio_quality, source_lane=source_lane)
+            ranking = resolver.resolve(track_name, artist, track_info)
         except Exception as e:
-            print(f"Pre-download search failed: {e}")
+            print(f"WARN: MultiSourceResolver raised {type(e).__name__}: {e} — falling back to legacy yt-dlp ytsearch1")
+            ranking = []
+
+        if ranking:
+            print(f"Resolver ranking ({len(ranking)} candidates above min_score):")
+            for c in ranking[:5]:
+                print(f"  [{c['source']:>10}] score={c['score']:.3f} '{c['title'][:60]}' {c['url']}")
+
+            last_err: Optional[str] = None
+            for c in ranking:
+                src = c["source"]
+                url = c["url"]
+                try:
+                    if src == "youtube" and c.get("video_id"):
+                        result = self.download_by_video_id(
+                            c["video_id"], output_path, output_format, audio_quality, source_lane=source_lane
+                        )
+                    else:
+                        result = self.download_by_url(
+                            url, output_path, output_format, audio_quality, source_lane=source_lane
+                        )
+                except Exception as e:
+                    print(f"WARN: download from {src} raised {type(e).__name__}: {e}")
+                    last_err = f"{type(e).__name__}: {e}"
+                    continue
+
+                if result.get("success"):
+                    # Source-Info anhängen damit Worker/UI weiß welche Quelle
+                    # tatsächlich genutzt wurde (für Origin-Pills).
+                    result["used_source"] = src
+                    result["used_url"] = url
+                    result["match_score"] = c.get("score", 0.0)
+                    print(f"Download succeeded via {src} (score={c.get('score'):.3f})")
+                    return result
+
+                err = result.get("error", "Unknown error")
+                last_err = f"[{src}] {err}"
+                print(f"WARN: {src} failed: {err} — trying next candidate")
+
+            # Alle ranked candidates haben failed
+            return {
+                "success": False,
+                "error": f"All {len(ranking)} candidates across enabled sources failed. Last: {last_err}",
+            }
+
+        # Resolver hat KEINEN Treffer mit min_score gefunden — fallback auf
+        # legacy yt-dlp ytsearch1 (alter Default-Pfad). Selten relevant weil
+        # MIN_SCORE=0.65 in der Praxis fast immer von mindestens einem
+        # Kandidaten erreicht wird.
+        print(f"WARN: resolver found no candidate above min_score={config.MULTI_SOURCE_MIN_SCORE} — fallback to legacy ytsearch1")
 
         # Fallback to original yt-dlp search and download logic if no high-confidence candidate found
         # Create more specific search query to get better matches
@@ -1035,26 +1111,35 @@ class YouTubeService:
     # ------------------------------------------------------------------
 
     def search_url(self, query: str, source: str = "youtube", limit: int = 10) -> Dict:
-        """Suche per yt-dlp und liefere nur Metadaten zurück (keine Downloads)."""
+        """Suche per yt-dlp und liefere nur Metadaten zurück (keine Downloads).
+
+        Source-Mapping:
+            youtube    → ytsearch{N}: (flat extract, schnell, IDs zu URLs ergänzt)
+            soundcloud → scsearch{N}: (full extract, sonst kaputte Resolver-URLs)
+            bandcamp   → bcsearch{N}: (full extract, sonst Pseudo-URLs ohne webpage_url)
+        """
         query = (query or "").strip()
         if not query:
             return {'success': True, 'results': []}
         limit = max(1, min(int(limit or 10), 25))
 
-        if source == "soundcloud":
-            search_url = f"scsearch{limit}:{query}"
-        else:
-            search_url = f"ytsearch{limit}:{query}"
+        prefix_map = {
+            "youtube": "ytsearch",
+            "soundcloud": "scsearch",
+            "bandcamp": "bcsearch",
+        }
+        prefix = prefix_map.get(source, "ytsearch")
+        search_url = f"{prefix}{limit}:{query}"
 
-        # YouTube: extract_flat=True ist schnell und liefert IDs, die wir zur URL ergänzen.
-        # SoundCloud: extract_flat=True liefert kaputte Resolver-URLs ('soundcloud:tracks:NNN'),
-        # daher full extract — kostet 1 Roundtrip pro Treffer, gibt aber echte permalink_url.
-        is_soundcloud = (source == "soundcloud")
+        # SoundCloud + Bandcamp brauchen full extract weil flat-extract bei
+        # beiden Pseudo-Resolver-URLs liefert (sc: 'soundcloud:tracks:NNN',
+        # bc: 'bandcamp:trackid:NNN'). Kostet 1 Extra-Roundtrip pro Treffer.
+        needs_full_extract = source in ("soundcloud", "bandcamp")
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
-            'extract_flat': False if is_soundcloud else True,
+            'extract_flat': False if needs_full_extract else True,
             'noplaylist': False,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
@@ -1068,17 +1153,18 @@ class YouTubeService:
             for e in entries:
                 if not e:
                     continue
-                # Bei SoundCloud bevorzugen wir permalink_url/webpage_url — niemals die
-                # API-URL aus 'url'. Bei YouTube reicht die ID als URL-Suffix.
-                if is_soundcloud:
+                # SC + BC liefern 'webpage_url' aus full extract. YT mit flat
+                # extract liefert nur 'id' das wir zur Watch-URL ergänzen.
+                if needs_full_extract:
                     webpage_url = (
                         e.get('webpage_url')
                         or e.get('permalink_url')
                         or e.get('url')
                         or ''
                     )
-                    # Wenn das doch noch eine api.soundcloud.com-URL ist → skippen
-                    if 'api.soundcloud.com' in (webpage_url or ''):
+                    # API-URLs (z.B. api.soundcloud.com) skippen — die kann
+                    # yt-dlp im Frontend nicht öffnen
+                    if 'api.' in (webpage_url or ''):
                         continue
                 else:
                     webpage_url = e.get('url') or e.get('webpage_url') or ''

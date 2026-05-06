@@ -470,9 +470,15 @@ class URLDownloadRequest(BaseModel):
 
 
 class URLSearchRequest(BaseModel):
-    """Phase 2: Suche via yt-dlp ytsearch/scsearch"""
+    """Phase 2: Multi-Source Smart-Search (Tonus 0.2.0+).
+
+    Hard Cutover ab 0.2.0: `source`-Param ist DEPRECATED und wird ignoriert.
+    Alle in `ENABLED_SOURCES` (config.py) konfigurierten Quellen werden
+    parallel durchsucht — Default `youtube,soundcloud,bandcamp`. Plugin-
+    Konsumenten mit fest verdrahtetem `source` bekommen eine Deprecation-
+    Note im Response-Body unter `_deprecation`."""
     query: str
-    source: Optional[str] = "youtube"  # 'youtube' | 'soundcloud'
+    source: Optional[str] = None  # DEPRECATED 0.2.0: ignored, multi-source-search runs always
     limit: Optional[int] = 10
 
 
@@ -2572,19 +2578,62 @@ async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTask
 
 @app.post("/api/url/search")
 async def url_search(req: URLSearchRequest):
-    """Phase 2: Suche via yt-dlp (ytsearchN: oder scsearchN:)."""
-    src = (req.source or "youtube").lower().strip()
-    if src not in ("youtube", "soundcloud"):
-        raise HTTPException(status_code=400, detail="source muss 'youtube' oder 'soundcloud' sein")
+    """Phase 2: Multi-Source-Search via yt-dlp.
 
-    result = youtube_service.search_url(req.query, source=src, limit=req.limit or 10)
-    if not result.get('success'):
-        raise HTTPException(status_code=502, detail=result.get('error', 'Search failed'))
-    return {
-        "source": src,
+    Hard Cutover (Tonus 0.2.0+): ignoriert `source`-Param, queryt ALLE
+    aktivierten Sources parallel (config.ENABLED_SOURCES), merged Results.
+    """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _TFE
+
+    deprecation: List[str] = []
+    if req.source:
+        deprecation.append(
+            f"`source` parameter ('{req.source}') is ignored since Tonus 0.2.0 — "
+            f"smart multi-source-routing now searches all configured sources "
+            f"({','.join(config.ENABLED_SOURCES)}) and merges results. "
+            f"Remove the parameter to silence this notice."
+        )
+
+    sources = config.ENABLED_SOURCES or ["youtube"]
+    aggregated: List[Dict[str, Any]] = []
+    per_source_errors: Dict[str, str] = {}
+
+    with ThreadPoolExecutor(max_workers=max(1, len(sources))) as pool:
+        futures = {
+            src: pool.submit(youtube_service.search_url, req.query, src, req.limit or 10)
+            for src in sources
+        }
+        for src, fut in futures.items():
+            try:
+                res = fut.result(timeout=config.MULTI_SOURCE_TIMEOUT_S)
+            except _TFE:
+                per_source_errors[src] = f"timed out after {config.MULTI_SOURCE_TIMEOUT_S}s"
+                continue
+            except Exception as e:
+                per_source_errors[src] = f"{type(e).__name__}: {e}"
+                continue
+            if res.get("success"):
+                aggregated.extend(res.get("results", []) or [])
+            else:
+                per_source_errors[src] = res.get("error", "search failed")
+
+    response: Dict[str, Any] = {
         "query": req.query,
-        "results": result.get('results', []),
+        "sources_queried": sources,
+        "results": aggregated,
     }
+    if deprecation:
+        response["_deprecation"] = deprecation
+    if per_source_errors:
+        response["_source_errors"] = per_source_errors
+    if not aggregated and per_source_errors:
+        # Alle Sources sind gescheitert — gib einen sinnvollen 502 raus damit
+        # der Caller (Plugin / UI) den Fehler erkennt
+        raise HTTPException(
+            status_code=502,
+            detail=f"All sources failed: {per_source_errors}",
+        )
+    return response
 
 
 # ---------------------------------------------------------------------------
