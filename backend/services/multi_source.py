@@ -33,6 +33,29 @@ import config
 from services.youtube import _apply_anti_detection_opts
 
 
+def normalize_corrupt_track_name(track_name: str, track_info: Optional[Dict]) -> str:
+    """Liefert eine Such-taugliche Form von track_name.
+
+    Einige Deezer/Spotify-Compilations liefern track_name="Unknown" oder
+    "Untitled" (Metadata-Bug am Source-Provider). In diesem Fall fällt die
+    Suche zurück auf den album_name — bei Single-Track-als-Compilation ist
+    der album_name fast immer der tatsächliche Track-Title.
+
+    Idempotent (sichere Form bleibt unverändert) damit Worker und Resolver
+    den Helper unabhängig voneinander aufrufen können ohne doppelten Log
+    oder doppelte Normalisierung.
+    """
+    if not track_name:
+        return track_name
+    if track_name.strip().lower() not in ("unknown", "untitled", ""):
+        return track_name
+    album_name = (track_info or {}).get("album", "") or ""
+    if not album_name or not album_name.strip():
+        return track_name  # nichts wovon man fallen könnte
+    print(f"INFO: track_name='{track_name}' looks corrupt — using album_name='{album_name}' as fallback query")
+    return album_name
+
+
 class MultiSourceResolver:
     """Resolve a track to a ranked list of (source, url, score, meta) candidates.
 
@@ -63,19 +86,10 @@ class MultiSourceResolver:
         if not self.enabled_sources:
             return []
 
-        # "Unknown"-Track-Name Fallback: einige Deezer/Spotify-Provider liefern
-        # für bestimmte Compilation-Tracks `name="Unknown"` (Metadata-Bug am
-        # Source-Provider). Search nach "ARTIST Unknown" findet natürlich nichts.
-        # Fallback: nutze den album_name als Track-Query — der ist meist der
-        # tatsächliche Track-Title bei "Single-Track-als-Compilation"-Releases.
-        # Beispiel User-Beobachtung: track_name="Unknown" + artist="CIIMERA"
-        # + album="HAMBURG BALLERT ANDERS" → Search nach "CIIMERA HAMBURG
-        # BALLERT ANDERS" trifft den richtigen Track.
-        if track_name and track_name.strip().lower() in ("unknown", "untitled", ""):
-            album_name = (track_info or {}).get("album", "") or ""
-            if album_name and album_name.strip():
-                print(f"INFO: track_name='{track_name}' looks corrupt — using album_name='{album_name}' as fallback query")
-                track_name = album_name
+        # Falls der Caller (search_and_download) den Helper bereits aufgerufen
+        # hat, ist das hier ein no-op (idempotent). Doppelte Aufrufe schaden
+        # nicht und sichern Resolver-Direct-Use ab (z.B. Tests).
+        track_name = normalize_corrupt_track_name(track_name, track_info)
 
         all_candidates: List[Dict] = []
 

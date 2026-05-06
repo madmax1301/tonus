@@ -745,7 +745,14 @@ class YouTubeService:
         # Multi-Source-Resolver-Pfad: pre-search auf allen aktivierten Quellen
         # parallel, ranked candidates, iteriere bis success.
         # Lazy import um circular dependency mit multi_source.py zu vermeiden.
-        from services.multi_source import MultiSourceResolver
+        from services.multi_source import MultiSourceResolver, normalize_corrupt_track_name
+
+        # Normalisierung VOR allem track_name-Use — sonst läuft der Legacy-
+        # ytsearch1-Fallback (unten) noch mit dem Original-"Unknown" und
+        # findet 0 Items. Helper ist idempotent, der Resolver ruft denselben
+        # Helper intern nochmal auf (no-op wenn schon normalisiert).
+        track_name = normalize_corrupt_track_name(track_name, track_info)
+
         resolver = MultiSourceResolver(self)
 
         try:
