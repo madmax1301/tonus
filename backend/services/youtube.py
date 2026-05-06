@@ -52,6 +52,34 @@ def _apply_source_lane(ydl_opts: Dict, lane: Optional[str]) -> Dict:
     return ydl_opts
 
 
+# Probe ob curl_cffi und yt-dlp's Impersonate-Backend tatsächlich nutzbar
+# sind. Wenn das Probe failt (curl-cffi fehlt im Image, falsche Version,
+# Plattform ohne libcurl-impersonate-Builds), schalten wir die impersonate-
+# Option für die ganze Session ab — sonst bricht jeder Download mit
+# "Impersonate target 'chrome' is not available". Probe einmal beim
+# Module-Import, Cache als Modulvariable.
+def _probe_impersonate(target: str) -> bool:
+    if not target:
+        return False
+    try:
+        import curl_cffi  # noqa: F401
+    except ImportError:
+        print(f"WARN: curl-cffi nicht installiert — YOUTUBE_IMPERSONATE='{target}' wird ignoriert")
+        return False
+    try:
+        # yt-dlp's eigene Validierung: wenn der target-string nicht in der
+        # verfügbaren Liste ist, raised es ValueError schon beim YoutubeDL-init.
+        with yt_dlp.YoutubeDL({'impersonate': target, 'quiet': True, 'no_warnings': True}):
+            pass
+        return True
+    except Exception as e:
+        print(f"WARN: Impersonate-Probe fehlgeschlagen ({type(e).__name__}: {e}) — YOUTUBE_IMPERSONATE='{target}' wird ignoriert")
+        return False
+
+
+_IMPERSONATE_OK = _probe_impersonate(config.YOUTUBE_IMPERSONATE)
+
+
 def _apply_anti_detection_opts(ydl_opts: Dict) -> Dict:
     """Hardening gegen YouTube-Bot-Detection und Rate-Limit-Trigger.
 
@@ -65,8 +93,8 @@ def _apply_anti_detection_opts(ydl_opts: Dict) -> Dict:
       zwischen den beiden — natürliche Pausen zwischen Fragmenten.
     - sleep_interval_requests: Pause zwischen API-Calls innerhalb
       eines Downloads (Metadata-Fetch, Format-Lookup etc.).
-    - impersonate: TLS-Handshake-Spoofing via curl-cffi falls aktiv —
-      yt-dlp sieht für YouTube identisch aus zu echtem Chrome.
+    - impersonate: TLS-Handshake-Spoofing via curl-cffi falls aktiv UND
+      beim Module-Import probe-bestanden — sonst silent skip.
 
     Pro Aufruf einmal — bei Multi-Download-Sessions hat jeder Download
     seine eigene zufällige Chunk-Size und damit eigenen Range-Pattern.
@@ -77,7 +105,7 @@ def _apply_anti_detection_opts(ydl_opts: Dict) -> Dict:
     ydl_opts['sleep_interval_requests'] = config.YOUTUBE_SLEEP_REQUESTS_S
     ydl_opts['sleep_interval'] = config.YOUTUBE_SLEEP_MIN_S
     ydl_opts['max_sleep_interval'] = config.YOUTUBE_SLEEP_MAX_S
-    if config.YOUTUBE_IMPERSONATE:
+    if _IMPERSONATE_OK:
         ydl_opts['impersonate'] = config.YOUTUBE_IMPERSONATE
     return ydl_opts
 
