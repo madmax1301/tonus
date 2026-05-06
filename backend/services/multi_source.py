@@ -63,6 +63,20 @@ class MultiSourceResolver:
         if not self.enabled_sources:
             return []
 
+        # "Unknown"-Track-Name Fallback: einige Deezer/Spotify-Provider liefern
+        # für bestimmte Compilation-Tracks `name="Unknown"` (Metadata-Bug am
+        # Source-Provider). Search nach "ARTIST Unknown" findet natürlich nichts.
+        # Fallback: nutze den album_name als Track-Query — der ist meist der
+        # tatsächliche Track-Title bei "Single-Track-als-Compilation"-Releases.
+        # Beispiel User-Beobachtung: track_name="Unknown" + artist="CIIMERA"
+        # + album="HAMBURG BALLERT ANDERS" → Search nach "CIIMERA HAMBURG
+        # BALLERT ANDERS" trifft den richtigen Track.
+        if track_name and track_name.strip().lower() in ("unknown", "untitled", ""):
+            album_name = (track_info or {}).get("album", "") or ""
+            if album_name and album_name.strip():
+                print(f"INFO: track_name='{track_name}' looks corrupt — using album_name='{album_name}' as fallback query")
+                track_name = album_name
+
         all_candidates: List[Dict] = []
 
         with ThreadPoolExecutor(max_workers=max(1, len(self.enabled_sources))) as pool:
