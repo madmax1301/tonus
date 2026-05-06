@@ -684,11 +684,32 @@ def download_and_process(
             )
             return
 
-        upsert_job(track_id,
-            status="processing",
-            message="Applying metadata...",
-            stage="tagging",
-            progress=85)
+        # Multi-Source-Resolver hat used_source/used_url/match_score in
+        # download_result eingehängt — in payload mergen damit das Frontend
+        # die genutzte Source in der Origin-Pill anzeigen kann.
+        used_source = download_result.get("used_source")
+        if used_source:
+            existing_job = get_job(track_id) or {}
+            merged_payload = dict(existing_job.get("payload") or {})
+            merged_payload["used_source"] = used_source
+            if download_result.get("used_url"):
+                merged_payload["used_url"] = download_result["used_url"]
+            if download_result.get("match_score") is not None:
+                merged_payload["match_score"] = download_result["match_score"]
+            upsert_job(
+                track_id,
+                status="processing",
+                message="Applying metadata...",
+                stage="tagging",
+                progress=85,
+                payload=merged_payload,
+            )
+        else:
+            upsert_job(track_id,
+                status="processing",
+                message="Applying metadata...",
+                stage="tagging",
+                progress=85)
 
         # Apply metadata to downloaded file
         metadata_service.apply_metadata(download_result['file_path'], track_info)

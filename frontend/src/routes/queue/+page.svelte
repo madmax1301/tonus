@@ -32,7 +32,7 @@
     ListMusic
   } from 'lucide-svelte';
 
-  type OriginInfo = { icon: typeof Search; label: string; detail?: string };
+  type OriginInfo = { icon: typeof Search; label: string; detail?: string; source?: string };
   type DestInfo = { icon: typeof HardDrive; label: string; detail?: string };
 
   /**
@@ -92,20 +92,31 @@
   function jobOrigin(j: QueueJob): OriginInfo {
     const tt = get(t);
     const p = j.payload ?? {};
+    // Multi-Source-Resolver hängt 'used_source' an wenn der Track erfolgreich
+    // gedownloadet wurde. Wir zeigen die Source nur wenn sie nicht 'youtube'
+    // ist — youtube ist der Default und visuelle Lärm-Reduktion wert.
+    const usedSource = p.used_source && p.used_source !== 'youtube' ? p.used_source : undefined;
+
     if (p.plugin_sync_navidrome_user) {
       return {
         icon: Puzzle,
         label: tt('queue.origin.plugin'),
-        detail: p.plugin_sync_navidrome_user
+        detail: p.plugin_sync_navidrome_user,
+        source: usedSource,
       };
     }
     if (p.kind === 'url') {
-      return { icon: Link2, label: tt('queue.origin.url') };
+      return { icon: Link2, label: tt('queue.origin.url'), source: usedSource };
     }
     if (p.album_id || p.album_name) {
-      return { icon: Disc, label: tt('queue.origin.album'), detail: p.album_name };
+      return {
+        icon: Disc,
+        label: tt('queue.origin.album'),
+        detail: p.album_name,
+        source: usedSource,
+      };
     }
-    return { icon: Search, label: tt('queue.origin.search') };
+    return { icon: Search, label: tt('queue.origin.search'), source: usedSource };
   }
 
   function jobDest(j: QueueJob): DestInfo {
@@ -752,6 +763,11 @@
               >
                 <svelte:component this={origin.icon} size={10.5} strokeWidth={1.6} />
                 {origin.label}
+                {#if origin.source}
+                  <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono); font-size: 9.5px;" title="Resolver hat hier gepullt">
+                    · {origin.source}
+                  </span>
+                {/if}
               </span>
               <span style="color: var(--color-fg-tertiary); font-size: 10px;">→</span>
               <span
@@ -1099,6 +1115,11 @@
                 {origin.label}
                 {#if origin.detail}
                   <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono);">· {origin.detail}</span>
+                {/if}
+                {#if origin.source}
+                  <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono); font-size: 9.5px;" title="Resolver hat hier gepullt">
+                    · {origin.source}
+                  </span>
                 {/if}
               </span>
               <span style="color: var(--color-fg-tertiary); font-size: 9px;">→</span>

@@ -288,6 +288,12 @@ export interface QueueJobPayload {
   plugin_sync_navidrome_user?: string;
   /** url-direct download */
   url?: string;
+  /** Multi-Source-Resolver Outcome (v0.2.0+): tatsächlich genutzte Quelle
+   *  nach erfolgreichem Download. youtube|soundcloud|bandcamp. Wird im Origin-
+   *  Pill angezeigt um zu signalisieren wo der Track tatsächlich herkam. */
+  used_source?: string;
+  used_url?: string;
+  match_score?: number;
 }
 
 export interface QueueJob {
