@@ -56,6 +56,24 @@ def normalize_corrupt_track_name(track_name: str, track_info: Optional[Dict]) ->
     return album_name
 
 
+def album_suffix_for_query(track_name: str, track_info: Optional[Dict]) -> str:
+    """Returns ' <album>' als Query-Suffix wenn das Album gesetzt ist UND
+    sich vom track_name unterscheidet (case-insensitive). Sonst Leerstring.
+
+    Verhindert "CIIMERA HAMBURG BALLERT ANDERS HAMBURG BALLERT ANDERS"-
+    Doppelungen die entstehen wenn normalize_corrupt_track_name() den
+    track_name schon auf album_name gesetzt hat — die zusätzliche Album-
+    Wiederholung führt bei YouTube zu 0-Item-Trefferlisten.
+    """
+    album = (track_info or {}).get("album", "") or ""
+    album = album.strip()
+    if not album:
+        return ""
+    if album.lower() == (track_name or "").strip().lower():
+        return ""
+    return f" {album}"
+
+
 class MultiSourceResolver:
     """Resolve a track to a ranked list of (source, url, score, meta) candidates.
 
@@ -234,9 +252,7 @@ class MultiSourceResolver:
         Scoring nutzt YouTubeService.calculate_match_score.
         """
         n = max(1, int(self.candidates_per_source))
-        query = f"{artist} {track_name}".strip()
-        if track_info and track_info.get("album"):
-            query = f"{query} {track_info['album']}"
+        query = f"{artist} {track_name}{album_suffix_for_query(track_name, track_info)}".strip()
 
         # Beide Provider profitieren von full-extract (statt flat) für saubere
         # webpage_urls. Kostet 1 Extra-Roundtrip pro Treffer — bei 3 candidates
