@@ -1,6 +1,7 @@
 import yt_dlp
 from ytmusicapi import YTMusic
 import os
+import random
 import re
 import math
 from difflib import SequenceMatcher
@@ -49,6 +50,37 @@ def _apply_source_lane(ydl_opts: Dict, lane: Optional[str]) -> Dict:
     if ip:
         ydl_opts["source_address"] = ip
     return ydl_opts
+
+
+def _apply_anti_detection_opts(ydl_opts: Dict) -> Dict:
+    """Hardening gegen YouTube-Bot-Detection und Rate-Limit-Trigger.
+
+    - ratelimit: cap auf YOUTUBE_RATELIMIT_BPS (default 1.5 MB/s) — ein
+      "menschlicher" 3-min-Track ist in 12 s durch, aber der Burst-Pattern
+      verschwindet (CDN-Detection looks for full-bandwidth-rips).
+    - http_chunk_size: PRO DOWNLOAD eine neue zufällige Größe zwischen
+      MIN_MB und MAX_MB. Variiert das HTTP-Range-Pattern, sodass mehrere
+      Tonus-Downloads sich nicht identisch fingerprinten lassen.
+    - sleep_interval / max_sleep_interval: yt-dlp randomisiert intern
+      zwischen den beiden — natürliche Pausen zwischen Fragmenten.
+    - sleep_interval_requests: Pause zwischen API-Calls innerhalb
+      eines Downloads (Metadata-Fetch, Format-Lookup etc.).
+    - impersonate: TLS-Handshake-Spoofing via curl-cffi falls aktiv —
+      yt-dlp sieht für YouTube identisch aus zu echtem Chrome.
+
+    Pro Aufruf einmal — bei Multi-Download-Sessions hat jeder Download
+    seine eigene zufällige Chunk-Size und damit eigenen Range-Pattern.
+    """
+    ydl_opts['ratelimit'] = config.YOUTUBE_RATELIMIT_BPS
+    chunk_mb = random.randint(config.YOUTUBE_CHUNK_MIN_MB, config.YOUTUBE_CHUNK_MAX_MB)
+    ydl_opts['http_chunk_size'] = chunk_mb * 1024 * 1024
+    ydl_opts['sleep_interval_requests'] = config.YOUTUBE_SLEEP_REQUESTS_S
+    ydl_opts['sleep_interval'] = config.YOUTUBE_SLEEP_MIN_S
+    ydl_opts['max_sleep_interval'] = config.YOUTUBE_SLEEP_MAX_S
+    if config.YOUTUBE_IMPERSONATE:
+        ydl_opts['impersonate'] = config.YOUTUBE_IMPERSONATE
+    return ydl_opts
+
 
 class YouTubeService:
     def __init__(self):
@@ -562,7 +594,7 @@ class YouTubeService:
             # Try different YouTube clients as fallback (helps with 403 errors)
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['tv_embedded'],
+                    'player_client': config.YOUTUBE_PLAYER_CLIENTS,
                 }
             },
             'retries': 10,
@@ -613,6 +645,7 @@ class YouTubeService:
 
         ydl_opts = self._add_cookies_to_opts(ydl_opts)
         ydl_opts = _apply_source_lane(ydl_opts, source_lane)
+        ydl_opts = _apply_anti_detection_opts(ydl_opts)
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -743,6 +776,7 @@ class YouTubeService:
 
         ydl_opts = self._add_cookies_to_opts(ydl_opts)
         ydl_opts = _apply_source_lane(ydl_opts, source_lane)
+        ydl_opts = _apply_anti_detection_opts(ydl_opts)
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -830,7 +864,7 @@ class YouTubeService:
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['tv_embedded'],
+                    'player_client': config.YOUTUBE_PLAYER_CLIENTS,
                 }
             },
         }
@@ -938,6 +972,7 @@ class YouTubeService:
 
         ydl_opts = self._add_cookies_to_opts(ydl_opts)
         ydl_opts = _apply_source_lane(ydl_opts, source_lane)
+        ydl_opts = _apply_anti_detection_opts(ydl_opts)
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

@@ -86,6 +86,32 @@ TEMP_FILE_CLEANUP_DELAY_SEC = int(os.getenv("TEMP_FILE_CLEANUP_DELAY_SEC", "60")
 # YouTube Configuration
 YOUTUBE_COOKIES_PATH = os.getenv("YOUTUBE_COOKIES_PATH", "")  # Path to YouTube cookies file (Netscape format) for yt-dlp
 
+# yt-dlp Anti-Detection / Rate-Limiting
+# ratelimit: Bytes/sec für jeden einzelnen Download. 1.5 MB/s ist fast nie
+#   für die User wahrnehmbar (3-min Track in 12 s) und reduziert das Profil
+#   stark gegenüber YouTube/CDN-Rate-Limit-Triggern.
+YOUTUBE_RATELIMIT_BPS = int(os.getenv("YOUTUBE_RATELIMIT_BPS", "1500000"))
+# chunk-size random im Range Min..Max bei jedem Download — variiert das
+#   HTTP-Range-Pattern, sodass yt-dlp-Downloads sich gegenseitig nicht
+#   identisch anhören (keine fixen 10MB-Boundaries mehr).
+YOUTUBE_CHUNK_MIN_MB = int(os.getenv("YOUTUBE_CHUNK_MIN_MB", "8"))
+YOUTUBE_CHUNK_MAX_MB = int(os.getenv("YOUTUBE_CHUNK_MAX_MB", "16"))
+# Sleeps zwischen Requests/Fragments. yt-dlp randomisiert zwischen
+#   sleep_interval und max_sleep_interval automatisch — das einzige was
+#   wir tun ist den Range konfigurieren.
+YOUTUBE_SLEEP_REQUESTS_S = float(os.getenv("YOUTUBE_SLEEP_REQUESTS_S", "1"))
+YOUTUBE_SLEEP_MIN_S = float(os.getenv("YOUTUBE_SLEEP_MIN_S", "5"))
+YOUTUBE_SLEEP_MAX_S = float(os.getenv("YOUTUBE_SLEEP_MAX_S", "15"))
+# impersonate: TLS-Handshake-Fingerprint emulieren (via curl-cffi).
+#   "chrome" ist der robusteste, "" deaktiviert den Mechanismus.
+YOUTUBE_IMPERSONATE = os.getenv("YOUTUBE_IMPERSONATE", "chrome")
+# player_clients: yt-dlp probiert die in Reihenfolge durch falls einer
+#   blockt. "default" = web mit po_token-plugin, "tv_embedded" = älterer
+#   Smart-TV-Pfad (umgeht oft Rate-Limits), "web" = browser-fallback.
+YOUTUBE_PLAYER_CLIENTS = [
+    c.strip() for c in os.getenv("YOUTUBE_PLAYER_CLIENTS", "default,tv_embedded,web").split(",") if c.strip()
+]
+
 # API Configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
