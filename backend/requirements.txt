@@ -16,9 +16,14 @@ python-dotenv==1.2.2
 ytmusicapi==1.11.4
 yt-dlp-get-pot-rustypipe==0.2.0
 # curl-cffi: aktiviert yt-dlp's impersonate-Option (TLS-Handshake-Spoofing
-# via libcurl-impersonate) für robustere Anti-Bot-Detection. Ohne die Lib
-# wäre das 'impersonate'-Setting in YOUTUBE_IMPERSONATE wirkungslos.
-curl-cffi>=0.7.0
+# via libcurl-impersonate) für robustere Anti-Bot-Detection.
+# Pinning ist KRITISCH: yt-dlp's _curlcffi-Bridge supportet nur explizit
+# 0.5.10 und 0.10.x bis 0.14.x. Ein offenes >=0.7.0 zieht 0.15+ — yt-dlp
+# raised dann ImportError beim Bridge-Load, der Handler wird nicht
+# registriert, und yt-dlp meldet "Impersonate target 'chrome' is not
+# available" beim ersten Download. Quelle:
+# yt_dlp/networking/_curlcffi.py:1 ("Only curl_cffi versions ... supported")
+curl-cffi>=0.10,<0.15
 # ─── Auth (Phase F) ──────────────────────────
 argon2-cffi==23.1.0
 pyotp==2.9.0
