@@ -152,7 +152,10 @@ class MultiSourceResolver:
         if src == "soundcloud":
             return self._search_yt_dlp_extractor("scsearch", "soundcloud", track_name, artist, track_info)
         if src == "bandcamp":
-            return self._search_yt_dlp_extractor("bcsearch", "bandcamp", track_name, artist, track_info)
+            # yt-dlp hat keinen 'bcsearch'-Prefix. Frühes Skipp statt jeden
+            # Track gegen den NoSupportingHandlers-Error laufen zu lassen
+            # (kostete in Logs früher 1 round-trip pro Track).
+            return []
         print(f"WARN: unknown source in ENABLED_SOURCES: '{src}'")
         return []
 

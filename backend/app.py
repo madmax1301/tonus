@@ -167,6 +167,24 @@ from services.navidrome import NavidromeService
 from utils.file_handler import get_download_path
 from utils.navidrome_library_sync import start_navidrome_library_sync_background
 
+# ─── Logging-Setup ────────────────────────────────────────────────
+# Configure root logger from env (LOG_LEVEL) BEFORE any service-Module
+# lazy-init kicks in. Format: short timestamp + level + name + message.
+# `force=True` weil uvicorn ggf. schon einen Default-Logger registriert
+# hat — wir wollen unseren ersetzen, nicht parallel laufen lassen.
+import logging as _logging
+_logging.basicConfig(
+    level=getattr(_logging, config.LOG_LEVEL, _logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+    force=True,
+)
+# Uvicorn-Access-Logs (das 'GET /api/queue 200 OK'-Spam) optional abdrehen.
+# Bei aktivem Polling (UI macht alle 1s einen Queue-Call) überfluten die
+# Lines den Container-Log und überdecken echte WARN/ERROR-Meldungen.
+if not config.UVICORN_ACCESS_LOG:
+    _logging.getLogger("uvicorn.access").disabled = True
+
 app = FastAPI(title="Tonus API", version="1.0.0")
 
 def _migrate_legacy_jobs_db() -> None:

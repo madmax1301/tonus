@@ -240,12 +240,16 @@ This means once you've configured a provider in the UI, the `.env` value for it 
 | `YOUTUBE_SLEEP_MIN_S` | `5` | no | Lower bound for `yt-dlp`'s random sleep between fragments/requests. |
 | `YOUTUBE_SLEEP_MAX_S` | `15` | no | Upper bound. `yt-dlp` randomizes between min and max — natural pauses, not clockwork. |
 | `YOUTUBE_IMPERSONATE` | `chrome` | no | TLS-handshake fingerprint to emulate (via `curl-cffi`). Set to empty string to disable. Other targets: `firefox`, `safari`. Massive impact on anti-bot resilience. |
-| `YOUTUBE_PLAYER_CLIENTS` | `default,tv_embedded,web` | no | Comma-separated list of player clients `yt-dlp` tries in order if one fails. `default` triggers the bundled `po_token` plugin automatically. |
+| `YOUTUBE_PLAYER_CLIENTS` | `default,web,android_vr` | no | Comma-separated list of player clients `yt-dlp` tries in order if one fails. `default` triggers the bundled `po_token` plugin automatically. (`tv_embedded` was unsupported as of yt-dlp 2026 — removed from defaults.) |
 | **Multi-Source-Resolver (v0.2.0+)** | | | |
-| `ENABLED_SOURCES` | `youtube,soundcloud,bandcamp` | no | Comma-separated source list searched in parallel for each track. Order = priority on score-tie. Set e.g. `soundcloud,bandcamp,youtube` to prefer auth-friction-free sources. |
+| `ENABLED_SOURCES` | `youtube,soundcloud` | no | Comma-separated source list searched in parallel for each track. Order = priority on score-tie. Set `soundcloud,youtube` to prefer auth-friction-free sources. (Bandcamp is not in defaults — yt-dlp has no `bcsearch` prefix; only Bandcamp URLs work as direct downloads.) |
 | `MULTI_SOURCE_TIMEOUT_S` | `10` | no | Per-source pre-search timeout (seconds). Slow source can't block the full resolve. |
 | `MULTI_SOURCE_MIN_SCORE` | `0.65` | no | Minimum match-score (0-1). Candidates below are dropped — prevents wrong tracks from landing in your library. |
 | `MULTI_SOURCE_CANDIDATES_PER_SOURCE` | `3` | no | How many candidates each source returns before ranking. More = better choice, slower. |
+| **Logging** | | | |
+| `LOG_LEVEL` | `INFO` | no | Tonus' own loggers (resolver, worker, app). `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL`. |
+| `UVICORN_ACCESS_LOG` | `false` | no | HTTP access logs (`GET /api/queue 200 OK`). Default off because the UI polls every second — spam would drown out real messages. |
+| `YT_DLP_QUIET` | `false` | no | yt-dlp's own logging. `true` = errors only, `false` = full `[youtube] / [soundcloud]` chatter (good for debug). |
 | **API server** | | | |
 | `API_HOST` | `0.0.0.0` | no | Bind address for uvicorn. |
 | `API_PORT` | `8000` (`8088` in Docker) | no | TCP port. The shipped `docker-compose.yml` forces `8088`. |

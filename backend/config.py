@@ -106,10 +106,12 @@ YOUTUBE_SLEEP_MAX_S = float(os.getenv("YOUTUBE_SLEEP_MAX_S", "15"))
 #   "chrome" ist der robusteste, "" deaktiviert den Mechanismus.
 YOUTUBE_IMPERSONATE = os.getenv("YOUTUBE_IMPERSONATE", "chrome")
 # player_clients: yt-dlp probiert die in Reihenfolge durch falls einer
-#   blockt. "default" = web mit po_token-plugin, "tv_embedded" = älterer
-#   Smart-TV-Pfad (umgeht oft Rate-Limits), "web" = browser-fallback.
+#   blockt. "default" = web mit po_token-plugin, "web" = browser-fallback,
+#   "android_vr" hat aktuell die zuverlässigsten format-streams.
+#   Hinweis: "tv_embedded" wurde in yt-dlp 2026 als unsupported markiert
+#   ("Skipping unsupported client") — Default angepasst.
 YOUTUBE_PLAYER_CLIENTS = [
-    c.strip() for c in os.getenv("YOUTUBE_PLAYER_CLIENTS", "default,tv_embedded,web").split(",") if c.strip()
+    c.strip() for c in os.getenv("YOUTUBE_PLAYER_CLIENTS", "default,web,android_vr").split(",") if c.strip()
 ]
 
 # ─── Multi-Source-Resolver (Phase 0.2.0) ──────────────────────────
@@ -117,9 +119,16 @@ YOUTUBE_PLAYER_CLIENTS = [
 # pre-searched, der best-scorende Treffer wird gepullt. Bei Download-Fail
 # (z.B. YouTube Age-Gate) automatisch nächst-bester aus dem Ranking. Reduziert
 # Failure-Rate signifikant ohne Login/Cookies — z.B. Age-gated YT-Tracks
-# werden auf SoundCloud/Bandcamp ausweichen wenn dort verfügbar.
+# werden auf SoundCloud ausweichen wenn dort verfügbar.
+#
+# Bandcamp ist hier NICHT default: yt-dlp hat keinen 'bcsearch'-Prefix
+# (anders als ytsearch/scsearch) — Bandcamp-Suche müsste über die eigene
+# Bandcamp-Website-Search-API gescraped werden, das ist nicht implementiert.
+# Bandcamp-URLs als Direct-Download funktionieren weiter (yt-dlp's Bandcamp-
+# Extractor). Wenn man's trotzdem aktiviert, kommt nur "NoSupportingHandlers"
+# raus und der Resolver verschwendet pro Track 1 Round-Trip.
 ENABLED_SOURCES = [
-    s.strip() for s in os.getenv("ENABLED_SOURCES", "youtube,soundcloud,bandcamp").split(",") if s.strip()
+    s.strip() for s in os.getenv("ENABLED_SOURCES", "youtube,soundcloud").split(",") if s.strip()
 ]
 # Timeout pro Source-Pre-Search. Verhindert dass eine langsame Quelle
 # das ganze Resolve blockiert. Tonus' Worker hat 5-15s Cooldown, also
@@ -132,6 +141,20 @@ MULTI_SOURCE_MIN_SCORE = float(os.getenv("MULTI_SOURCE_MIN_SCORE", "0.65"))
 # Wie viele Kandidaten pro Source vor dem Ranking gezogen werden. Mehr =
 # bessere Auswahl aber langsamer Pre-Search. 3 hat in Tests gut balanciert.
 MULTI_SOURCE_CANDIDATES_PER_SOURCE = int(os.getenv("MULTI_SOURCE_CANDIDATES_PER_SOURCE", "3"))
+
+# ─── Logging ──────────────────────────────────────────────────────
+# DEBUG / INFO / WARNING / ERROR / CRITICAL — kontrolliert tonus' eigene
+# logger (resolver, worker, app). yt-dlp's verbosity ist davon getrennt
+# konfigurierbar (siehe YT_DLP_QUIET).
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# Uvicorn HTTP-Access-Logs ('GET /api/queue 200 OK'-Spam). Default OFF
+# weil die Queue-Page jede Sekunde polled — Access-Logs überfluten den
+# Container-Log und überscrollen die echten WARN/ERROR-Lines.
+UVICORN_ACCESS_LOG = os.getenv("UVICORN_ACCESS_LOG", "false").lower() == "true"
+# yt-dlp's eigenes Logging: True = nur Errors, False = Info-Level mit
+# allen [youtube] / [soundcloud] -Lines. Bei Debug-Sessions auf False
+# setzen, in Production auf True für sauberen Container-Log.
+YT_DLP_QUIET = os.getenv("YT_DLP_QUIET", "false").lower() == "true"
 
 # API Configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")

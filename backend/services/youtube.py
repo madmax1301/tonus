@@ -640,8 +640,8 @@ class YouTubeService:
             'file_access_retries': 3,
             'outtmpl': self._yt_dlp_outtmpl(base_path),
             'fixup': 'never',
-            'quiet': False,
-            'no_warnings': False,
+            'quiet': config.YT_DLP_QUIET,
+            'no_warnings': config.YT_DLP_QUIET,
             'noplaylist': True,
         }
 
@@ -1037,8 +1037,8 @@ class YouTubeService:
             'file_access_retries': 3,
             'outtmpl': self._yt_dlp_outtmpl(base_path),
             'fixup': 'never',
-            'quiet': False,
-            'no_warnings': False,
+            'quiet': config.YT_DLP_QUIET,
+            'no_warnings': config.YT_DLP_QUIET,
             'noplaylist': True,
         }
 
