@@ -241,6 +241,11 @@ This means once you've configured a provider in the UI, the `.env` value for it 
 | `YOUTUBE_SLEEP_MAX_S` | `15` | no | Upper bound. `yt-dlp` randomizes between min and max — natural pauses, not clockwork. |
 | `YOUTUBE_IMPERSONATE` | `chrome` | no | TLS-handshake fingerprint to emulate (via `curl-cffi`). Set to empty string to disable. Other targets: `firefox`, `safari`. Massive impact on anti-bot resilience. |
 | `YOUTUBE_PLAYER_CLIENTS` | `default,tv_embedded,web` | no | Comma-separated list of player clients `yt-dlp` tries in order if one fails. `default` triggers the bundled `po_token` plugin automatically. |
+| **Multi-Source-Resolver (v0.2.0+)** | | | |
+| `ENABLED_SOURCES` | `youtube,soundcloud,bandcamp` | no | Comma-separated source list searched in parallel for each track. Order = priority on score-tie. Set e.g. `soundcloud,bandcamp,youtube` to prefer auth-friction-free sources. |
+| `MULTI_SOURCE_TIMEOUT_S` | `10` | no | Per-source pre-search timeout (seconds). Slow source can't block the full resolve. |
+| `MULTI_SOURCE_MIN_SCORE` | `0.65` | no | Minimum match-score (0-1). Candidates below are dropped — prevents wrong tracks from landing in your library. |
+| `MULTI_SOURCE_CANDIDATES_PER_SOURCE` | `3` | no | How many candidates each source returns before ranking. More = better choice, slower. |
 | **API server** | | | |
 | `API_HOST` | `0.0.0.0` | no | Bind address for uvicorn. |
 | `API_PORT` | `8000` (`8088` in Docker) | no | TCP port. The shipped `docker-compose.yml` forces `8088`. |
