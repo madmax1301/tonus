@@ -86,6 +86,76 @@ TEMP_FILE_CLEANUP_DELAY_SEC = int(os.getenv("TEMP_FILE_CLEANUP_DELAY_SEC", "60")
 # YouTube Configuration
 YOUTUBE_COOKIES_PATH = os.getenv("YOUTUBE_COOKIES_PATH", "")  # Path to YouTube cookies file (Netscape format) for yt-dlp
 
+# yt-dlp Anti-Detection / Rate-Limiting
+# ratelimit: Bytes/sec für jeden einzelnen Download. 1.5 MB/s ist fast nie
+#   für die User wahrnehmbar (3-min Track in 12 s) und reduziert das Profil
+#   stark gegenüber YouTube/CDN-Rate-Limit-Triggern.
+YOUTUBE_RATELIMIT_BPS = int(os.getenv("YOUTUBE_RATELIMIT_BPS", "1500000"))
+# chunk-size random im Range Min..Max bei jedem Download — variiert das
+#   HTTP-Range-Pattern, sodass yt-dlp-Downloads sich gegenseitig nicht
+#   identisch anhören (keine fixen 10MB-Boundaries mehr).
+YOUTUBE_CHUNK_MIN_MB = int(os.getenv("YOUTUBE_CHUNK_MIN_MB", "8"))
+YOUTUBE_CHUNK_MAX_MB = int(os.getenv("YOUTUBE_CHUNK_MAX_MB", "16"))
+# Sleeps zwischen Requests/Fragments. yt-dlp randomisiert zwischen
+#   sleep_interval und max_sleep_interval automatisch — das einzige was
+#   wir tun ist den Range konfigurieren.
+YOUTUBE_SLEEP_REQUESTS_S = float(os.getenv("YOUTUBE_SLEEP_REQUESTS_S", "1"))
+YOUTUBE_SLEEP_MIN_S = float(os.getenv("YOUTUBE_SLEEP_MIN_S", "5"))
+YOUTUBE_SLEEP_MAX_S = float(os.getenv("YOUTUBE_SLEEP_MAX_S", "15"))
+# impersonate: TLS-Handshake-Fingerprint emulieren (via curl-cffi).
+#   "chrome" ist der robusteste, "" deaktiviert den Mechanismus.
+YOUTUBE_IMPERSONATE = os.getenv("YOUTUBE_IMPERSONATE", "chrome")
+# player_clients: yt-dlp probiert die in Reihenfolge durch falls einer
+#   blockt. "default" = web mit po_token-plugin, "web" = browser-fallback,
+#   "android_vr" hat aktuell die zuverlässigsten format-streams.
+#   Hinweis: "tv_embedded" wurde in yt-dlp 2026 als unsupported markiert
+#   ("Skipping unsupported client") — Default angepasst.
+YOUTUBE_PLAYER_CLIENTS = [
+    c.strip() for c in os.getenv("YOUTUBE_PLAYER_CLIENTS", "default,web,android_vr").split(",") if c.strip()
+]
+
+# ─── Multi-Source-Resolver (Phase 0.2.0) ──────────────────────────
+# Smart Source-Routing: pro Track werden alle aktivierten Quellen parallel
+# pre-searched, der best-scorende Treffer wird gepullt. Bei Download-Fail
+# (z.B. YouTube Age-Gate) automatisch nächst-bester aus dem Ranking. Reduziert
+# Failure-Rate signifikant ohne Login/Cookies — z.B. Age-gated YT-Tracks
+# werden auf SoundCloud ausweichen wenn dort verfügbar.
+#
+# Bandcamp ist hier NICHT default: yt-dlp hat keinen 'bcsearch'-Prefix
+# (anders als ytsearch/scsearch) — Bandcamp-Suche müsste über die eigene
+# Bandcamp-Website-Search-API gescraped werden, das ist nicht implementiert.
+# Bandcamp-URLs als Direct-Download funktionieren weiter (yt-dlp's Bandcamp-
+# Extractor). Wenn man's trotzdem aktiviert, kommt nur "NoSupportingHandlers"
+# raus und der Resolver verschwendet pro Track 1 Round-Trip.
+ENABLED_SOURCES = [
+    s.strip() for s in os.getenv("ENABLED_SOURCES", "youtube,soundcloud").split(",") if s.strip()
+]
+# Timeout pro Source-Pre-Search. Verhindert dass eine langsame Quelle
+# das ganze Resolve blockiert. Tonus' Worker hat 5-15s Cooldown, also
+# darf das Resolve Latency hinzufügen, aber nicht unbegrenzt.
+MULTI_SOURCE_TIMEOUT_S = float(os.getenv("MULTI_SOURCE_TIMEOUT_S", "10"))
+# Minimum-Match-Score (0-1). Treffer unter dem Wert werden verworfen.
+# Mit dem existing scoring-helper liegt 0.65 etwa "title + artist passen
+# halbwegs". Bei zu niedrigem Wert kommen falsche Tracks rein.
+MULTI_SOURCE_MIN_SCORE = float(os.getenv("MULTI_SOURCE_MIN_SCORE", "0.65"))
+# Wie viele Kandidaten pro Source vor dem Ranking gezogen werden. Mehr =
+# bessere Auswahl aber langsamer Pre-Search. 3 hat in Tests gut balanciert.
+MULTI_SOURCE_CANDIDATES_PER_SOURCE = int(os.getenv("MULTI_SOURCE_CANDIDATES_PER_SOURCE", "3"))
+
+# ─── Logging ──────────────────────────────────────────────────────
+# DEBUG / INFO / WARNING / ERROR / CRITICAL — kontrolliert tonus' eigene
+# logger (resolver, worker, app). yt-dlp's verbosity ist davon getrennt
+# konfigurierbar (siehe YT_DLP_QUIET).
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# Uvicorn HTTP-Access-Logs ('GET /api/queue 200 OK'-Spam). Default OFF
+# weil die Queue-Page jede Sekunde polled — Access-Logs überfluten den
+# Container-Log und überscrollen die echten WARN/ERROR-Lines.
+UVICORN_ACCESS_LOG = os.getenv("UVICORN_ACCESS_LOG", "false").lower() == "true"
+# yt-dlp's eigenes Logging: True = nur Errors, False = Info-Level mit
+# allen [youtube] / [soundcloud] -Lines. Bei Debug-Sessions auf False
+# setzen, in Production auf True für sauberen Container-Log.
+YT_DLP_QUIET = os.getenv("YT_DLP_QUIET", "false").lower() == "true"
+
 # API Configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))

@@ -32,26 +32,91 @@
     ListMusic
   } from 'lucide-svelte';
 
-  type OriginInfo = { icon: typeof Search; label: string; detail?: string };
+  type OriginInfo = { icon: typeof Search; label: string; detail?: string; source?: string };
   type DestInfo = { icon: typeof HardDrive; label: string; detail?: string };
+
+  /**
+   * Mapped die rohe Backend-Fehlermeldung auf eine User-freundliche Kategorie.
+   * Backend liefert technische Strings wie "Failed to read YouTube URL: Sign in
+   * to confirm you're not a bot" oder "HTTP Error 429: Too Many Requests" — die
+   * sind für Operator nützlich, aber nicht für den End-User. Frontend translated
+   * sie auf eine von 8 Kategorien plus den Raw-Text als ausklappbares Detail.
+   */
+  type ErrorKind =
+    | 'rate_limited'
+    | 'geo'
+    | 'private'
+    | 'unavailable'
+    | 'auth'
+    | 'not_found'
+    | 'timeout'
+    | 'fs'
+    | 'interrupted'
+    | 'unknown';
+
+  function classifyError(message: string | null | undefined): ErrorKind {
+    const m = (message ?? '').toLowerCase();
+    if (!m) return 'unknown';
+    // "Interrupted — server restarted" entsteht wenn der Backend-Container
+    // beim Boot stehengebliebene processing-Jobs auf error setzt. Eigene
+    // Kategorie weil hier der User-Hinweis "einfach Retry" ist und nicht
+    // auf Provider-Probleme verweist.
+    if (/(interrupted|server restart|boot|stale.?process)/.test(m)) return 'interrupted';
+    if (/(rate.?limit|429|too many requests|throttl)/.test(m)) return 'rate_limited';
+    if (/(geo|region|country|not available in your)/.test(m)) return 'geo';
+    if (/(private|removed|deleted|terminated|withdrawn)/.test(m)) return 'private';
+    if (/(unavailable|video unavailable|not (yet )?available)/.test(m)) return 'unavailable';
+    if (/(sign.?in|login|401|403|unauthor|forbidden|bot|cookies?|captcha)/.test(m)) return 'auth';
+    if (/(404|not found|no.+(?:found|results|matches))/.test(m)) return 'not_found';
+    if (/(timed?.?out|timeout|connection reset|network)/.test(m)) return 'timeout';
+    if (/(disk|filesystem|read-only|permission denied|no space|enospc|errno (13|28))/.test(m)) return 'fs';
+    return 'unknown';
+  }
+
+  /**
+   * Map ErrorKind → lokalisiertes Label. Wir nutzen `get(t)` statt
+   * `$t(...)` weil Svelte bei Template-Literal-Keys (z.B. `queue.error.${kind}`)
+   * die Store-Subscription nicht erkennt — das gibt Compile-Errors. `get(t)`
+   * ist nicht reactive bei Locale-Change, aber Locale-Wechsel sind selten
+   * genug dass das akzeptabel ist (gleiches Pattern wie jobOrigin/jobDest).
+   */
+  function errorLabel(kind: ErrorKind): string {
+    const tt = get(t);
+    return tt(`queue.error.${kind}` as any);
+  }
+
+  function errorDetailsLabel(): string {
+    return get(t)('queue.error.details');
+  }
 
   function jobOrigin(j: QueueJob): OriginInfo {
     const tt = get(t);
     const p = j.payload ?? {};
+    // Multi-Source-Resolver hängt 'used_source' an wenn der Track erfolgreich
+    // gedownloadet wurde. Wir zeigen die Source nur wenn sie nicht 'youtube'
+    // ist — youtube ist der Default und visuelle Lärm-Reduktion wert.
+    const usedSource = p.used_source && p.used_source !== 'youtube' ? p.used_source : undefined;
+
     if (p.plugin_sync_navidrome_user) {
       return {
         icon: Puzzle,
         label: tt('queue.origin.plugin'),
-        detail: p.plugin_sync_navidrome_user
+        detail: p.plugin_sync_navidrome_user,
+        source: usedSource,
       };
     }
     if (p.kind === 'url') {
-      return { icon: Link2, label: tt('queue.origin.url') };
+      return { icon: Link2, label: tt('queue.origin.url'), source: usedSource };
     }
     if (p.album_id || p.album_name) {
-      return { icon: Disc, label: tt('queue.origin.album'), detail: p.album_name };
+      return {
+        icon: Disc,
+        label: tt('queue.origin.album'),
+        detail: p.album_name,
+        source: usedSource,
+      };
     }
-    return { icon: Search, label: tt('queue.origin.search') };
+    return { icon: Search, label: tt('queue.origin.search'), source: usedSource };
   }
 
   function jobDest(j: QueueJob): DestInfo {
@@ -698,6 +763,11 @@
               >
                 <svelte:component this={origin.icon} size={10.5} strokeWidth={1.6} />
                 {origin.label}
+                {#if origin.source}
+                  <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono); font-size: 9.5px;" title="Resolver hat hier gepullt">
+                    · {origin.source}
+                  </span>
+                {/if}
               </span>
               <span style="color: var(--color-fg-tertiary); font-size: 10px;">→</span>
               <span
@@ -993,25 +1063,25 @@
         {@const dest = jobDest(job)}
         {@const statusColor = colorByStatus(job.status)}
         <div
-          class="flex items-center gap-4"
+          class="tonus-queue-row flex items-center gap-4"
           style="
             background: rgba(15, 15, 18, 0.45);
             backdrop-filter: blur(30px);
             -webkit-backdrop-filter: blur(30px);
-            border: 1px solid var(--color-border-soft);
+            border: 1px solid {job.status === 'error' ? 'color-mix(in oklab, var(--color-status-error) 25%, var(--color-border-soft))' : 'var(--color-border-soft)'};
             border-radius: 12px;
             padding: 14px 18px;
             contain: layout paint;
           "
         >
-          <div style="width: 48px; height: 48px;">
+          <div class="tonus-queue-cover" style="width: 48px; height: 48px; flex-shrink: 0;">
             <CoverArt src={t.album_art} alt={t.album ?? ''} artist={t.artist ?? ''} fluid radius={6} />
           </div>
 
-          <div class="flex-1 min-w-0">
-            <div class="flex items-baseline gap-2.5 min-w-0">
+          <div class="tonus-queue-text flex-1 min-w-0">
+            <div class="tonus-queue-titleline flex items-baseline gap-2.5 min-w-0">
               <div
-                class="truncate"
+                class="tonus-queue-title truncate"
                 style="font-size: 14px; font-weight: 500; letter-spacing: -0.005em;"
                 title={t.name ?? ''}
               >
@@ -1019,7 +1089,7 @@
               </div>
               {#if t.artist}
                 <div
-                  class="truncate whitespace-nowrap"
+                  class="tonus-queue-artist truncate whitespace-nowrap"
                   style="font-size: 11.5px; color: var(--color-fg-secondary);"
                 >
                   · {t.artist}
@@ -1046,6 +1116,11 @@
                 {#if origin.detail}
                   <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono);">· {origin.detail}</span>
                 {/if}
+                {#if origin.source}
+                  <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono); font-size: 9.5px;" title="Resolver hat hier gepullt">
+                    · {origin.source}
+                  </span>
+                {/if}
               </span>
               <span style="color: var(--color-fg-tertiary); font-size: 9px;">→</span>
               <span
@@ -1067,10 +1142,57 @@
                 <span style="color: var(--color-fg-tertiary);">· {job.stage}</span>
               {/if}
             </div>
+
+            <!-- Friendly Error-Block: nur bei status=error mit message. Backend
+                 liefert technische Strings (z.B. "Sign in to confirm you're not
+                 a bot"), classifyError mapped auf eine User-verständliche
+                 Kategorie, raw-Text liegt im <details> drunter. -->
+            {#if job.status === 'error' && job.message}
+              {@const kind = classifyError(job.message)}
+              <details
+                class="tonus-queue-error-block mt-2"
+                style="
+                  border: 1px solid color-mix(in oklab, var(--color-status-error) 30%, transparent);
+                  border-radius: 8px;
+                  background: color-mix(in oklab, var(--color-status-error) 6%, transparent);
+                  padding: 8px 12px;
+                  font-size: 11.5px;
+                  line-height: 1.45;
+                "
+              >
+                <summary
+                  style="
+                    color: var(--color-status-error);
+                    cursor: pointer;
+                    list-style: none;
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 6px;
+                  "
+                >
+                  <span style="flex: 1;">{errorLabel(kind)}</span>
+                  <span style="font-size: 10px; color: var(--color-fg-tertiary); white-space: nowrap; opacity: 0.7;">
+                    {errorDetailsLabel()} ▾
+                  </span>
+                </summary>
+                <div
+                  class="mt-1.5 pt-1.5"
+                  style="
+                    border-top: 1px solid color-mix(in oklab, var(--color-status-error) 18%, transparent);
+                    color: var(--color-fg-tertiary);
+                    font-family: var(--font-mono);
+                    font-size: 10.5px;
+                    word-break: break-word;
+                  "
+                >
+                  {job.message}
+                </div>
+              </details>
+            {/if}
           </div>
 
           {#if isRunning}
-            <div class="flex flex-col gap-1.5" style="width: 200px;">
+            <div class="tonus-queue-progress flex flex-col gap-1.5" style="width: 200px;">
               <ProgressLine pareto color={accent} height={5} />
               <div
                 class="text-right"
@@ -1082,7 +1204,7 @@
           {/if}
 
           <span
-            class="uppercase tabular-nums text-center"
+            class="tonus-queue-status uppercase tabular-nums text-center"
             style="
               font-size: 10.5px;
               padding: 4px 12px;
@@ -1098,7 +1220,7 @@
             {job.status}
           </span>
 
-          <div class="flex items-center gap-1">
+          <div class="tonus-queue-actions flex items-center gap-1">
             {#if job.status === 'error'}
               <button
                 onclick={() => retryOne(job)}
@@ -1156,6 +1278,68 @@
     .tonus-lane-strip > div {
       padding: 14px !important;
       min-height: 0 !important;
+    }
+
+    /* Queue-Row: aus einer überfüllten flex-row in einen 2-Zeilen-Layout —
+       (1) cover + text-block füllen die obere Zeile, (2) status-pill +
+       actions wrap nach unten und richten sich rechts aus. Title nicht
+       mehr truncate sondern line-clamp 2 — User soll mindestens den
+       Anfang lesen können bevor er auf "..." stößt. */
+    .tonus-queue-row {
+      flex-wrap: wrap;
+      align-items: flex-start !important;
+      gap: 12px !important;
+      padding: 12px 14px !important;
+    }
+    .tonus-queue-titleline {
+      flex-direction: column;
+      align-items: flex-start !important;
+      gap: 2px !important;
+    }
+    .tonus-queue-title {
+      white-space: normal !important;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+    .tonus-queue-artist {
+      /* Punkt-Trenner stört wenn Artist auf eigener Zeile sitzt — nur
+         hier ausblenden, Desktop behält das Inline-Layout mit "·". */
+      max-width: 100%;
+    }
+    .tonus-queue-artist::before {
+      content: '';
+    }
+    .tonus-queue-progress {
+      flex-basis: 100% !important;
+      width: auto !important;
+      order: 2;
+    }
+    .tonus-queue-status {
+      min-width: 0 !important;
+      padding: 3px 10px !important;
+      order: 3;
+    }
+    .tonus-queue-actions {
+      margin-left: auto;
+      order: 4;
+    }
+    /* Error-Block: auf Phone der friendly-Hinweis full-width statt
+       neben dem nowrap-Toggle gequetscht in eine wort-pro-zeile-spalte.
+       Toggle "Technische Details ▾" rückt drunter rechtsbündig. */
+    .tonus-queue-error-block summary {
+      flex-direction: column !important;
+      align-items: stretch !important;
+      gap: 4px !important;
+    }
+    .tonus-queue-error-block summary > span:last-child {
+      align-self: flex-end;
+    }
+    .tonus-queue-error-block {
+      padding: 8px 10px !important;
     }
   }
 </style>
