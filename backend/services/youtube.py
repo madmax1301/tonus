@@ -456,9 +456,8 @@ class YouTubeService:
         # Try YTMusic first
         if self.ytmusic:
             try:
-                search_query = f"{artist} {track_name}"
-                if track_info and track_info.get('album'):
-                    search_query += f" {track_info.get('album')}"
+                from services.multi_source import album_suffix_for_query
+                search_query = f"{artist} {track_name}{album_suffix_for_query(track_name, track_info)}"
 
                 results = self.ytmusic.search(search_query, filter="songs", limit=num_results)
 
@@ -512,8 +511,10 @@ class YouTubeService:
 
         # Fallback to yt-dlp if no candidates found or YTMusic failed
         if not candidates:
-            if track_info and track_info.get('album'):
-                query = f"{artist} {track_name} {track_info.get('album')} official"
+            from services.multi_source import album_suffix_for_query
+            album_part = album_suffix_for_query(track_name, track_info)
+            if album_part:
+                query = f"{artist} {track_name}{album_part} official"
             else:
                 query = f"{artist} {track_name} official audio"
 
@@ -745,7 +746,14 @@ class YouTubeService:
         # Multi-Source-Resolver-Pfad: pre-search auf allen aktivierten Quellen
         # parallel, ranked candidates, iteriere bis success.
         # Lazy import um circular dependency mit multi_source.py zu vermeiden.
-        from services.multi_source import MultiSourceResolver
+        from services.multi_source import MultiSourceResolver, normalize_corrupt_track_name, album_suffix_for_query
+
+        # Normalisierung VOR allem track_name-Use — sonst läuft der Legacy-
+        # ytsearch1-Fallback (unten) noch mit dem Original-"Unknown" und
+        # findet 0 Items. Helper ist idempotent, der Resolver ruft denselben
+        # Helper intern nochmal auf (no-op wenn schon normalisiert).
+        track_name = normalize_corrupt_track_name(track_name, track_info)
+
         resolver = MultiSourceResolver(self)
 
         try:
@@ -804,9 +812,12 @@ class YouTubeService:
 
         # Fallback to original yt-dlp search and download logic if no high-confidence candidate found
         # Create more specific search query to get better matches
-        # Include album name if available for better matching
-        if track_info and track_info.get('album'):
-            query = f"{artist} {track_name} {track_info.get('album')} official"
+        # Include album name if available — aber nicht doppelt wenn der
+        # track_name bereits via normalize_corrupt_track_name() === album ist
+        # (Beispiel CIIMERA/HAMBURG BALLERT ANDERS, sonst 0-Item-Result).
+        album_part = album_suffix_for_query(track_name, track_info)
+        if album_part:
+            query = f"{artist} {track_name}{album_part} official"
         else:
             query = f"{artist} {track_name} official audio"
         
