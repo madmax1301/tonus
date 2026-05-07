@@ -55,6 +55,7 @@ from utils.job_store import (
     insert_csv_results,
     get_csv_results,
     count_csv_results,
+    get_csv_library_matches_with_playlists,
 )
 from utils.worker import JobWorker
 from utils.auth import require_token, require_admin, auth_required
@@ -2415,11 +2416,25 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
         finally:
             conn.close()
 
+    # ----- Schritt 5: Library-Match-Tracks zu Playlists (Phase I-Edge-Case) -----
+    # Library-Match-Tracks haben keinen Download-Job (Tracks sind ja schon
+    # da), würden aber ohne diesen Schritt nie zu ihren Playlists hinzu-
+    # gefügt. Job-scoped Reconcile direkt aus csv_import_results.
+    library_recon: Dict[str, int] = {"playlists": 0, "tracks_added": 0, "library_tracks_processed": 0}
+    try:
+        library_recon = _reconcile_csv_library_matches(job_id)
+    except Exception as e:
+        # Reconcile-Failure soll queue_all nicht killen — Tracks sind in der
+        # Queue, das ist der wichtige Teil. Reconcile kann manuell oder
+        # beim nächsten Plugin-Sync nachgezogen werden.
+        print(f"[csv-queue-all] library-reconcile failed (non-fatal): {type(e).__name__}: {e}")
+
     return {
         "queued": queued,
         "skipped_duplicate": skipped_dup,
         "errors": errors,
         "total_matched": len(rows),
+        "library_playlists_reconciled": library_recon,
     }
 
 
@@ -2999,6 +3014,86 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
 # Plugin- und CSV-Import-Pfade ab), `_reconcile_plugin_playlists` bleibt
 # als no-op-Alias damit Aufrufer nicht synchron migriert werden müssen.
 _reconcile_plugin_playlists = _reconcile_imported_playlists
+
+
+def _reconcile_csv_library_matches(job_id: str) -> Dict[str, int]:
+    """Phase I-Edge-Case-Fix: für library_match-Tracks eines CSV-Imports
+    direkt zu den Subsonic-Playlists hinzufügen.
+
+    Hintergrund: `_reconcile_imported_playlists()` liest aus `download_jobs`,
+    aber Library-Match-Tracks erzeugen keinen Download-Job (queue_all
+    filtert auf result_type='matched'). Sie würden ohne diesen Helper
+    nie zu ihren Subsonic-Playlists hinzugefügt — obwohl sie schon in
+    Navidrome liegen und der User explizit `playlist`-Memberships im
+    CSV angegeben hat.
+
+    Diese Funktion ist job-scoped (kein Cutoff über Zeit, nur dieser
+    eine Import) und idempotent (read-before-write in
+    `add_tracks_to_playlist`).
+
+    Triggered nach queue_all aus dem CSV-Import-Flow.
+    """
+    from collections import defaultdict
+
+    rows = get_csv_library_matches_with_playlists(job_id)
+    if not rows:
+        return {"playlists": 0, "tracks_added": 0, "library_tracks_processed": 0}
+
+    by_playlist: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+    for r in rows:
+        artist = r["requested_artist"].strip()
+        title = r["requested_title"].strip()
+        if not artist or not title:
+            continue
+        for pl_name in r["playlist_names"]:
+            by_playlist[pl_name].append({"artist": artist, "title": title})
+
+    if not by_playlist:
+        return {"playlists": 0, "tracks_added": 0, "library_tracks_processed": len(rows)}
+
+    total_added = 0
+    for playlist_name, items in by_playlist.items():
+        existing = navidrome_service.find_playlist_by_name(playlist_name)
+        if existing:
+            playlist_id = existing.get("id")
+        else:
+            playlist_id = navidrome_service.create_playlist(playlist_name)
+        if not playlist_id:
+            print(f"[csv-library-reconcile] could not get/create playlist '{playlist_name}'")
+            continue
+
+        # Subsonic-IDs auflösen — sollten alle existieren (Tracks sind ja
+        # bereits in Library), aber falls Subsonic-Index noch nicht durchge-
+        # zogen ist (frisch gescant), gibt's Misses wie im normalen Reconcile.
+        sub_ids: List[str] = []
+        unresolved = 0
+        for it in items:
+            sid = navidrome_service.find_track_id_by_artist_title(it["artist"], it["title"])
+            if sid:
+                sub_ids.append(sid)
+            else:
+                unresolved += 1
+        if not sub_ids:
+            print(
+                f"[csv-library-reconcile] '{playlist_name}': "
+                f"no resolvable subsonic IDs ({unresolved} unresolved of {len(items)})"
+            )
+            continue
+
+        result = navidrome_service.add_tracks_to_playlist(playlist_id, sub_ids)
+        added = result.get("added", 0)
+        total_added += added
+        print(
+            f"[csv-library-reconcile] '{playlist_name}' (pid={playlist_id}): "
+            f"+{added} library tracks (already in playlist: {result.get('already_present', 0)}, "
+            f"unresolved: {unresolved})"
+        )
+
+    return {
+        "playlists": len(by_playlist),
+        "tracks_added": total_added,
+        "library_tracks_processed": len(rows),
+    }
 
 
 def _check_mix_tracks_in_library(req: PluginMixDiscoveryRequest) -> List[Dict[str, str]]:

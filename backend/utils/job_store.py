@@ -600,6 +600,46 @@ def get_csv_results(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str,
         conn.close()
 
 
+def get_csv_library_matches_with_playlists(job_id: str) -> List[Dict[str, Any]]:
+    """Phase I-Edge-Case: liefert alle library_match-Rows eines Jobs die
+    `playlist_names_json` haben. Wird vom Reconcile gebraucht, weil Library-
+    Match-Tracks keinen Download-Job erzeugen und damit aus dem normalen
+    Reconcile-Pfad (`_reconcile_imported_playlists`) rausfallen — ohne diesen
+    Helper landen sie nicht in den Subsonic-Playlists.
+
+    Returnt list of {requested_artist, requested_title, playlist_names: List[str]}.
+    """
+    conn = _db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT requested_artist, requested_title, playlist_names_json
+            FROM csv_import_results
+            WHERE job_id = ?
+              AND result_type = 'library_match'
+              AND playlist_names_json IS NOT NULL
+            ORDER BY id
+            """,
+            (job_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        try:
+            playlist_names = json.loads(r["playlist_names_json"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not playlist_names:
+            continue
+        out.append({
+            "requested_artist": r["requested_artist"] or "",
+            "requested_title": r["requested_title"] or "",
+            "playlist_names": [p for p in playlist_names if isinstance(p, str) and p.strip()],
+        })
+    return out
+
+
 def count_csv_results(job_id: str) -> Dict[str, int]:
     """Returns Counts für drei Buckets seit Phase H. matched/unmatched
     bleiben backward-kompatibel; library_match ist neu."""
