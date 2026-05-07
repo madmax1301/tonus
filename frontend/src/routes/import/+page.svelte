@@ -64,6 +64,131 @@
   let csvExportProgress = $state<{ loaded: number; total: number } | null>(null);
   const PAGE_SIZE = 200;
 
+  // ─── Phase I.2 — Spotify Extended Streaming History State ──────────
+  // Multi-File-Drop in eigener Card. Files werden lokal via FileReader
+  // geparsed (JSON.parse pro File), aggregiert serverseitig, dann ab
+  // dem Resultat geht's denselben Pipeline-Pfad wie ein normaler CSV-
+  // Import (csvJobId wird gesetzt, gleicher Status-Display).
+  let spotifyFiles = $state<File[]>([]);
+  let spotifyMinPlays = $state(1);
+  let spotifyMinSeconds = $state(30);
+  let spotifyAutoPlaylistYear = $state(true);
+  let spotifyAutoPlaylistMonth = $state(true);
+  let spotifyPlaylistPrefix = $state('Spotify History');
+  let spotifyBusy = $state(false);
+  let spotifyError = $state<string | null>(null);
+  let spotifyDragOver = $state(false);
+
+  async function readJsonFile(file: File): Promise<unknown> {
+    const text = await file.text();
+    return JSON.parse(text);
+  }
+
+  function addSpotifyFiles(files: FileList | File[] | null) {
+    if (!files) return;
+    const next: File[] = [...spotifyFiles];
+    for (const f of Array.from(files)) {
+      // Nur JSON-Files akzeptieren — gegen versehentliches Drop von CSVs
+      // oder Unterordnern. Spotify-File-Convention ist Streaming_History_*.json
+      if (f.name.toLowerCase().endsWith('.json')) {
+        next.push(f);
+      }
+    }
+    // Dedup nach Name+Size — ein File zweimal droppen ist meist unbeabsichtigt.
+    const seen = new Set<string>();
+    spotifyFiles = next.filter((f) => {
+      const k = `${f.name}::${f.size}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    spotifyError = null;
+  }
+
+  function removeSpotifyFile(idx: number) {
+    spotifyFiles = spotifyFiles.filter((_, i) => i !== idx);
+  }
+
+  async function submitSpotifyHistory() {
+    if (spotifyBusy || !spotifyFiles.length) return;
+    spotifyBusy = true;
+    spotifyError = null;
+    try {
+      // Parse alle Files lokal (kein Backend-Roundtrip pro File). Bei großen
+      // Multi-Year-Imports mehrere MB schnell, FileReader ist non-blocking.
+      const parsed: Array<Array<Record<string, unknown>>> = [];
+      for (const f of spotifyFiles) {
+        try {
+          const data = await readJsonFile(f);
+          if (Array.isArray(data)) {
+            parsed.push(data as Array<Record<string, unknown>>);
+          } else {
+            // Spotify-Files SIND Top-Level-Arrays. Etwas anderes = falscher
+            // Datei-Typ. Wir skippen statt zu crashen damit User andere
+            // Dateien noch behalten kann.
+            console.warn(`[spotify-history] ${f.name} ist kein JSON-Array — skip`);
+          }
+        } catch (e) {
+          console.warn(`[spotify-history] ${f.name} parse-fail:`, e);
+        }
+      }
+      if (!parsed.length) {
+        spotifyError = $t('import.spotify_history.error.no_valid_files');
+        spotifyBusy = false;
+        return;
+      }
+      const r = await importApi.startSpotifyHistory(parsed, {
+        provider: provider || undefined,
+        min_ms_played: Math.max(0, spotifyMinSeconds * 1000),
+        min_play_count: Math.max(1, spotifyMinPlays),
+        auto_playlist_year: spotifyAutoPlaylistYear,
+        auto_playlist_month: spotifyAutoPlaylistMonth,
+        playlist_prefix: spotifyPlaylistPrefix.trim() || 'Spotify History',
+        filename: `Spotify History · ${spotifyFiles.length} Files`,
+      });
+      if (r.status === 'empty') {
+        spotifyError = `${$t('import.spotify_history.error.empty')} (${r.stats.total_events} events, ${r.stats.filtered_short} zu kurz, ${r.stats.filtered_non_music} non-music)`;
+        spotifyBusy = false;
+        return;
+      }
+      // Job ist queued — gleiche Pipeline wie CSV. State umstellen und
+      // existing Polling übernehmen lassen.
+      csvJobId = r.job_id ?? null;
+      csvFilename = r.filename ?? null;
+      spotifyFiles = [];
+      spotifyBusy = false;
+      // Polling startet via existing $effect das auf csvJobId reagiert
+    } catch (e) {
+      spotifyError = e instanceof Error ? e.message : String(e);
+      spotifyBusy = false;
+    }
+  }
+
+  function onSpotifyDragEnter(ev: DragEvent) {
+    ev.preventDefault();
+    spotifyDragOver = true;
+  }
+  function onSpotifyDragLeave(ev: DragEvent) {
+    ev.preventDefault();
+    spotifyDragOver = false;
+  }
+  function onSpotifyDragOver(ev: DragEvent) {
+    ev.preventDefault();
+    spotifyDragOver = true;
+  }
+  function onSpotifyDrop(ev: DragEvent) {
+    ev.preventDefault();
+    spotifyDragOver = false;
+    if (ev.dataTransfer?.files) {
+      addSpotifyFiles(ev.dataTransfer.files);
+    }
+  }
+  function onSpotifyFileInput(ev: Event) {
+    const tgt = ev.target as HTMLInputElement;
+    if (tgt.files) addSpotifyFiles(tgt.files);
+    tgt.value = ''; // erlaubt re-select desselben File
+  }
+
   // Viewport-aware Vinyl-size — Phone shrinkt das 260px-Cover (mit Disc-Offset
   // ~403px Gesamt) sonst überläuft. SSR-safe via $effect (clientside-only).
   let vinylSize = $state(260);
@@ -698,6 +823,172 @@
       </ol>
       <div class="mt-3 text-[11px]" style="color: var(--color-fg-tertiary);">
         {$t('import.tunemymusic.limit_note')}
+      </div>
+    </div>
+
+    <!-- ─── Spotify Extended Streaming History (Phase I.2) ───── -->
+    <div
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.4);
+        backdrop-filter: blur(28px) saturate(1.15);
+        -webkit-backdrop-filter: blur(28px) saturate(1.15);
+        border: 1px solid {spotifyDragOver ? accent : 'var(--color-border-soft)'};
+        border-radius: 18px;
+        padding: clamp(16px, 3vw, 22px);
+        margin-bottom: 18px;
+        transition: border-color 0.18s ease;
+      "
+      ondragenter={onSpotifyDragEnter}
+      ondragover={onSpotifyDragOver}
+      ondragleave={onSpotifyDragLeave}
+      ondrop={onSpotifyDrop}
+    >
+      <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 10px; letter-spacing: 0.22em; color: {accent};"
+          >
+            {$t('import.spotify_history.eyebrow')}
+          </div>
+          <div
+            class="mt-1.5 font-medium"
+            style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.01em; color: var(--color-fg-primary);"
+          >
+            {$t('import.spotify_history.title')}
+          </div>
+        </div>
+      </div>
+      <p class="text-[13px] mb-3" style="color: var(--color-fg-secondary); max-width: 600px;">
+        {$t('import.spotify_history.body')}
+      </p>
+
+      <!-- Filter-Inputs -->
+      <div class="flex flex-wrap gap-3 mb-3 text-[12px]">
+        <label class="flex items-center gap-2" style="color: var(--color-fg-secondary);">
+          <span class="uppercase tabular-nums" style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);">
+            {$t('import.spotify_history.min_plays')}
+          </span>
+          <input
+            type="number"
+            min="1"
+            max="9999"
+            bind:value={spotifyMinPlays}
+            class="outline-none tabular-nums"
+            style="background: rgba(0,0,0,0.3); border: 1px solid var(--color-border-soft); border-radius: 10px; padding: 6px 10px; width: 72px; color: var(--color-fg-primary); font-size: 13px;"
+          />
+        </label>
+        <label class="flex items-center gap-2" style="color: var(--color-fg-secondary);">
+          <span class="uppercase tabular-nums" style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);">
+            {$t('import.spotify_history.min_seconds')}
+          </span>
+          <input
+            type="number"
+            min="0"
+            max="3600"
+            step="5"
+            bind:value={spotifyMinSeconds}
+            class="outline-none tabular-nums"
+            style="background: rgba(0,0,0,0.3); border: 1px solid var(--color-border-soft); border-radius: 10px; padding: 6px 10px; width: 72px; color: var(--color-fg-primary); font-size: 13px;"
+          />
+        </label>
+        <label class="flex items-center gap-2" style="color: var(--color-fg-secondary);">
+          <span class="uppercase" style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);">
+            {$t('import.spotify_history.playlist_prefix')}
+          </span>
+          <input
+            type="text"
+            maxlength="64"
+            bind:value={spotifyPlaylistPrefix}
+            class="outline-none"
+            style="background: rgba(0,0,0,0.3); border: 1px solid var(--color-border-soft); border-radius: 10px; padding: 6px 10px; width: 200px; color: var(--color-fg-primary); font-size: 13px;"
+          />
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer" style="color: var(--color-fg-secondary);">
+          <input type="checkbox" bind:checked={spotifyAutoPlaylistYear} />
+          <span style="font-size: 12px;">{$t('import.spotify_history.toggle_year')}</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer" style="color: var(--color-fg-secondary);">
+          <input type="checkbox" bind:checked={spotifyAutoPlaylistMonth} />
+          <span style="font-size: 12px;">{$t('import.spotify_history.toggle_month')}</span>
+        </label>
+      </div>
+
+      <!-- File-Drop-Zone -->
+      <label
+        class="flex items-center justify-center gap-2 cursor-pointer text-[13px]"
+        style="
+          background: rgba(0,0,0,0.25);
+          border: 1.5px dashed {spotifyDragOver ? accent : 'var(--color-border-soft)'};
+          border-radius: 14px;
+          padding: 18px;
+          color: var(--color-fg-secondary);
+          transition: border-color 0.18s ease;
+        "
+      >
+        <Upload size={16} strokeWidth={1.4} />
+        <span>{$t('import.spotify_history.drop_hint')}</span>
+        <input
+          type="file"
+          accept=".json,application/json"
+          multiple
+          onchange={onSpotifyFileInput}
+          style="display: none;"
+        />
+      </label>
+
+      <!-- File-Liste -->
+      {#if spotifyFiles.length > 0}
+        <div class="mt-3 flex flex-wrap gap-1.5">
+          {#each spotifyFiles as f, i}
+            <span
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] tabular-nums"
+              style="background: rgba(255,255,255,0.06); border: 1px solid var(--color-border-soft); border-radius: 999px; color: var(--color-fg-secondary);"
+            >
+              {f.name} <span style="color: var(--color-fg-tertiary);">{(f.size / 1024 / 1024).toFixed(1)} MB</span>
+              <button
+                type="button"
+                onclick={() => removeSpotifyFile(i)}
+                aria-label="Remove"
+                style="background: transparent; color: var(--color-fg-tertiary); padding: 0 0 0 4px; border: 0; cursor: pointer;"
+              >×</button>
+            </span>
+          {/each}
+        </div>
+      {/if}
+
+      {#if spotifyError}
+        <p class="mt-3 text-[12px]" style="color: #f87171;">{spotifyError}</p>
+      {/if}
+
+      <div class="mt-4 flex items-center gap-3">
+        <button
+          type="button"
+          onclick={submitSpotifyHistory}
+          disabled={spotifyBusy || spotifyFiles.length === 0}
+          class="inline-flex items-center gap-1.5 transition-opacity"
+          style="
+            background: {accent};
+            color: #1a1410;
+            padding: 10px 22px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+            opacity: {spotifyBusy || spotifyFiles.length === 0 ? 0.5 : 1};
+            cursor: {spotifyBusy || spotifyFiles.length === 0 ? 'not-allowed' : 'pointer'};
+          "
+        >
+          {spotifyBusy
+            ? $t('import.spotify_history.submitting')
+            : $t('import.spotify_history.submit')}
+        </button>
+        <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
+          {$t('import.spotify_history.hint')}
+        </span>
       </div>
     </div>
 

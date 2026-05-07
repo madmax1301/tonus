@@ -2183,6 +2183,122 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     return {"status": "queued", "job_id": job_id, "total": len(parsed), "filename": fname}
 
 
+class SpotifyHistoryImportRequest(BaseModel):
+    """Phase I.2 — Spotify Extended Streaming History Import.
+
+    files: Liste von parsed JSON-Arrays (jedes Array eine
+    Streaming_History_Audio_*.json). Frontend liest Files via FileReader,
+    JSON.parse und sendet sie als Top-Level-Array damit Backend keinen
+    String→JSON-Roundtrip mehr braucht.
+
+    Filter-Defaults sind Spotifys eigene "Listened-To"-Heuristik (≥30s)
+    plus Playlist-Counts pro Jahr/Monat.
+    """
+    files: List[List[Dict[str, Any]]]
+    provider: Optional[str] = None
+    limit: Optional[int] = 3
+    min_ms_played: Optional[int] = 30000
+    min_play_count: Optional[int] = 1
+    date_from: Optional[str] = None  # YYYY-MM-DD
+    date_to: Optional[str] = None
+    auto_playlist_year: Optional[bool] = True
+    auto_playlist_month: Optional[bool] = True
+    playlist_prefix: Optional[str] = "Spotify History"
+    filename: Optional[str] = None  # nur für UI-Anzeige (z.B. "Spotify History · 24 Files")
+
+
+@app.post("/api/import/spotify-history")
+async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Depends(require_token)):
+    """Importiert eine oder mehrere Spotify-Extended-Streaming-History-JSONs.
+
+    Pipeline-Integration:
+    1. spotify_history.parse_streaming_history() aggregiert pro (artist, title)
+       und leitet Year/Month-Auto-Playlists ab
+    2. Aggregat wird in csv_import_jobs/csv_import_results eingereiht
+       (gleiches Schema wie /api/import/csv) — der existing CSV-Worker
+       übernimmt von hier (Phase 0 Library-Match, Phase 2 Provider-Lookup)
+    3. import_playlist_names werden via Phase I durch alle Buckets
+       durchgereicht und beim queue_all + Reconcile in Subsonic-Playlists
+       übersetzt
+    """
+    from services.spotify_history import parse_streaming_history
+    import json as _json
+    import time as _time
+    from utils.job_store import _db as _hist_db
+
+    provider = resolve_metadata_provider(req.provider)
+    search_limit = max(1, min(req.limit or 3, 5))
+
+    # Aggregation. parse_streaming_history is pure — kein DB-Touch, kein
+    # Side-Effect — also sicher synchron im Request.
+    result = parse_streaming_history(
+        req.files,
+        min_ms_played=int(req.min_ms_played or 30000),
+        min_play_count=int(req.min_play_count or 1),
+        date_from=req.date_from,
+        date_to=req.date_to,
+        auto_playlist_year=bool(req.auto_playlist_year if req.auto_playlist_year is not None else True),
+        auto_playlist_month=bool(req.auto_playlist_month if req.auto_playlist_month is not None else True),
+        playlist_prefix=(req.playlist_prefix or "Spotify History").strip() or "Spotify History",
+    )
+    tracks = result["tracks"]
+    stats = result["stats"]
+
+    if not tracks:
+        # Aggregat ist leer — keine Tracks die importierbar wären. Wir geben
+        # die stats zurück damit User sieht warum (zu strenger Filter,
+        # nur Podcasts in den Files, etc.) — aber kein csv_import_job angelegt.
+        return {
+            "status": "empty",
+            "message": "No tracks after filtering",
+            "stats": stats,
+        }
+
+    job_id = f"spotify-hist-{int(_time.time() * 1000)}"
+
+    # Cleanup analog zu /api/import/csv falls dieser job_id schon existiert
+    conn = _hist_db()
+    try:
+        conn.execute("DELETE FROM csv_import_results WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM csv_import_jobs    WHERE job_id = ?", (job_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    payload = _json.dumps({"provider": provider, "search_limit": search_limit, "source": "spotify_history"})
+    fname = (req.filename or "").strip() or f"Spotify History · {len(req.files)} Files"
+
+    upsert_csv_job(
+        job_id,
+        status="queued",
+        total=len(tracks),
+        message=f"Queued — waiting for worker ({len(tracks)} tracks from {stats['total_events']} events)",
+        filename=fname,
+        payload_json=payload,
+    )
+
+    # Phase I-Schema: artist/title/playlist_names werden direkt durchgereicht.
+    # Worker pickt die als pending_raw und läuft die ganze Pipeline (Phase 0
+    # Library-Match → Phase 2 Provider-Lookup → Phase 3 materialize).
+    insert_csv_results(job_id, "pending_raw", [
+        {
+            "original": f"{t['artist']} - {t['title']}",
+            "requested_artist": t["artist"],
+            "requested_title": t["title"],
+            "playlist_names": t.get("playlist_names") or [],
+        }
+        for t in tracks
+    ])
+
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "total": len(tracks),
+        "filename": fname,
+        "stats": stats,
+    }
+
+
 @app.get("/api/import/csv/status/{job_id}")
 async def csv_import_status(job_id: str):
     """Poll CSV import progress (aus SQLite). Seit Phase H zusätzlich

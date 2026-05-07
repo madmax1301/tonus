@@ -609,7 +609,45 @@ export const importApi = {
     api.post<{ queued?: number; skipped?: number; message?: string }>(
       `/api/import/csv/queue-all/${jobId}`,
       { location: opts.location ?? 'navidrome', provider: opts.provider }
-    )
+    ),
+  /**
+   * Phase I.2 — Spotify Extended Streaming History Import.
+   * Frontend hat die JSON-Files schon geparsed (FileReader + JSON.parse) und
+   * sendet die Top-Level-Arrays als `files`. Backend aggregiert pro Track
+   * und legt einen csv_import_job an, der durch dieselbe Pipeline läuft wie
+   * ein normaler CSV-Import (Library-Match → Provider → Queue → Reconcile).
+   */
+  startSpotifyHistory: (
+    files: Array<Array<Record<string, unknown>>>,
+    opts: {
+      provider?: string;
+      limit?: number;
+      min_ms_played?: number;
+      min_play_count?: number;
+      date_from?: string;
+      date_to?: string;
+      auto_playlist_year?: boolean;
+      auto_playlist_month?: boolean;
+      playlist_prefix?: string;
+      filename?: string;
+    } = {}
+  ) =>
+    api.post<{
+      status: 'queued' | 'empty';
+      job_id?: string;
+      total?: number;
+      filename?: string;
+      message?: string;
+      stats: {
+        total_events: number;
+        filtered_short: number;
+        filtered_non_music: number;
+        filtered_out_of_range: number;
+        unique_tracks_before_count_filter: number;
+        unique_tracks_after_count_filter: number;
+        skipped_play_count_below_threshold: number;
+      };
+    }>('/api/import/spotify-history', { files, ...opts })
 };
 
 export const urlApi = {
