@@ -2080,14 +2080,21 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     if not rows:
         rows = [[line.strip()] for line in lines]
 
-    # Auto-detect header: look for "artist" and "track"/"title" columns
+    # Auto-detect header: look for "artist", "track"/"title" und (Phase I)
+    # optional "playlist"-Spalte. TuneMyMusic-Exports haben standardmäßig
+    # eine "Playlist Name"-Spalte; andere Exports haben sie nicht — dann
+    # bleibt col_playlist=None und der Track hat keine playlist_names.
     col_artist, col_title = 0, 1
+    col_playlist: Optional[int] = None
     if rows and len(rows[0]) >= 2:
         first = [c.strip().lower().lstrip('\ufeff') for c in rows[0]]
         artist_cols = [i for i, c in enumerate(first) if 'artist' in c]
         title_cols  = [i for i, c in enumerate(first) if 'track' in c or 'title' in c or 'name' in c]
+        playlist_cols = [i for i, c in enumerate(first) if 'playlist' in c]
         if artist_cols and title_cols:
             col_artist, col_title = artist_cols[0], title_cols[0]
+            if playlist_cols:
+                col_playlist = playlist_cols[0]
             rows = rows[1:]
     elif rows and any(kw in (rows[0][0].strip().lower().lstrip('\ufeff')) for kw in ['track', 'title', 'name']):
         col_artist, col_title = 1, 0
@@ -2097,11 +2104,13 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     for row in rows:
         if not row:
             continue
-        artist, title = "", ""
-        max_col = max(col_artist, col_title)
+        artist, title, playlist_cell = "", "", ""
+        max_col = max(col_artist, col_title, col_playlist if col_playlist is not None else 0)
         if len(row) > max_col:
             artist = row[col_artist].strip().strip('"').strip("'") if col_artist < len(row) else ""
             title  = row[col_title].strip().strip('"').strip("'")  if col_title  < len(row) else ""
+            if col_playlist is not None and col_playlist < len(row):
+                playlist_cell = row[col_playlist].strip().strip('"').strip("'")
         elif len(row) == 1:
             parts = _re.split(r"\s*[-–—]\s*", row[0].strip(), maxsplit=1)
             if len(parts) == 2:
@@ -2110,7 +2119,19 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
             else:
                 title = parts[0].strip()
         if title:
-            parsed.append({"artist": artist, "title": title, "raw": row[0].strip() if row else f"{artist} {title}".strip()})
+            # Phase I: Multi-Playlist-Membership in einer Zelle. TuneMyMusic
+            # liefert pro Track einen einzelnen Playlist-Namen, aber wir
+            # parsen comma- oder semicolon-separated falls Tools mehrere
+            # Memberships in einer Zelle haben.
+            playlist_names = [
+                p.strip() for p in _re.split(r"[,;]", playlist_cell) if p.strip()
+            ] if playlist_cell else []
+            parsed.append({
+                "artist": artist,
+                "title": title,
+                "raw": row[0].strip() if row else f"{artist} {title}".strip(),
+                "playlist_names": playlist_names,
+            })
 
     # Eindeutige job_id auf Basis der Wall-Clock-Zeit (csv_import_jobs hat keine numeric id-Spalte)
     import time as _time
@@ -2145,9 +2166,16 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     )
 
     # Store parsed items in a temp table so the worker can read them
-    # (use csv_import_results with result_type='pending' as staging)
+    # (use csv_import_results with result_type='pending' as staging).
+    # Phase I: playlist_names werden mit gespeichert, Worker kann sie
+    # zu library_match/matched-Buckets durchreichen.
     insert_csv_results(job_id, "pending_raw", [
-        {"original": p["raw"], "requested_artist": p["artist"], "requested_title": p["title"]}
+        {
+            "original": p["raw"],
+            "requested_artist": p["artist"],
+            "requested_title": p["title"],
+            "playlist_names": p.get("playlist_names") or [],
+        }
         for p in parsed
     ])
 
@@ -2255,17 +2283,20 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
     if location == "navidrome":
         navidrome_path = resolve_navidrome_library_path_optional(req.navidrome_library)
 
-    # ----- Schritt 1: alle matched Track-JSONs aus DB lesen + parsen -----
+    # ----- Schritt 1: alle matched Track-JSONs + playlist_names aus DB lesen + parsen -----
+    # Phase I: playlist_names_json wird mitgelesen damit der Download-Job
+    # den Playlist-Marker `import_playlist_names` im Payload trägt — das
+    # ist die Quelle für `_reconcile_imported_playlists` nach Download.
     conn = _db()
     try:
         rows = conn.execute(
-            "SELECT track_json FROM csv_import_results WHERE job_id = ? AND result_type = 'matched'",
+            "SELECT track_json, playlist_names_json FROM csv_import_results WHERE job_id = ? AND result_type = 'matched'",
             (job_id,),
         ).fetchall()
     finally:
         conn.close()
 
-    candidates: list = []  # list of (track_id, track_dict)
+    candidates: list = []  # list of (track_id, track_dict, playlist_names)
     errors = 0
     for row in rows:
         if not row["track_json"]:
@@ -2280,7 +2311,11 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
         if not tid:
             errors += 1
             continue
-        candidates.append((tid, track))
+        try:
+            playlist_names = _json.loads(row["playlist_names_json"]) if row["playlist_names_json"] else []
+        except Exception:
+            playlist_names = []
+        candidates.append((tid, track, playlist_names))
 
     # ----- Schritt 2: bulk-Lookup auf existierende download_jobs (statt N Einzelqueries) -----
     skipped_dup = 0
@@ -2289,7 +2324,7 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
     if candidates:
         conn = _db()
         try:
-            track_ids = [tid for tid, _ in candidates]
+            track_ids = [tid for tid, _, _ in candidates]
             # SQLite-Parameterlimit (~999) → in 500er-Chunks aufteilen
             chunk = 500
             for i in range(0, len(track_ids), chunk):
@@ -2324,7 +2359,7 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
 
     insert_tuples: list = []
     queued = 0
-    for tid, track in candidates:
+    for tid, track, playlist_names in candidates:
         if tid in in_flight_ids or tid in completed_provider_pairs:
             skipped_dup += 1
             continue
@@ -2341,6 +2376,11 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
 
         track_for_queue = _slim_track_for_queue(track)
         payload = dict(payload_template, record_track_id=tid, track=track_for_queue)
+        # Phase I: import_playlist_names im Payload setzen wenn der Track
+        # auf mindestens einer Playlist im Source-CSV stand. Reconcile
+        # (siehe _reconcile_imported_playlists) liest diesen Marker.
+        if playlist_names:
+            payload["import_playlist_names"] = playlist_names
         insert_tuples.append((
             tid, "queued", "queued", 0, msg,
             None, None, None,  # file_path, download_url, error
@@ -2831,19 +2871,30 @@ def _resolve_playlist_name_template(template: Optional[str]) -> Optional[str]:
     return template.replace("{date}", date.today().isoformat()).strip()
 
 
-def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
-    """Findet alle 'completed'-Tracks der letzten N Tage, die zu einem
-    plugin-sync-Run gehören (Marker ``plugin_sync_playlist_name`` im payload),
-    und fügt sie idempotent zu ihrer Subsonic-Playlist in Navidrome hinzu.
+def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
+    """Findet alle 'completed'-Tracks der letzten N Tage die einen Playlist-
+    Marker tragen, und fügt sie idempotent zu ihrer Subsonic-Playlist in
+    Navidrome hinzu.
+
+    Phase I: zwei Marker werden akzeptiert:
+    - ``plugin_sync_playlist_name`` (Single-String) — vom Navidrome-Plugin
+      gesetzt, ein Track gehört zu genau einer Sync-Run-Playlist
+    - ``import_playlist_names`` (List[str]) — vom CSV-Import (TuneMyMusic)
+      gesetzt, ein Track kann auf mehreren Playlists landen wenn das
+      CSV multiple Memberships kommasepariert in einer Zelle hat
 
     Architektur: Wir tracken keine separate Sync-Run-Tabelle, sondern lesen
-    den Marker aus ``download_jobs.payload_json``. Idempotenz greift über
+    die Marker aus ``download_jobs.payload_json``. Idempotenz greift über
     read-before-write in ``add_tracks_to_playlist`` — der Helper kann beliebig
     oft laufen ohne Duplikate zu erzeugen.
 
     Wird automatisch am Anfang/Ende jedes ``_run_plugin_sync`` aufgerufen.
     Tracks deren Subsonic-Index-Eintrag noch nicht existiert (Scanner war
     noch nicht durch) werden beim nächsten Reconcile-Lauf nachgezogen.
+
+    Backward-Compat: alter Funktionsname `_reconcile_plugin_playlists` ist
+    unten als Alias verfügbar, damit existing Plugin-Sync-Aufrufe weiter
+    funktionieren.
     """
     import json as _json
     from collections import defaultdict
@@ -2856,7 +2907,8 @@ def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
             SELECT job_id, payload_json FROM download_jobs
             WHERE status = 'completed'
               AND created_at_ms >= ?
-              AND payload_json LIKE '%plugin_sync_playlist_name%'
+              AND (payload_json LIKE '%plugin_sync_playlist_name%'
+                   OR payload_json LIKE '%import_playlist_names%')
             """,
             (cutoff_ms,),
         ).fetchall()
@@ -2871,21 +2923,32 @@ def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
             payload = _json.loads(r["payload_json"])
         except Exception:
             continue
-        playlist_name = payload.get("plugin_sync_playlist_name")
-        if not playlist_name:
-            continue
-        # Multi-User-Modus: Tracks mit `plugin_sync_navidrome_user`-Marker
-        # werden vom Plugin via Subsonic-API im Namen dieses Users gepushed.
-        # Backend-Reconcile skippt diese Tracks, sonst würden Playlists
-        # doppelt entstehen (einmal Admin-owned, einmal user-owned).
-        if payload.get("plugin_sync_navidrome_user"):
+
+        # Sammle alle Playlist-Memberships dieses Tracks. Plugin-Marker ist
+        # Single-String, Import-Marker ist List — wir vereinheitlichen zu
+        # einer Liste damit der Track auf alle ihre Playlists landet.
+        playlist_names: List[str] = []
+        plugin_name = payload.get("plugin_sync_playlist_name")
+        if plugin_name:
+            # Multi-User-Modus: Tracks mit `plugin_sync_navidrome_user`-Marker
+            # werden vom Plugin via Subsonic-API im Namen dieses Users gepushed.
+            # Backend-Reconcile skippt diese Tracks, sonst würden Playlists
+            # doppelt entstehen (einmal Admin-owned, einmal user-owned).
+            if not payload.get("plugin_sync_navidrome_user"):
+                playlist_names.append(plugin_name)
+        import_names = payload.get("import_playlist_names") or []
+        if isinstance(import_names, list):
+            playlist_names.extend(p for p in import_names if isinstance(p, str) and p.strip())
+
+        if not playlist_names:
             continue
         track_obj = payload.get("track") or {}
         artist = (track_obj.get("artist") or "").strip()
         title = (track_obj.get("name") or "").strip()
         if not artist or not title:
             continue
-        by_playlist[playlist_name].append({"artist": artist, "title": title})
+        for pl_name in playlist_names:
+            by_playlist[pl_name].append({"artist": artist, "title": title})
 
     if not by_playlist:
         return {"playlists": 0, "tracks_added": 0}
@@ -2928,6 +2991,14 @@ def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
         )
 
     return {"playlists": len(by_playlist), "tracks_added": total_added}
+
+
+# Backward-Compat-Alias: existing Plugin-Sync-Code ruft die Funktion unter
+# dem alten Namen auf. Beide Namen zeigen auf dieselbe Implementation —
+# `_reconcile_imported_playlists` ist der semantisch breitere Name (deckt
+# Plugin- und CSV-Import-Pfade ab), `_reconcile_plugin_playlists` bleibt
+# als no-op-Alias damit Aufrufer nicht synchron migriert werden müssen.
+_reconcile_plugin_playlists = _reconcile_imported_playlists
 
 
 def _check_mix_tracks_in_library(req: PluginMixDiscoveryRequest) -> List[Dict[str, str]]:

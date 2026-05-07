@@ -105,6 +105,12 @@ def init_jobs_db() -> None:
         )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_csv_results_job ON csv_import_results(job_id, result_type)")
+        # Phase I: Playlist-aware Import. Trägt die Playlist(s) auf denen ein
+        # Track im Source-CSV stand durch alle Phasen — Phase 0 library_match,
+        # Phase 2 matched, Phase 4 download → reconcile als Subsonic-Playlist.
+        # JSON-Liste damit ein Track auf mehreren Playlists landen kann
+        # (TuneMyMusic kann multi-playlist-Exports erzeugen).
+        _ensure_column(conn, "csv_import_results", "playlist_names_json", "TEXT")
 
         # ── Phase F: Multi-User-Auth ─────────────────────────────
         # users — registrierte Konten. password_hash = argon2id, totp_secret =
@@ -523,10 +529,13 @@ def get_csv_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def insert_csv_results(job_id: str, result_type: str, items: list) -> None:
+    """Phase I: items dürfen optional `playlist_names: List[str]` enthalten —
+    werden als JSON in playlist_names_json gespeichert, damit Reconcile später
+    weiß auf welcher Subsonic-Playlist der Track landen soll."""
     conn = _db()
     try:
         conn.executemany(
-            "INSERT INTO csv_import_results (job_id, result_type, original, requested_artist, requested_title, track_json) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO csv_import_results (job_id, result_type, original, requested_artist, requested_title, track_json, playlist_names_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     job_id,
@@ -535,6 +544,7 @@ def insert_csv_results(job_id: str, result_type: str, items: list) -> None:
                     item.get("requested_artist"),
                     item.get("requested_title"),
                     json.dumps(item.get("track")) if item.get("track") else None,
+                    json.dumps(item.get("playlist_names")) if item.get("playlist_names") else None,
                 )
                 for item in items
             ],

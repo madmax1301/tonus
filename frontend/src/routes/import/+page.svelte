@@ -645,6 +645,62 @@
   </div>
 
   {#if !csvJobId}
+    <!-- ─── TuneMyMusic-Helper-Card (Phase I) ────────────────── -->
+    <!-- Erklärt User wie er Spotify/Deezer-Playlists ohne OAuth nach Tonus  -->
+    <!-- bekommt: tunemymusic.com → CSV-Export → hier hochladen.              -->
+    <div
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.4);
+        backdrop-filter: blur(28px) saturate(1.15);
+        -webkit-backdrop-filter: blur(28px) saturate(1.15);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 18px;
+        padding: clamp(16px, 3vw, 22px);
+        margin-bottom: 18px;
+      "
+    >
+      <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 10px; letter-spacing: 0.22em; color: {accent};"
+          >
+            {$t('import.tunemymusic.eyebrow')}
+          </div>
+          <div
+            class="mt-1.5 font-medium"
+            style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.01em; color: var(--color-fg-primary);"
+          >
+            {$t('import.tunemymusic.title')}
+          </div>
+        </div>
+        <a
+          href="https://www.tunemymusic.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center gap-1.5 text-[12px] font-medium tabular-nums px-3 py-1.5"
+          style="
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--color-border-soft);
+            border-radius: 999px;
+            color: var(--color-fg-primary);
+            text-decoration: none;
+          "
+        >
+          tunemymusic.com →
+        </a>
+      </div>
+      <ol class="text-[13px] space-y-1.5 ml-4" style="color: var(--color-fg-secondary); list-style: decimal;">
+        <li>{$t('import.tunemymusic.step1')}</li>
+        <li>{$t('import.tunemymusic.step2')}</li>
+        <li>{$t('import.tunemymusic.step3')}</li>
+      </ol>
+      <div class="mt-3 text-[11px]" style="color: var(--color-fg-tertiary);">
+        {$t('import.tunemymusic.limit_note')}
+      </div>
+    </div>
+
     <!-- ─── Glass Drop-Zone ─────────────────────────────────── -->
     <div
       role="region"

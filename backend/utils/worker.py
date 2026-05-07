@@ -341,11 +341,13 @@ class JobWorker(threading.Thread):
             upsert_csv_job(job_id, status="error", message=f"Provider '{provider}' not available")
             return
 
-        # Claim pending raw items (prevent re-processing on restart)
+        # Claim pending raw items (prevent re-processing on restart). Phase I:
+        # playlist_names_json wird mitgelesen, damit der Worker die playlist-
+        # Membership in matched/library_match Buckets durchreichen kann.
         conn = _db()
         try:
             pending = conn.execute(
-                "SELECT id, original, requested_artist, requested_title FROM csv_import_results WHERE job_id = ? AND result_type = 'pending_raw' ORDER BY id",
+                "SELECT id, original, requested_artist, requested_title, playlist_names_json FROM csv_import_results WHERE job_id = ? AND result_type = 'pending_raw' ORDER BY id",
                 (job_id,),
             ).fetchall()
             if pending:
@@ -382,10 +384,18 @@ class JobWorker(threading.Thread):
 
         library_hits: List[Dict[str, Any]] = []
         remaining_pending: List[Any] = []
+        import json as _wjson
         for row in pending:
             artist_orig = (row["requested_artist"] or "").strip()
             title_orig = (row["requested_title"] or "").strip()
             sig = (_normalize_sig(artist_orig), _normalize_sig(title_orig))
+            # Phase I: playlist_names aus pending_raw durchreichen damit
+            # Reconcile später auch library_match-Tracks zu Subsonic-
+            # Playlists hinzufügen kann (siehe app._reconcile_imported_playlists).
+            try:
+                playlist_names = _wjson.loads(row["playlist_names_json"]) if row["playlist_names_json"] else []
+            except Exception:
+                playlist_names = []
             if sig in library_sigs and (sig[0] or sig[1]):
                 library_hits.append({
                     "original": row["original"],
@@ -395,6 +405,7 @@ class JobWorker(threading.Thread):
                     # weil wir keinen Provider-Call gemacht haben. Frontend
                     # rendert library_match-Bucket ohne Track-Detail-Card.
                     "track": None,
+                    "playlist_names": playlist_names,
                 })
             else:
                 remaining_pending.append(row)
@@ -732,6 +743,14 @@ class JobWorker(threading.Thread):
             title = row["requested_title"] or ""
             key = (artist.strip().lower(), title.strip().lower())
             track = cache.get(key)
+            # Phase I: playlist_names aus pending_raw durchreichen — sowohl in
+            # matched (für queue_all → import_playlist_names im Job-Payload)
+            # als auch in unmatched (Frontend kann zeigen "auf welcher
+            # Playlist hätte dieser Track gestanden").
+            try:
+                playlist_names = _wjson.loads(row["playlist_names_json"]) if row["playlist_names_json"] else []
+            except Exception:
+                playlist_names = []
 
             if track:
                 batch_matched.append({
@@ -739,6 +758,7 @@ class JobWorker(threading.Thread):
                     "requested_artist": artist,
                     "requested_title": title,
                     "track": track,
+                    "playlist_names": playlist_names,
                 })
                 total_matched += 1
             else:
@@ -746,6 +766,7 @@ class JobWorker(threading.Thread):
                     "original": row["original"],
                     "requested_artist": artist,
                     "requested_title": title,
+                    "playlist_names": playlist_names,
                 })
                 total_unmatched += 1
 
