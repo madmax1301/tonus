@@ -1,7 +1,10 @@
 import os
+import re
 import shutil
+import threading
+import time
 import requests
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set, Tuple
 from pathlib import Path
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -10,6 +13,38 @@ import config
 # Konstanten für die Subsonic-API
 SUBSONIC_API_VERSION = "1.16.1"
 SUBSONIC_CLIENT = "tonus"
+
+# Phase H — Library-Match-First Cache.
+#
+# Der CSV-Import ruft `library_signatures()` einmal pro Job, um festzustellen,
+# welche Tracks bereits in Navidromes Library liegen — DANN erst gehen die
+# Reste an Deezer/Spotify zur Provider-Suche. Das spart bei wachsender Library
+# 80%+ Provider-Calls.
+#
+# Cache-Strategie: einmaliger Filesystem-Scan pro TTL-Fenster (Default 30 min).
+# Build dauert bei 50k Tracks ~30-60s, alle Folge-Aufrufe innerhalb des Fensters
+# sind instant. Der Scan blockiert den ersten CSV-Job des Fensters merklich;
+# das ist akzeptabel weil es danach für stündliche/tägliche Imports nichts
+# kostet.
+#
+# Module-level Cache statt Instance-Cache, damit alle Worker-Lanes dieselbe
+# Snapshot teilen. Lock gegen Race wenn zwei Imports gleichzeitig starten.
+_LIBRARY_SIG_TTL_S = int(os.getenv("LIBRARY_SIG_CACHE_TTL_S", "1800"))
+_LIBRARY_SIG_CACHE: Optional[Tuple[float, Set[Tuple[str, str]]]] = None
+_LIBRARY_SIG_LOCK = threading.Lock()
+
+
+def _normalize_sig(s: str) -> str:
+    """Aggressive Normalisierung für Library-Signature-Match.
+
+    Lowercase + alle Nicht-Alphanumerics raus. Damit matchen "The Beatles"
+    und "the-beatles!" auf denselben Bucket. Gleiches Schema wie der
+    existierende `_norm()` in `navidrome_library_sync.py`, hier zur
+    Wiederverwendung im Service.
+    """
+    if not s:
+        return ""
+    return re.sub(r"[^a-z0-9]+", "", s.lower())
 
 
 class NavidromeService:
@@ -188,6 +223,83 @@ class NavidromeService:
             if (a_lo in s_artist or s_artist in a_lo) and (t_lo in s_title or s_title in t_lo):
                 return True
         return False
+
+    def library_signatures(self, force_refresh: bool = False) -> Set[Tuple[str, str]]:
+        """Returns ein Set aus (artist_norm, title_norm) für alle Tracks in
+        Navidromes Music-Pfaden. Aggressiv normalisiert via `_normalize_sig`
+        (lowercase + non-alphanumerics raus), damit Schreibvarianten matchen.
+
+        Verwendet Filesystem-Scan + Tag-Read aus `navidrome_library_sync.py`,
+        nicht Subsonic-API — bei 50k Tracks wären das sonst 50k API-Calls.
+
+        Cache: module-level mit TTL `LIBRARY_SIG_CACHE_TTL_S` (default 1800s).
+        Erste Aufrufe pro Fenster sind teuer (30-60s scan), Folge-Calls
+        instant. `force_refresh=True` umgeht den Cache (z.B. nach manuellem
+        Library-Reorganize via Settings-Button).
+
+        Lock-protected gegen parallele Builds (zwei CSV-Imports gleichzeitig).
+        """
+        global _LIBRARY_SIG_CACHE
+        now = time.time()
+        if not force_refresh and _LIBRARY_SIG_CACHE is not None:
+            ts, sigs = _LIBRARY_SIG_CACHE
+            if now - ts < _LIBRARY_SIG_TTL_S:
+                return sigs
+
+        with _LIBRARY_SIG_LOCK:
+            # Re-check nach Lock — zwei Threads könnten denselben miss sehen
+            if not force_refresh and _LIBRARY_SIG_CACHE is not None:
+                ts, sigs = _LIBRARY_SIG_CACHE
+                if now - ts < _LIBRARY_SIG_TTL_S:
+                    return sigs
+
+            # Lazy-import — der Sync-Module hat schwere Dependencies (mutagen)
+            # die wir nicht beim Import von navidrome.py laden wollen.
+            from utils.navidrome_library_sync import iter_audio_files, read_artist_title
+
+            sigs: Set[Tuple[str, str]] = set()
+            scan_start = time.time()
+            file_count = 0
+            for music_root in config.NAVIDROME_MUSIC_PATHS_LIST:
+                root = Path(music_root)
+                if not root.is_dir():
+                    print(f"[library_signatures] skip non-dir: {root}")
+                    continue
+                for path in iter_audio_files(root):
+                    file_count += 1
+                    pair = read_artist_title(path)
+                    if not pair:
+                        continue
+                    artist, title = pair
+                    sig = (_normalize_sig(artist), _normalize_sig(title))
+                    if sig[0] or sig[1]:
+                        sigs.add(sig)
+            elapsed = time.time() - scan_start
+            print(
+                f"[library_signatures] scanned {file_count} files, "
+                f"{len(sigs)} unique signatures, {elapsed:.1f}s"
+            )
+            _LIBRARY_SIG_CACHE = (now, sigs)
+            return sigs
+
+    def library_match(
+        self, artist: str, title: str, signatures: Optional[Set[Tuple[str, str]]] = None
+    ) -> bool:
+        """Bulk-fähiger Counterpart zu `library_has_track()`.
+
+        Statt einem Subsonic-Call pro Track (was bei 30k-Imports nicht
+        skaliert) prüft diese Methode gegen ein vorab geladenes Set aus
+        `library_signatures()`. Caller, die viele Tracks prüfen, sollten
+        das Set einmal holen und durchreichen — sonst wird's per call
+        gebaut (oder aus Cache gezogen, was OK ist aber ein Lock-Acquire
+        kostet).
+        """
+        if not artist or not title:
+            return False
+        if signatures is None:
+            signatures = self.library_signatures()
+        sig = (_normalize_sig(artist), _normalize_sig(title))
+        return sig in signatures
 
     def find_track_id_by_artist_title(self, artist: str, title: str) -> Optional[str]:
         """Wie library_has_track, gibt aber die Subsonic-Track-ID zurück (für Playlist-Manipulation)."""

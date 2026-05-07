@@ -545,6 +545,13 @@ def insert_csv_results(job_id: str, result_type: str, items: list) -> None:
 
 
 def get_csv_results(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str, Any]:
+    """Drei Buckets seit Phase H:
+    - matched          → Provider-Lookup hat einen Treffer geliefert (downloadbar)
+    - library_match    → bereits in Navidrome-Library, kein Download nötig (Phase H)
+    - unmatched        → weder Library noch Provider liefert was
+    Backward-Compat: matched/unmatched sind die alten Felder; library_match ist
+    additiv (alte Frontends ignorieren das Feld einfach).
+    """
     conn = _db()
     try:
         matched = conn.execute(
@@ -553,6 +560,10 @@ def get_csv_results(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str,
         ).fetchall()
         unmatched = conn.execute(
             "SELECT * FROM csv_import_results WHERE job_id = ? AND result_type = 'unmatched' ORDER BY id LIMIT ? OFFSET ?",
+            (job_id, limit, offset),
+        ).fetchall()
+        library_match = conn.execute(
+            "SELECT * FROM csv_import_results WHERE job_id = ? AND result_type = 'library_match' ORDER BY id LIMIT ? OFFSET ?",
             (job_id, limit, offset),
         ).fetchall()
 
@@ -573,12 +584,15 @@ def get_csv_results(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str,
         return {
             "matched": [_row_to_item(r) for r in matched],
             "unmatched": [_row_to_item(r) for r in unmatched],
+            "library_match": [_row_to_item(r) for r in library_match],
         }
     finally:
         conn.close()
 
 
 def count_csv_results(job_id: str) -> Dict[str, int]:
+    """Returns Counts für drei Buckets seit Phase H. matched/unmatched
+    bleiben backward-kompatibel; library_match ist neu."""
     conn = _db()
     try:
         matched = conn.execute(
@@ -589,6 +603,10 @@ def count_csv_results(job_id: str) -> Dict[str, int]:
             "SELECT COUNT(*) AS n FROM csv_import_results WHERE job_id = ? AND result_type = 'unmatched'",
             (job_id,),
         ).fetchone()["n"]
-        return {"matched": matched, "unmatched": unmatched}
+        library_match = conn.execute(
+            "SELECT COUNT(*) AS n FROM csv_import_results WHERE job_id = ? AND result_type = 'library_match'",
+            (job_id,),
+        ).fetchone()["n"]
+        return {"matched": matched, "unmatched": unmatched, "library_match": library_match}
     finally:
         conn.close()

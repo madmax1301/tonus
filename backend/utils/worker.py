@@ -310,7 +310,12 @@ class JobWorker(threading.Thread):
     def _process_csv_import(self, csv_job: Dict[str, Any]) -> None:
         """Match pending_raw items against Deezer, write results to SQLite.
 
-        Performance-Architektur:
+        Performance-Architektur (seit Phase H):
+        0. **Library-Match-First** (Phase H): einmaliger Filesystem-Scan via
+           NavidromeService.library_signatures(), pre-filter pending → Tracks
+           die bereits in Navidrome liegen werden direkt als 'library_match'
+           gespeichert (kein Provider-Call). Spart bei wachsenden Libraries
+           80%+ Deezer/Spotify-Quota.
         1. Dedup nach (artist_lc, title_lc) — bei History-Exports oft 30–50%
            Doppelte. Nur eindeutige Keys werden tatsächlich an Deezer gefragt.
         2. Parallele Suche per ThreadPoolExecutor (8 Worker). Deezer hat ein
@@ -326,6 +331,7 @@ class JobWorker(threading.Thread):
 
         from services.deezer import DeezerService
         from services.spotify import SpotifyService
+        from services.navidrome import NavidromeService, _normalize_sig
 
         if provider == "deezer":
             svc = DeezerService()
@@ -353,6 +359,62 @@ class JobWorker(threading.Thread):
 
         if not pending:
             upsert_csv_job(job_id, status="error", message="No pending items found")
+            return
+
+        # ---- Phase 0: Library-Match-First (Phase H) ----------------------
+        # Scan Navidrome's Music-Pfade einmalig → set von normalisierten
+        # (artist, title)-Signatures. Pre-filter aller pending Rows: was
+        # schon in der Library liegt, wird sofort als 'library_match'
+        # eingetragen (skip Provider-Call und Download). Das spart bei
+        # rolling-imports den Großteil der Deezer/Spotify-Quota.
+        upsert_csv_job(
+            job_id,
+            status="processing",
+            total=total,
+            message=f"Phase 0: scanning library ({total} tracks to check)...",
+        )
+        try:
+            nav = NavidromeService()
+            library_sigs = nav.library_signatures()
+        except Exception as e:
+            print(f"[csv-import] library scan failed: {type(e).__name__}: {e} — skip Phase 0")
+            library_sigs = set()
+
+        library_hits: List[Dict[str, Any]] = []
+        remaining_pending: List[Any] = []
+        for row in pending:
+            artist_orig = (row["requested_artist"] or "").strip()
+            title_orig = (row["requested_title"] or "").strip()
+            sig = (_normalize_sig(artist_orig), _normalize_sig(title_orig))
+            if sig in library_sigs and (sig[0] or sig[1]):
+                library_hits.append({
+                    "original": row["original"],
+                    "requested_artist": artist_orig,
+                    "requested_title": title_orig,
+                    # track-json bleibt None — kein Provider-Track-Objekt,
+                    # weil wir keinen Provider-Call gemacht haben. Frontend
+                    # rendert library_match-Bucket ohne Track-Detail-Card.
+                    "track": None,
+                })
+            else:
+                remaining_pending.append(row)
+
+        if library_hits:
+            insert_csv_results(job_id, "library_match", library_hits)
+            print(f"[csv-import] Phase 0: {len(library_hits)} tracks already in library, skipping provider lookup")
+
+        pending = remaining_pending
+        if not pending:
+            # Alle Tracks sind schon in der Library → fertig ohne Provider-Phase
+            upsert_csv_job(
+                job_id,
+                status="completed",
+                total=total,
+                processed=total,
+                found=0,
+                not_found=0,
+                message=f"All {total} tracks already in library (Phase 0 hit-rate 100%)",
+            )
             return
 
         # ---- Phase 1: Dedup ------------------------------------------------
@@ -383,7 +445,11 @@ class JobWorker(threading.Thread):
             processed=0,
             found=0,
             not_found=0,
-            message=f"Matching {unique_total} unique tracks (from {total} rows, {total - unique_total} dupes)...",
+            message=(
+                f"Phase 2: matching {unique_total} unique tracks "
+                f"(from {len(pending)} pending after library-hit, "
+                f"{len(library_hits)} already in library)..."
+            ),
         )
 
         # ---- Phase 2: Parallele Suche -------------------------------------

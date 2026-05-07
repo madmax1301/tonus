@@ -891,6 +891,14 @@
             >{Math.round($tweenFound).toLocaleString('de-DE')}</span
           >
         </div>
+        {#if (csvStatus.library_match_count ?? 0) > 0}
+          <div>
+            <span style="color: var(--color-fg-tertiary);">{$t('import.live.library_match')}</span>
+            <span class="ml-1.5 font-medium" style="color: var(--color-fg-secondary);"
+              >{(csvStatus.library_match_count ?? 0).toLocaleString('de-DE')}</span
+            >
+          </div>
+        {/if}
         <div>
           <span style="color: var(--color-fg-tertiary);">{$t('import.live.not_found')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-error);"
@@ -953,9 +961,16 @@
               <span style="color: var(--color-status-error); font-weight: 500;"
                 >{csvResult.not_found.toLocaleString('de-DE')}</span
               >
-              <span style="color: var(--color-fg-tertiary);"> nicht gefunden</span>
+              <span style="color: var(--color-fg-tertiary);"> {$t('import.result.not_found_suffix')}</span>
             {:else}
-              Alles gefunden — saubere Liste
+              {$t('import.result.all_found')}
+            {/if}
+            {#if (csvResult.library_match_count ?? 0) > 0}
+              <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+              <span style="color: var(--color-fg-secondary); font-weight: 500;"
+                >{(csvResult.library_match_count ?? 0).toLocaleString('de-DE')}</span
+              >
+              <span style="color: var(--color-fg-tertiary);"> {$t('import.result.library_match_suffix')}</span>
             {/if}
           </div>
         </div>

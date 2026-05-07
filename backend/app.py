@@ -2156,16 +2156,20 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
 
 @app.get("/api/import/csv/status/{job_id}")
 async def csv_import_status(job_id: str):
-    """Poll CSV import progress (aus SQLite)."""
+    """Poll CSV import progress (aus SQLite). Seit Phase H zusätzlich
+    library_match_count, damit das Frontend während Phase 2 schon den
+    "✓ in Library"-Bucket-Counter live anzeigen kann."""
     job = get_csv_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="CSV import job not found")
+    counts = count_csv_results(job_id)
     return {
         "status": job["status"],
         "total": job["total"],
         "processed": job["processed"],
         "found": job["found"],
         "not_found": job["not_found"],
+        "library_match_count": counts.get("library_match", 0),
         "message": job.get("message", ""),
         "filename": job.get("filename"),
     }
@@ -2190,8 +2194,10 @@ async def csv_import_result(
         "total": job["total"],
         "found": counts["matched"],
         "not_found": counts["unmatched"],
+        "library_match_count": counts.get("library_match", 0),
         "matched": results["matched"],
         "unmatched": results["unmatched"],
+        "library_match": results.get("library_match", []),
     }
 
 

@@ -545,6 +545,9 @@ export interface CsvImportStatus {
   processed: number;
   found: number;
   not_found: number;
+  /** Phase H: wieviele Tracks wurden bereits in Navidromes Library gefunden
+   *  und dadurch komplett vom Provider-Lookup ausgeschlossen. */
+  library_match_count?: number;
   message?: string;
   /** Original-Filename (CSV-Upload), oder null bei Text-Paste. */
   filename?: string | null;
@@ -574,8 +577,15 @@ export interface CsvImportResult {
   total: number;
   found: number;
   not_found: number;
+  /** Phase H: wieviele Tracks wurden direkt als Library-Match identifiziert
+   *  und dadurch ohne Provider-Lookup als 'bereits vorhanden' markiert. */
+  library_match_count?: number;
   matched: CsvMatched[];
   unmatched: CsvUnmatched[];
+  /** Phase H: Liste der Tracks die schon in Navidrome lagen — kein Track-
+   *  Detail aus Provider verfügbar (track-Field ist daher absent), nur
+   *  das Original-Triple. Wird im Frontend in eigenem Bucket angezeigt. */
+  library_match?: CsvUnmatched[];
 }
 
 export const importApi = {
