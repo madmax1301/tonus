@@ -178,24 +178,51 @@ class JobWorker(threading.Thread):
     # ------------------------------------------------------------------
 
     def run(self) -> None:
+        # Boot-Log damit Operator im Container-Log Worker-Lebenszeichen sieht.
+        # Hilft bei Diagnose ob beide Threads (download+csv) wirklich laufen.
+        print(f"[worker:{self._job_type}] loop started, polling for jobs", flush=True)
+        consecutive_errors = 0
         while not self._stop.is_set():
-            if self._job_type == "download":
-                lane, wait_ms = self._pick_download_lane()
-                if lane is None:
-                    # Alle Lanes im Cooldown — stoppable-sleep auf die kürzeste
-                    # Restwartezeit, dann erneut prüfen.
-                    self._stop.wait(timeout=max(0.5, wait_ms / 1000.0))
-                    continue
-                job = self._poll_next_queued_download(lane=lane)
-                if job:
-                    self._process_download(job, lane=lane)
-                    continue
-            else:
-                csv_job = self._poll_next_queued_csv()
-                if csv_job:
-                    self._process_csv_import(csv_job)
-                    continue
-            self._stop.wait(timeout=2.0)
+            try:
+                if self._job_type == "download":
+                    lane, wait_ms = self._pick_download_lane()
+                    if lane is None:
+                        # Alle Lanes im Cooldown — stoppable-sleep auf die kürzeste
+                        # Restwartezeit, dann erneut prüfen.
+                        self._stop.wait(timeout=max(0.5, wait_ms / 1000.0))
+                        continue
+                    job = self._poll_next_queued_download(lane=lane)
+                    if job:
+                        self._process_download(job, lane=lane)
+                        consecutive_errors = 0
+                        continue
+                else:
+                    csv_job = self._poll_next_queued_csv()
+                    if csv_job:
+                        self._process_csv_import(csv_job)
+                        consecutive_errors = 0
+                        continue
+                self._stop.wait(timeout=2.0)
+            except Exception as e:
+                # Top-Level-Guard: ohne diesen catch killt jede ungefangene
+                # Exception (SQLite-OperationalError, ImportError, kaputter
+                # Tag-Read in einer File, etc.) den ganzen Worker-Thread
+                # SILENT — User sieht "Queued — waiting for worker" für
+                # immer und weiß nicht warum. Stattdessen: Exception loggen
+                # mit Traceback, kurzen Backoff machen, weiter pollen.
+                # Bei Backoff-Bursts (>10 Errors hintereinander) längere
+                # Pause damit DB nicht in Endlosschleife crasht.
+                import traceback
+                consecutive_errors += 1
+                backoff = min(30.0, 1.0 * (2 ** min(consecutive_errors, 5)))
+                print(
+                    f"[worker:{self._job_type}] EXCEPTION (consecutive={consecutive_errors}, "
+                    f"backoff={backoff:.1f}s): {type(e).__name__}: {e}",
+                    flush=True,
+                )
+                traceback.print_exc()
+                self._stop.wait(timeout=backoff)
+        print(f"[worker:{self._job_type}] loop exited (stop signal received)", flush=True)
 
     def shutdown(self, timeout: Optional[float] = None) -> None:
         self._stop.set()

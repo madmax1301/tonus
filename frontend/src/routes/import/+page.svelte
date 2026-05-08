@@ -1119,13 +1119,9 @@
             cursor: {csvBusy || !csvText.trim() ? 'not-allowed' : 'pointer'};
           "
         >
-          {#if csvBusy}
-            <Loader2 size={13} class="animate-spin" />
-            {$t('common.loading')}
-          {:else}
-            <FileText size={13} strokeWidth={2} />
-            {$t('import.dropzone.submit')}
-          {/if}
+          {csvBusy
+            ? $t('import.spotify_history.submitting')
+            : $t('import.spotify_history.submit')}
         </button>
         <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
           {$t('import.dropzone.format_hint')} <code style="font-family: var(--font-mono); color: var(--color-fg-secondary);">Künstler;Titel</code>
