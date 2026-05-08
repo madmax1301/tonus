@@ -173,13 +173,38 @@
         spotifyBusy = false;
         return;
       }
-      // Job ist queued — gleiche Pipeline wie CSV. State umstellen und
-      // existing Polling übernehmen lassen.
-      csvJobId = r.job_id ?? null;
+      // Job ist queued — gleiche Pipeline wie CSV. State umstellen
+      // analog zum CSV-startCsv-Pfad: csvJobId UND csvStatus initial
+      // setzen damit die Live-Card sofort gerendert wird (statt eine
+      // Sekunde leer bis zum ersten Poll-Tick), localStorage-Resume
+      // setzen, pollCsv() explizit triggern.
+      const newJobId = r.job_id ?? null;
+      csvJobId = newJobId;
       csvFilename = r.filename ?? null;
+      csvResult = null;
+      csvError = null;
+      csvStatus = {
+        status: 'queued',
+        total: r.total ?? 0,
+        processed: 0,
+        found: 0,
+        not_found: 0,
+        message: r.message ?? `Queued — Spotify history (${r.total ?? 0} tracks)`,
+        filename: r.filename ?? null,
+      };
+      if (browser && newJobId) {
+        try {
+          localStorage.setItem(ACTIVE_CSV_KEY, newJobId);
+        } catch {
+          /* private mode / quota — silent */
+        }
+      }
       spotifyFiles = [];
       spotifyBusy = false;
-      // Polling startet via existing $effect das auf csvJobId reagiert
+      // pollCsv kickt den ersten Status-Refresh sofort an statt
+      // erst beim 1s-Tick — die Live-Card zeigt damit die Phase-0-
+      // Library-Scan-Progress ohne Verzögerung
+      pollCsv();
     } catch (e) {
       spotifyError = e instanceof Error ? e.message : String(e);
       spotifyBusy = false;
