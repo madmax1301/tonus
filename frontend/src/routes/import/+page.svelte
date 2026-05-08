@@ -71,7 +71,7 @@
   // Import (csvJobId wird gesetzt, gleicher Status-Display).
   let spotifyFiles = $state<File[]>([]);
   let spotifyMinPlays = $state(1);
-  let spotifyMinSeconds = $state(30);
+  let spotifyMinSeconds = $state(0); // 0 = alle Tracks (auch skipped) — User-Policy 2026-05-08
   let spotifyAutoPlaylistYear = $state(true);
   let spotifyAutoPlaylistMonth = $state(true);
   let spotifyPlaylistPrefix = $state('Spotify History');
@@ -147,7 +147,29 @@
         filename: `Spotify History · ${spotifyFiles.length} Files`,
       });
       if (r.status === 'empty') {
-        spotifyError = `${$t('import.spotify_history.error.empty')} (${r.stats.total_events} events, ${r.stats.filtered_short} zu kurz, ${r.stats.filtered_non_music} non-music)`;
+        // Aktionable Hint statt nur Stats — sage dem User was er ändern
+        // kann. Bei filtered_short ist Min-Sek-Senkung der Fix; bei
+        // play_count-Filter Min-Plays-Senkung.
+        const stats = r.stats;
+        const hints: string[] = [];
+        if (stats.filtered_short > 0) {
+          hints.push(
+            `${stats.filtered_short.toLocaleString('de-DE')} ${$t('import.spotify_history.empty.short_filter')}`
+          );
+        }
+        if (stats.skipped_play_count_below_threshold > 0) {
+          hints.push(
+            `${stats.skipped_play_count_below_threshold.toLocaleString('de-DE')} ${$t('import.spotify_history.empty.play_count_filter')}`
+          );
+        }
+        if (stats.filtered_non_music > 0) {
+          hints.push(
+            `${stats.filtered_non_music.toLocaleString('de-DE')} ${$t('import.spotify_history.empty.non_music')}`
+          );
+        }
+        spotifyError =
+          `${$t('import.spotify_history.error.empty')} ${stats.total_events.toLocaleString('de-DE')} ${$t('import.spotify_history.empty.events_total')}` +
+          (hints.length ? ` — ${hints.join(', ')}` : '');
         spotifyBusy = false;
         return;
       }

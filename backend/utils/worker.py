@@ -369,18 +369,41 @@ class JobWorker(threading.Thread):
         # schon in der Library liegt, wird sofort als 'library_match'
         # eingetragen (skip Provider-Call und Download). Das spart bei
         # rolling-imports den Großteil der Deezer/Spotify-Quota.
+        #
+        # Library-Scan kann beim ersten Aufruf 30-60s blockieren bei großen
+        # Libraries — ohne Live-Progress denkt User der Worker hängt. Daher
+        # progress-callback an library_signatures() der jede ~500 Files den
+        # CSV-Job-Status updatet.
         upsert_csv_job(
             job_id,
             status="processing",
             total=total,
-            message=f"Phase 0: scanning library ({total} tracks to check)...",
+            message=f"Phase 0: scanning Navidrome library (cache miss — first run after restart can take 30-60s)...",
         )
+
+        def _scan_progress(file_count: int, sigs_count: int) -> None:
+            try:
+                upsert_csv_job(
+                    job_id,
+                    status="processing",
+                    total=total,
+                    message=f"Phase 0: scanning library — {file_count:,} files / {sigs_count:,} signatures...",
+                )
+            except Exception:
+                pass
+
         try:
             nav = NavidromeService()
-            library_sigs = nav.library_signatures()
+            library_sigs = nav.library_signatures(on_progress=_scan_progress)
         except Exception as e:
             print(f"[csv-import] library scan failed: {type(e).__name__}: {e} — skip Phase 0")
             library_sigs = set()
+            upsert_csv_job(
+                job_id,
+                status="processing",
+                total=total,
+                message=f"Phase 0: library scan failed ({type(e).__name__}) — falling back to provider-only match",
+            )
 
         library_hits: List[Dict[str, Any]] = []
         remaining_pending: List[Any] = []
@@ -413,6 +436,19 @@ class JobWorker(threading.Thread):
         if library_hits:
             insert_csv_results(job_id, "library_match", library_hits)
             print(f"[csv-import] Phase 0: {len(library_hits)} tracks already in library, skipping provider lookup")
+
+        # Klare Phase-Trennung im Status — sonst sieht User die ganze
+        # Phase 1 (Dedup) noch unter "Phase 0: scanning library..." weil
+        # Phase 1 keine eigene Status-Message hat.
+        upsert_csv_job(
+            job_id,
+            status="processing",
+            total=total,
+            message=(
+                f"Phase 1: deduplicating {len(remaining_pending)} unique tracks "
+                f"({len(library_hits)} already in library)..."
+            ),
+        )
 
         pending = remaining_pending
         if not pending:

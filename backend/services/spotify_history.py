@@ -43,7 +43,12 @@ from typing import Any, Dict, List, Optional, Tuple
 def parse_streaming_history(
     files_records: List[List[Dict[str, Any]]],
     *,
-    min_ms_played: int = 30_000,
+    # Default 0: alle Music-Tracks rein (auch skipped). User-Policy ist
+    # "wenn ich's einmal angeklickt hab, will ich's importieren". Höher
+    # setzen filtert Skip-Through-Klicks raus, aber das ist optional.
+    # Non-Music (Podcasts/Audiobooks) wird über master_metadata_track_name
+    # weiterhin rausgefiltert — das ist orthogonal zum ms_played-Filter.
+    min_ms_played: int = 0,
     min_play_count: int = 1,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,

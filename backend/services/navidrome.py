@@ -224,7 +224,11 @@ class NavidromeService:
                 return True
         return False
 
-    def library_signatures(self, force_refresh: bool = False) -> Set[Tuple[str, str]]:
+    def library_signatures(
+        self,
+        force_refresh: bool = False,
+        on_progress: Optional[Any] = None,
+    ) -> Set[Tuple[str, str]]:
         """Returns ein Set aus (artist_norm, title_norm) für alle Tracks in
         Navidromes Music-Pfaden. Aggressiv normalisiert via `_normalize_sig`
         (lowercase + non-alphanumerics raus), damit Schreibvarianten matchen.
@@ -238,6 +242,11 @@ class NavidromeService:
         Library-Reorganize via Settings-Button).
 
         Lock-protected gegen parallele Builds (zwei CSV-Imports gleichzeitig).
+
+        on_progress: optionaler Callable(file_count, sigs_count) der alle ~500
+        Files aufgerufen wird damit Caller live-Status-Updates schreiben kann
+        (Worker → upsert_csv_job message). Cache-Hits triggern den Callback
+        nicht — der wäre da auch sinnlos (instant return).
         """
         global _LIBRARY_SIG_CACHE
         now = time.time()
@@ -260,6 +269,10 @@ class NavidromeService:
             sigs: Set[Tuple[str, str]] = set()
             scan_start = time.time()
             file_count = 0
+            # Progress-Tick alle 500 Files — bei 50k Tracks = 100 Updates,
+            # bei 1k Tracks = 2 Updates. Genug für gefühlten Live-Progress
+            # ohne DB-Spam.
+            PROGRESS_EVERY = 500
             for music_root in config.NAVIDROME_MUSIC_PATHS_LIST:
                 root = Path(music_root)
                 if not root.is_dir():
@@ -268,17 +281,26 @@ class NavidromeService:
                 for path in iter_audio_files(root):
                     file_count += 1
                     pair = read_artist_title(path)
-                    if not pair:
-                        continue
-                    artist, title = pair
-                    sig = (_normalize_sig(artist), _normalize_sig(title))
-                    if sig[0] or sig[1]:
-                        sigs.add(sig)
+                    if pair:
+                        artist, title = pair
+                        sig = (_normalize_sig(artist), _normalize_sig(title))
+                        if sig[0] or sig[1]:
+                            sigs.add(sig)
+                    if on_progress and (file_count % PROGRESS_EVERY == 0):
+                        try:
+                            on_progress(file_count, len(sigs))
+                        except Exception:
+                            pass
             elapsed = time.time() - scan_start
             print(
                 f"[library_signatures] scanned {file_count} files, "
                 f"{len(sigs)} unique signatures, {elapsed:.1f}s"
             )
+            if on_progress:
+                try:
+                    on_progress(file_count, len(sigs))
+                except Exception:
+                    pass
             _LIBRARY_SIG_CACHE = (now, sigs)
             return sigs
 

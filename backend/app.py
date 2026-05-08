@@ -2197,7 +2197,7 @@ class SpotifyHistoryImportRequest(BaseModel):
     files: List[List[Dict[str, Any]]]
     provider: Optional[str] = None
     limit: Optional[int] = 3
-    min_ms_played: Optional[int] = 30000
+    min_ms_played: Optional[int] = 0
     min_play_count: Optional[int] = 1
     date_from: Optional[str] = None  # YYYY-MM-DD
     date_to: Optional[str] = None
@@ -2231,10 +2231,12 @@ async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Dep
 
     # Aggregation. parse_streaming_history is pure — kein DB-Touch, kein
     # Side-Effect — also sicher synchron im Request.
+    # None-explizit-Check statt `or` — sonst macht User-eingabe 0 (alle Tracks
+    # rein) silent zum Default 30000. Same für min_play_count.
     result = parse_streaming_history(
         req.files,
-        min_ms_played=int(req.min_ms_played or 30000),
-        min_play_count=int(req.min_play_count or 1),
+        min_ms_played=int(req.min_ms_played if req.min_ms_played is not None else 0),
+        min_play_count=int(req.min_play_count if req.min_play_count is not None else 1),
         date_from=req.date_from,
         date_to=req.date_to,
         auto_playlist_year=bool(req.auto_playlist_year if req.auto_playlist_year is not None else True),
