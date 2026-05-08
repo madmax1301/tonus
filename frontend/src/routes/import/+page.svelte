@@ -665,6 +665,7 @@
     const f = e.dataTransfer?.files?.[0];
     if (!f) return;
     csvText = await f.text();
+    csvFilename = f.name;
   }
 
   // Bar-Progress aus dem tweened processed-Counter — damit die Bar
@@ -1014,19 +1015,18 @@
       </div>
     </div>
 
-    <!-- ─── Glass Drop-Zone ─────────────────────────────────── -->
+    <!-- ─── CSV / TuneMyMusic Import — kompakt, file-only (analog zur Spotify-History-Card) ─── -->
     <div
       role="region"
       aria-label="CSV-Eingabe"
       class="relative overflow-hidden tonus-fadein"
       style="
-        background: rgba(20, 20, 24, 0.5);
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        background: rgba(20, 20, 24, 0.4);
+        backdrop-filter: blur(28px) saturate(1.15);
+        -webkit-backdrop-filter: blur(28px) saturate(1.15);
         border: 1px solid {dragOver ? accent : 'var(--color-border-soft)'};
-        border-radius: 22px;
-        padding: clamp(16px, 4vw, 28px);
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        border-radius: 18px;
+        padding: clamp(16px, 3vw, 22px);
         transition: border-color 0.18s ease;
       "
       ondragenter={onDragEnter}
@@ -1034,129 +1034,77 @@
       ondragleave={onDragLeave}
       ondrop={onDrop}
     >
-      <!-- Drag overlay -->
-      {#if dragOver}
-        <div
-          class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
-          style="
-            background: rgba(20, 20, 24, 0.85);
-            border: 2px dashed {accent};
-            border-radius: 22px;
-            backdrop-filter: blur(8px);
-          "
-        >
-          <div class="text-center">
-            <Upload size={48} strokeWidth={1.2} style="color: {accent}; margin-inline: auto;" />
-            <div
-              class="font-semibold uppercase mt-3"
-              style="font-size: 11px; letter-spacing: 0.24em; color: {accent};"
-            >
-              {$t('import.dropzone.drop_overlay')}
-            </div>
-          </div>
-        </div>
-      {/if}
-
-      <!-- Header row: title + actions -->
-      <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+      <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
         <div>
           <div
             class="font-semibold uppercase"
-            style="
-              font-size: 11px;
-              letter-spacing: 0.2em;
-              color: var(--color-fg-tertiary);
-            "
+            style="font-size: 10px; letter-spacing: 0.22em; color: {accent};"
           >
             {$t('import.dropzone.eyebrow')}
           </div>
           <div
-            class="mt-1"
-            style="
-              font-family: var(--font-display);
-              font-size: 22px;
-              font-weight: 500;
-              letter-spacing: -0.015em;
-              color: var(--color-fg-primary);
-            "
+            class="mt-1.5 font-medium"
+            style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.01em; color: var(--color-fg-primary);"
           >
             {$t('import.dropzone.title')}
           </div>
         </div>
-        <div class="flex items-center gap-2">
-          <label
-            class="inline-flex items-center gap-1.5 cursor-pointer transition-colors"
-            style="
-              background: rgba(255, 255, 255, 0.04);
-              border: 1px solid var(--color-border-soft);
-              color: var(--color-fg-secondary);
-              padding: 6px 14px;
-              border-radius: 999px;
-              font-size: 11.5px;
-            "
+      </div>
+      <p class="text-[13px] mb-3" style="color: var(--color-fg-secondary); max-width: 600px;">
+        {$t('import.dropzone.body')}
+      </p>
+
+      <!-- File-Drop-Zone (kein Textarea — file-only Import) -->
+      <label
+        class="flex items-center justify-center gap-2 cursor-pointer text-[13px]"
+        style="
+          background: rgba(0,0,0,0.25);
+          border: 1.5px dashed {dragOver ? accent : 'var(--color-border-soft)'};
+          border-radius: 14px;
+          padding: 18px;
+          color: var(--color-fg-secondary);
+          transition: border-color 0.18s ease;
+        "
+      >
+        <Upload size={16} strokeWidth={1.4} />
+        <span>{$t('import.dropzone.drop_hint')}</span>
+        <input
+          type="file"
+          accept=".csv,.tsv,.txt,text/*"
+          onchange={onCsvFile}
+          style="display: none;"
+        />
+      </label>
+
+      <!-- File-Pill wenn ein File geladen ist -->
+      {#if csvText && csvFilename}
+        <div class="mt-3 flex flex-wrap gap-1.5">
+          <span
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] tabular-nums"
+            style="background: rgba(255,255,255,0.06); border: 1px solid var(--color-border-soft); border-radius: 999px; color: var(--color-fg-secondary);"
           >
-            <Upload size={12} strokeWidth={1.5} />
-            {$t('import.dropzone.choose_file')}
-            <input
-              type="file"
-              accept=".csv,.tsv,.txt,text/*"
-              onchange={onCsvFile}
-              class="hidden"
-            />
-          </label>
-          {#if csvText}
+            {csvFilename}
+            <span style="color: var(--color-fg-tertiary);">{lineCount.toLocaleString('de-DE')} Zeilen</span>
             <button
               type="button"
-              onclick={() => (csvText = '')}
-              class="inline-flex items-center gap-1.5 transition-colors"
-              style="
-                background: rgba(255, 255, 255, 0.02);
-                border: 1px solid var(--color-border-soft);
-                color: var(--color-fg-tertiary);
-                padding: 6px 12px;
-                border-radius: 999px;
-                font-size: 11px;
-              "
-              aria-label="Zurücksetzen"
-            >
-              <X size={11} strokeWidth={1.5} />
-              {$t('import.dropzone.clear')}
-            </button>
-          {/if}
+              onclick={() => { csvText = ''; csvFilename = null; }}
+              aria-label="Remove"
+              style="background: transparent; color: var(--color-fg-tertiary); padding: 0 0 0 4px; border: 0; cursor: pointer;"
+            >×</button>
+          </span>
         </div>
-      </div>
+      {/if}
 
-      <textarea
-        bind:value={csvText}
-        rows="10"
-        spellcheck="false"
-        placeholder={'Künstler;Titel\nDaft Punk;Get Lucky\nQueen;Bohemian Rhapsody\n\noder eine Zeile pro Track als Freitext'}
-        class="w-full px-4 py-3 outline-none resize-y"
-        style="
-          background: rgba(0, 0, 0, 0.25);
-          border: 1px solid var(--color-border-soft);
-          border-radius: 14px;
-          color: var(--color-fg-primary);
-          font-family: var(--font-mono);
-          font-size: 12.5px;
-          line-height: 1.55;
-        "
-      ></textarea>
+      {#if csvError}
+        <p class="mt-3 text-[12px]" style="color: #f87171;">{csvError}</p>
+      {/if}
 
-      <!-- Footer row: action -->
-      <div class="flex items-center justify-between flex-wrap gap-3 mt-4">
-        <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
-          {#if lineCount > 0}
-            <span style="color: {accent}; font-weight: 500;">{lineCount.toLocaleString('de-DE')}</span>
-            <span> Zeile{lineCount === 1 ? '' : 'n'} bereit</span>
-          {:else}
-            {$t('import.dropzone.format_hint')} <code style="font-family: var(--font-mono); color: var(--color-fg-secondary);">Künstler;Titel</code>
-          {/if}
-        </div>
+      <div class="mt-4 flex items-center gap-3 flex-wrap">
         <button
+          type="button"
           onclick={startCsv}
           disabled={csvBusy || !csvText.trim()}
-          class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+          class="inline-flex items-center gap-1.5 transition-opacity"
           style="
             background: {accent};
             color: #1a1410;
@@ -1167,6 +1115,8 @@
             letter-spacing: 0.04em;
             text-transform: uppercase;
             box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+            opacity: {csvBusy || !csvText.trim() ? 0.5 : 1};
+            cursor: {csvBusy || !csvText.trim() ? 'not-allowed' : 'pointer'};
           "
         >
           {#if csvBusy}
@@ -1174,18 +1124,13 @@
             {$t('common.loading')}
           {:else}
             <FileText size={13} strokeWidth={2} />
-            Import starten
+            {$t('import.dropzone.submit')}
           {/if}
         </button>
+        <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
+          {$t('import.dropzone.format_hint')} <code style="font-family: var(--font-mono); color: var(--color-fg-secondary);">Künstler;Titel</code>
+        </span>
       </div>
-      {#if csvError}
-        <div
-          class="mt-3 text-[12px]"
-          style="color: var(--color-status-error);"
-        >
-          {csvError}
-        </div>
-      {/if}
     </div>
   {:else if csvStatus && csvStatus.status !== 'completed'}
     <!-- ─── Live-Card during import ─────────────────────────── -->
