@@ -97,6 +97,11 @@ def init_jobs_db() -> None:
         # readable counter im UI verfügbar.
         _ensure_column(conn, "csv_import_jobs", "recovery_total", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "csv_import_jobs", "recovery_recovered", "INTEGER NOT NULL DEFAULT 0")
+        # Phase 0 Library-Scan-Progress (0–100). Wird vom Worker während des
+        # Filesystem-Scans live gesetzt, damit die ProgressLine im Frontend
+        # bereits in Phase 0 Bewegung zeigt — der Track-Counter (processed/total)
+        # bleibt bei 0 weil noch keine Tracks tatsächlich gematcht sind.
+        _ensure_column(conn, "csv_import_jobs", "phase0_progress", "INTEGER NOT NULL DEFAULT 0")
 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS csv_import_results (
@@ -473,6 +478,7 @@ def upsert_csv_job(
     payload_json: Optional[str] = None,
     recovery_total: Optional[int] = None,
     recovery_recovered: Optional[int] = None,
+    phase0_progress: Optional[int] = None,
 ) -> None:
     """
     Partial upsert: nur Felder mit non-None werden im Update-Pfad
@@ -500,7 +506,7 @@ def upsert_csv_job(
             INSERT INTO csv_import_jobs (
                 job_id, status, total, processed, found, not_found,
                 message, filename, payload_json,
-                recovery_total, recovery_recovered,
+                recovery_total, recovery_recovered, phase0_progress,
                 created_at_ms, updated_at_ms
             )
             VALUES (
@@ -512,6 +518,7 @@ def upsert_csv_job(
                 COALESCE(?, 0),
                 COALESCE(?, ''),
                 ?, ?,
+                COALESCE(?, 0),
                 COALESCE(?, 0),
                 COALESCE(?, 0),
                 ?, ?
@@ -527,12 +534,13 @@ def upsert_csv_job(
                 payload_json       = COALESCE(excluded.payload_json,       csv_import_jobs.payload_json),
                 recovery_total     = COALESCE(excluded.recovery_total,     csv_import_jobs.recovery_total),
                 recovery_recovered = COALESCE(excluded.recovery_recovered, csv_import_jobs.recovery_recovered),
+                phase0_progress    = COALESCE(excluded.phase0_progress,    csv_import_jobs.phase0_progress),
                 updated_at_ms      = excluded.updated_at_ms
             """,
             (
                 job_id, status, total, processed, found, not_found,
                 message, filename, payload_json,
-                recovery_total, recovery_recovered,
+                recovery_total, recovery_recovered, phase0_progress,
                 now, now,
             ),
         )

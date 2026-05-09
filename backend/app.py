@@ -322,6 +322,33 @@ _download_worker.start()
 _csv_worker.start()
 print("Worker threads started (download + csv)")
 
+# Phase 0 Pre-Warm: Library-Signature-Cache beim Container-Boot asynchron
+# aufbauen, damit der ERSTE CSV-Import nach Restart nicht 30-60s in Phase 0
+# hängt. Daemon-Thread blockiert App-Start nicht — wenn der App-Boot fertig
+# ist und kein Import läuft, bauen wir den Cache nebenbei. Falls ein Import
+# vorher startet, übernimmt dessen Lock-Acquire die Arbeit.
+def _prewarm_library_signatures():
+    try:
+        import time as _time
+        _time.sleep(2.0)  # App + Worker erst stabil hochfahren lassen
+        from services.navidrome import NavidromeService
+        print("[prewarm] starting library_signatures() warmup...", flush=True)
+        t0 = _time.time()
+        sigs = NavidromeService().library_signatures()
+        elapsed = _time.time() - t0
+        print(f"[prewarm] library cache ready: {len(sigs)} signatures, {elapsed:.1f}s", flush=True)
+    except Exception as e:
+        # Pre-warm-Fehler dürfen App-Boot nicht stören — Worker macht's
+        # ggf. später beim ersten Import erneut.
+        print(f"[prewarm] failed: {type(e).__name__}: {e} — first import will rebuild cache", flush=True)
+
+_prewarm_thread = threading.Thread(
+    target=_prewarm_library_signatures,
+    name="library-prewarm",
+    daemon=True,
+)
+_prewarm_thread.start()
+
 @app.on_event("shutdown")
 def _shutdown_workers():
     print("Shutting down workers...")
@@ -2334,6 +2361,7 @@ async def csv_import_status(job_id: str):
         "library_match_count": counts.get("library_match", 0),
         "recovery_total": job.get("recovery_total", 0) or 0,
         "recovery_recovered": job.get("recovery_recovered", 0) or 0,
+        "phase0_progress": job.get("phase0_progress", 0) or 0,
         "source": source,
         "message": job.get("message", ""),
         "filename": job.get("filename"),

@@ -732,11 +732,19 @@
 
   // Bar-Progress aus dem tweened processed-Counter — damit die Bar
   // synchron zum smooth Counter läuft, nicht zu den Backend-Snapshots.
-  const csvProgress = $derived(
-    csvStatus && csvStatus.total
-      ? Math.round(($tweenProcessed / csvStatus.total) * 100)
-      : 0
-  );
+  //
+  // Phase 0 (Library-Scan) belegt 0–10% des Bars (phase0_progress 0..100).
+  // Phase 2+ belegt 10–100% (processed/total skaliert auf 90%). Das hält
+  // den Track-Counter ehrlich bei 0 während Phase 0 läuft, aber der Bar
+  // zeigt trotzdem Setup-Fortschritt.
+  const csvProgress = $derived.by(() => {
+    if (!csvStatus || !csvStatus.total) return 0;
+    const phase0Pct = Math.max(0, Math.min(100, csvStatus.phase0_progress ?? 0));
+    const trackPct =
+      csvStatus.total > 0 ? Math.min(1, $tweenProcessed / csvStatus.total) : 0;
+    // Phase 0 → 0..10%, danach Tracks → 10..100%
+    return Math.round(phase0Pct * 0.1 + trackPct * 90);
+  });
 
   // Accent — Import hat keinen Cover-Hue, daher konstant Default-Gold.
   const accent = $derived(tint(DEFAULT_HUE));

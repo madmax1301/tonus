@@ -423,12 +423,26 @@ class JobWorker(threading.Thread):
             message=f"Phase 0: scanning Navidrome library (cache miss — first run after restart can take 30-60s)...",
         )
 
+        # Phase-0-Progress-Bar: ratio = file_count / expected. expected ist
+        # die file_count vom letzten Scan (in `_LIBRARY_SIG_CACHE` gehalten).
+        # Beim allerersten Scan (cold cache) gibt es kein expected → linear-
+        # Pseudo via 50000 als grobe Schätzung, capped auf 90% damit der Bar
+        # nicht "voll" aussieht obwohl Phase 0 nicht fertig ist.
+        from services.navidrome import library_sig_last_file_count
+        expected_files = library_sig_last_file_count()
+
         def _scan_progress(file_count: int, sigs_count: int) -> None:
+            if expected_files and expected_files > 0:
+                ratio = min(1.0, file_count / expected_files)
+            else:
+                ratio = min(0.9, file_count / 50000.0)
+            phase0_pct = int(round(ratio * 100))
             try:
                 upsert_csv_job(
                     job_id,
                     status="processing",
                     total=total,
+                    phase0_progress=phase0_pct,
                     message=f"Phase 0: scanning library — {file_count:,} files / {sigs_count:,} signatures...",
                 )
             except Exception:
@@ -437,6 +451,12 @@ class JobWorker(threading.Thread):
         try:
             nav = NavidromeService()
             library_sigs = nav.library_signatures(on_progress=_scan_progress)
+            # Phase 0 fertig — finalen 100% schreiben damit Bar voll bei
+            # Übergang zu Phase 2 wenn dort processed=0 noch ist.
+            try:
+                upsert_csv_job(job_id, phase0_progress=100)
+            except Exception:
+                pass
         except Exception as e:
             print(f"[csv-import] library scan failed: {type(e).__name__}: {e} — skip Phase 0")
             library_sigs = set()

@@ -551,6 +551,11 @@ export interface CsvImportStatus {
   /** Phase 2.5 Recovery-Counter — gesamt zu rechecken, davon recovered. */
   recovery_total?: number;
   recovery_recovered?: number;
+  /** Phase 0 Library-Scan-Progress (0–100). Wird live geschrieben während
+   *  des Filesystem-Scans, damit die ProgressLine sich auch in Phase 0
+   *  bewegt — der Counter (processed/total) bleibt bei 0 weil noch keine
+   *  Tracks tatsächlich gematcht sind. */
+  phase0_progress?: number;
   /** Source-Marker: "csv" für klassischen Bulk-Import, "spotify_history" für
    *  Streaming-History-JSON. Frontend nutzt das fürs Tab-Label. */
   source?: 'csv' | 'spotify_history';
