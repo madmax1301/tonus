@@ -154,7 +154,7 @@ export const strings = {
     'import.title.before': 'Hunderte Tracks.',
     'import.title.italic': 'Eine Liste.',
     'import.description':
-      'CSV oder Freitext rein — Tonus matcht jede Zeile gegen Deezer/Spotify und queued sauber, was zu finden war. Was nicht passt, kannst du als CSV exportieren.',
+      'CSV oder Spotify-History rein — Tonus matcht jede Zeile gegen Deezer/Spotify und queued sauber, was zu finden war. Was nicht passt, kannst du als CSV exportieren.',
     'import.dropzone.eyebrow': 'CSV · TSV · TXT',
     'import.dropzone.title': 'CSV-Liste importieren',
     'import.dropzone.body': 'CSV/TSV mit Spalten Artist + Track Name (optional Playlist Name) hier ablegen. Tonus matcht gegen die Library, lädt nur fehlende Tracks und legt Playlists in Navidrome an.',
@@ -163,8 +163,6 @@ export const strings = {
     'import.dropzone.choose_file': 'CSV-Datei wählen',
     'import.dropzone.clear': 'Leeren',
     'import.dropzone.drop_overlay': 'Drop to import',
-    'import.dropzone.placeholder':
-      'Künstler;Titel\nDaft Punk;Get Lucky\nQueen;Bohemian Rhapsody\n\noder eine Zeile pro Track als Freitext',
     'import.dropzone.lines_ready': '{count} Zeilen bereit',
     'import.dropzone.line_ready': '{count} Zeile bereit',
     'import.dropzone.format_hint': 'Format:',
@@ -675,7 +673,7 @@ export const strings = {
     'import.title.before': 'Hundreds of tracks.',
     'import.title.italic': 'One list.',
     'import.description':
-      'CSV or freetext in — Tonus matches every line against Deezer/Spotify and queues cleanly what could be found. What didn’t fit you can export as CSV.',
+      'CSV or Spotify History in — Tonus matches every line against Deezer/Spotify and queues cleanly what could be found. What didn’t fit you can export as CSV.',
     'import.dropzone.eyebrow': 'CSV · TSV · TXT',
     'import.dropzone.title': 'Import CSV list',
     'import.dropzone.body': 'Drop a CSV/TSV with columns Artist + Track Name (optionally Playlist Name) here. Tonus matches against your library, only downloads missing tracks, and creates playlists in Navidrome.',
@@ -684,8 +682,6 @@ export const strings = {
     'import.dropzone.choose_file': 'Choose CSV file',
     'import.dropzone.clear': 'Clear',
     'import.dropzone.drop_overlay': 'Drop to import',
-    'import.dropzone.placeholder':
-      'Artist;Title\nDaft Punk;Get Lucky\nQueen;Bohemian Rhapsody\n\nor one line per track as freetext',
     'import.dropzone.lines_ready': '{count} lines ready',
     'import.dropzone.line_ready': '{count} line ready',
     'import.dropzone.format_hint': 'Format:',
