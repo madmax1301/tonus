@@ -61,6 +61,7 @@
   let csvQueueAllResult = $state<string | null>(null);
   let csvLoadMoreBusy = $state(false);
   let csvExportBusy = $state(false);
+  let csvCancelBusy = $state(false);
   let csvExportProgress = $state<{ loaded: number; total: number } | null>(null);
   const PAGE_SIZE = 200;
 
@@ -269,6 +270,30 @@
   }
   onDestroy(stopCsvPoll);
 
+  /**
+   * User-Cancel via UI-Button — sowohl für CSV als auch Spotify-History.
+   * Backend-Endpoint setzt status='cancelled' atomic in der DB; Worker
+   * pollt das zwischen Phase-Schritten und beendet sauber. Confirm-Dialog
+   * verhindert Accidental-Cancel; bei großen Imports kann das viel
+   * verlorene Verarbeitungsarbeit bedeuten.
+   */
+  async function cancelImport() {
+    if (!csvJobId || csvCancelBusy) return;
+    if (!confirm($t('import.cancel.confirm'))) return;
+    csvCancelBusy = true;
+    try {
+      await importApi.cancel(csvJobId);
+      // Status wird vom existing pollCsv aktualisiert sobald Worker den
+      // Cancel sieht. UI rendert dann "cancelled"-State, button geht
+      // disabled. Cleanup (csvJobId=null + localStorage) macht der
+      // Status-Watcher in pollCsv sobald er einen terminalen Status sieht.
+    } catch (e) {
+      csvError = e instanceof Error ? e.message : String(e);
+    } finally {
+      csvCancelBusy = false;
+    }
+  }
+
   async function startCsv() {
     if (!csvText.trim()) return;
     csvBusy = true;
@@ -347,6 +372,18 @@
         } else if (s.status === 'error') {
           stopCsvPoll();
           csvError = s.message ?? 'CSV-Import-Fehler';
+          if (browser) {
+            try {
+              localStorage.removeItem(ACTIVE_CSV_KEY);
+            } catch {
+              /* noop */
+            }
+          }
+        } else if (s.status === 'cancelled') {
+          // Cancel ist terminal — Polling stoppen, localStorage clearen.
+          // csvStatus bleibt gesetzt damit UI noch "Cancelled by user"
+          // mit Status anzeigen kann; User kann dann manuell zurück.
+          stopCsvPoll();
           if (browser) {
             try {
               localStorage.removeItem(ACTIVE_CSV_KEY);
@@ -788,7 +825,11 @@
         border-bottom: 2px solid {accent};
       "
     >
-      CSV
+      {#if csvStatus?.source === 'spotify_history'}
+        {$t('import.tab.spotify_history')}
+      {:else}
+        {$t('import.tab.csv')}
+      {/if}
     </div>
     {#if csvJobId}
       <div class="text-[12px] truncate" style="color: var(--color-fg-tertiary); max-width: 360px;">
@@ -1219,7 +1260,7 @@
         glow
       />
 
-      <div class="flex items-center gap-6 mt-4 text-[12px] tabular-nums">
+      <div class="flex items-center gap-6 mt-4 text-[12px] tabular-nums flex-wrap">
         <div>
           <span style="color: var(--color-fg-tertiary);">{$t('import.live.matched')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-done);"
@@ -1234,6 +1275,15 @@
             >
           </div>
         {/if}
+        {#if (csvStatus.recovery_total ?? 0) > 0}
+          <div>
+            <span style="color: var(--color-fg-tertiary);">{$t('import.live.rechecked')}</span>
+            <span class="ml-1.5 font-medium" style="color: var(--color-fg-secondary);"
+              >{(csvStatus.recovery_recovered ?? 0).toLocaleString('de-DE')}</span
+            ><span style="color: var(--color-fg-tertiary);">
+              / {(csvStatus.recovery_total ?? 0).toLocaleString('de-DE')}</span>
+          </div>
+        {/if}
         <div>
           <span style="color: var(--color-fg-tertiary);">{$t('import.live.not_found')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-error);"
@@ -1245,6 +1295,38 @@
             {csvStatus.message}
           </div>
         {/if}
+      </div>
+
+      <!-- Cancel-Button: ermöglicht Abbruch von CSV/JSON-Import während er
+           läuft. Worker checkt zwischen Phase-Schritten ob status='cancelled'
+           wurde und bricht sauber ab. Confirm-Dialog vermeidet Versehen. -->
+      <div class="mt-4 flex items-center gap-2">
+        <button
+          type="button"
+          onclick={cancelImport}
+          disabled={csvCancelBusy || csvStatus.status === 'cancelled'}
+          class="inline-flex items-center gap-1.5 transition-opacity"
+          style="
+            background: rgba(248, 113, 113, 0.12);
+            border: 1px solid rgba(248, 113, 113, 0.32);
+            color: #fca5a5;
+            padding: 7px 14px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            opacity: {csvCancelBusy || csvStatus.status === 'cancelled' ? 0.5 : 1};
+            cursor: {csvCancelBusy || csvStatus.status === 'cancelled' ? 'not-allowed' : 'pointer'};
+          "
+        >
+          <X size={11} strokeWidth={1.8} />
+          {csvCancelBusy
+            ? $t('import.cancel.canceling')
+            : csvStatus.status === 'cancelled'
+              ? $t('import.cancel.cancelled')
+              : $t('import.cancel.button')}
+        </button>
       </div>
     </div>
   {:else if csvResult}

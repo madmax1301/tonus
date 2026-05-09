@@ -540,7 +540,7 @@ export interface CsvImportStartResponse {
 }
 
 export interface CsvImportStatus {
-  status: 'queued' | 'processing' | 'completed' | 'error';
+  status: 'queued' | 'processing' | 'completed' | 'error' | 'cancelled';
   total: number;
   processed: number;
   found: number;
@@ -548,6 +548,12 @@ export interface CsvImportStatus {
   /** Phase H: wieviele Tracks wurden bereits in Navidromes Library gefunden
    *  und dadurch komplett vom Provider-Lookup ausgeschlossen. */
   library_match_count?: number;
+  /** Phase 2.5 Recovery-Counter — gesamt zu rechecken, davon recovered. */
+  recovery_total?: number;
+  recovery_recovered?: number;
+  /** Source-Marker: "csv" für klassischen Bulk-Import, "spotify_history" für
+   *  Streaming-History-JSON. Frontend nutzt das fürs Tab-Label. */
+  source?: 'csv' | 'spotify_history';
   message?: string;
   /** Original-Filename (CSV-Upload), oder null bei Text-Paste. */
   filename?: string | null;

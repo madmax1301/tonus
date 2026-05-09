@@ -26,6 +26,7 @@ from utils.job_store import (
     upsert_csv_job,
     insert_csv_results,
     get_job,
+    is_csv_job_cancelled,
 )
 
 
@@ -360,6 +361,20 @@ class JobWorker(threading.Thread):
         from services.spotify import SpotifyService
         from services.navidrome import NavidromeService, _normalize_sig
 
+        # User-Cancel-Polling-Helper. Wird zwischen Phase-Schritten aufgerufen
+        # damit Cancel quasi-instant wirkt (max 1 Phase-Step Latenz).
+        # Returnt True wenn cancelled — Caller soll dann sofort `return`.
+        def _check_user_cancel(processed_so_far: int = 0) -> bool:
+            if is_csv_job_cancelled(job_id):
+                upsert_csv_job(
+                    job_id,
+                    status="cancelled",
+                    message=f"Cancelled by user ({processed_so_far}/{total} processed)",
+                )
+                print(f"[csv-import {job_id}] cancelled by user at {processed_so_far}/{total}", flush=True)
+                return True
+            return False
+
         if provider == "deezer":
             svc = DeezerService()
         else:
@@ -463,6 +478,12 @@ class JobWorker(threading.Thread):
         if library_hits:
             insert_csv_results(job_id, "library_match", library_hits)
             print(f"[csv-import] Phase 0: {len(library_hits)} tracks already in library, skipping provider lookup")
+
+        # Erster User-Cancel-Checkpoint nach Phase 0 — Library-Scan kann
+        # 30-60s dauern, da soll User abbrechen können bevor Provider-
+        # Calls überhaupt anfangen.
+        if _check_user_cancel(0):
+            return
 
         # Klare Phase-Trennung im Status — sonst sieht User die ganze
         # Phase 1 (Dedup) noch unter "Phase 0: scanning library..." weil
@@ -652,6 +673,13 @@ class JobWorker(threading.Thread):
                         f.cancel()
                     upsert_csv_job(job_id, status="error", message="Interrupted")
                     return
+                # User-Cancel-Check zwischen Futures — Phase 2 ist die
+                # längste Phase (kann mehrere Minuten dauern bei großen
+                # Imports), Cancel muss hier instant wirken.
+                if _check_user_cancel(int(0.70 * total * completed_unique / max(1, unique_total))):
+                    for f in futures:
+                        f.cancel()
+                    return
                 try:
                     key, result, lane_used, was_failover = fut.result()
                 except Exception:
@@ -721,29 +749,38 @@ class JobWorker(threading.Thread):
         no_recovery_end = int(0.95 * total)
         if recovery_keys:
             cooldown_s = 15
+            recovery_total_n = len(recovery_keys)
+            # recovery_total wird jetzt schon hier in der DB gesetzt damit das
+            # Frontend einen "rechecked 0 / N"-Counter live anzeigen kann auch
+            # während des 15s-Cooldowns. recovery_recovered=0 als initial.
             upsert_csv_job(
                 job_id,
                 status="processing",
                 total=total,
                 processed=phase2_end,
+                recovery_total=recovery_total_n,
+                recovery_recovered=0,
                 message=(
-                    f"Recovery-Phase: {len(recovery_keys)} Initial-Misses werden "
+                    f"Recovery-Phase: {recovery_total_n} Initial-Misses werden "
                     f"nach {cooldown_s} s Cooldown sequenziell nochmal probiert..."
                 ),
             )
-            # Cooldown in 1s-Chunks damit shutdown reagieren kann.
+            # Cooldown in 1s-Chunks damit shutdown UND user-cancel reagieren.
             for _ in range(cooldown_s):
                 if self._stop.is_set():
                     upsert_csv_job(job_id, status="error", message="Interrupted")
+                    return
+                if _check_user_cancel(phase2_end):
                     return
                 time.sleep(1)
 
             # Single-thread, default lane (kein Splitting), 0.4 s zwischen Calls.
             # Bei 100 Recovery-Keys → ~40 s Phase-Dauer, akzeptabel.
-            recovery_total = len(recovery_keys)
             for idx, k in enumerate(recovery_keys):
                 if self._stop.is_set():
                     upsert_csv_job(job_id, status="error", message="Interrupted")
+                    return
+                if _check_user_cancel(phase2_end + idx):
                     return
                 try:
                     _, result, _, _ = _do_search(k, "default")
@@ -756,7 +793,7 @@ class JobWorker(threading.Thread):
                 if (idx + 1) % 5 == 0:
                     # Recovery-Anteil: 25 % der Bar zwischen Phase-2-Ende und
                     # 95 %, linear über alle Recovery-Calls verteilt.
-                    recovery_share = int(0.25 * total * (idx + 1) / recovery_total)
+                    recovery_share = int(0.25 * total * (idx + 1) / recovery_total_n)
                     # Live-Counter weiter pflegen — pro Recovery-Treffer steigt
                     # `found` um eins (skaliert), `not_found` sinkt entsprechend.
                     matched_unique = sum(1 for v in cache.values() if v is not None)
@@ -769,8 +806,9 @@ class JobWorker(threading.Thread):
                         processed=min(phase2_end + recovery_share, no_recovery_end),
                         found=int(matched_unique * scale),
                         not_found=int(unmatched_unique * scale),
+                        recovery_recovered=recovery_recovered,
                         message=(
-                            f"Recovery: {idx + 1}/{recovery_total} re-checked, "
+                            f"Recovery: {idx + 1}/{recovery_total_n} re-checked, "
                             f"+{recovery_recovered} zusätzlich gefunden..."
                         ),
                     )
@@ -837,6 +875,11 @@ class JobWorker(threading.Thread):
 
             if processed % _CSV_FLUSH_BATCH == 0:
                 _flush()
+                # Cancel-Check zwischen Materialize-Batches — Phase 3 ist
+                # zwar schnell, aber bei großen Imports (30k+ Rows) lohnt
+                # es trotzdem damit Cancel innerhalb 1-2 Sekunden wirkt.
+                if _check_user_cancel(processed):
+                    return
                 upsert_csv_job(
                     job_id,
                     status="processing",
