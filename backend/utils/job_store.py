@@ -91,6 +91,12 @@ def init_jobs_db() -> None:
         # zwei Zwecke vermischte: User-Status-Anzeige + Job-Payload. Trennen.
         _ensure_column(conn, "csv_import_jobs", "filename", "TEXT")
         _ensure_column(conn, "csv_import_jobs", "payload_json", "TEXT")
+        # Recovery-Phase-Counter (Phase 2.5) — damit das Frontend live anzeigen
+        # kann wieviele Tracks rechecked wurden und wieviele davon gerettet
+        # waren. Vorher nur in der Status-Message als Text — kein machine-
+        # readable counter im UI verfügbar.
+        _ensure_column(conn, "csv_import_jobs", "recovery_total", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "csv_import_jobs", "recovery_recovered", "INTEGER NOT NULL DEFAULT 0")
 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS csv_import_results (
@@ -465,6 +471,8 @@ def upsert_csv_job(
     message: Optional[str] = None,
     filename: Optional[str] = None,
     payload_json: Optional[str] = None,
+    recovery_total: Optional[int] = None,
+    recovery_recovered: Optional[int] = None,
 ) -> None:
     """
     Partial upsert: nur Felder mit non-None werden im Update-Pfad
@@ -478,6 +486,11 @@ def upsert_csv_job(
     Der Insert-Pfad (erster Aufruf für eine neue job_id) füllt fehlende
     Felder pragmatisch mit sinnvollen Defaults via COALESCE auf der
     VALUES-Seite — sonst gäbe es NOT-NULL-Verletzungen.
+
+    recovery_total / recovery_recovered: Phase 2.5 Counter, optional —
+    werden während der Recovery-Phase live nachgepflegt damit das
+    Frontend einen "rechecked"-Counter neben matched/not-found anzeigen
+    kann.
     """
     now = _now_ms()
     conn = _db()
@@ -486,7 +499,9 @@ def upsert_csv_job(
             """
             INSERT INTO csv_import_jobs (
                 job_id, status, total, processed, found, not_found,
-                message, filename, payload_json, created_at_ms, updated_at_ms
+                message, filename, payload_json,
+                recovery_total, recovery_recovered,
+                created_at_ms, updated_at_ms
             )
             VALUES (
                 ?,
@@ -496,25 +511,74 @@ def upsert_csv_job(
                 COALESCE(?, 0),
                 COALESCE(?, 0),
                 COALESCE(?, ''),
-                ?, ?, ?, ?
+                ?, ?,
+                COALESCE(?, 0),
+                COALESCE(?, 0),
+                ?, ?
             )
             ON CONFLICT(job_id) DO UPDATE SET
-                status        = COALESCE(excluded.status,       csv_import_jobs.status),
-                total         = COALESCE(excluded.total,        csv_import_jobs.total),
-                processed     = COALESCE(excluded.processed,    csv_import_jobs.processed),
-                found         = COALESCE(excluded.found,        csv_import_jobs.found),
-                not_found     = COALESCE(excluded.not_found,    csv_import_jobs.not_found),
-                message       = COALESCE(excluded.message,      csv_import_jobs.message),
-                filename      = COALESCE(excluded.filename,     csv_import_jobs.filename),
-                payload_json  = COALESCE(excluded.payload_json, csv_import_jobs.payload_json),
-                updated_at_ms = excluded.updated_at_ms
+                status             = COALESCE(excluded.status,             csv_import_jobs.status),
+                total              = COALESCE(excluded.total,              csv_import_jobs.total),
+                processed          = COALESCE(excluded.processed,          csv_import_jobs.processed),
+                found              = COALESCE(excluded.found,              csv_import_jobs.found),
+                not_found          = COALESCE(excluded.not_found,          csv_import_jobs.not_found),
+                message            = COALESCE(excluded.message,            csv_import_jobs.message),
+                filename           = COALESCE(excluded.filename,           csv_import_jobs.filename),
+                payload_json       = COALESCE(excluded.payload_json,       csv_import_jobs.payload_json),
+                recovery_total     = COALESCE(excluded.recovery_total,     csv_import_jobs.recovery_total),
+                recovery_recovered = COALESCE(excluded.recovery_recovered, csv_import_jobs.recovery_recovered),
+                updated_at_ms      = excluded.updated_at_ms
             """,
             (
                 job_id, status, total, processed, found, not_found,
-                message, filename, payload_json, now, now,
+                message, filename, payload_json,
+                recovery_total, recovery_recovered,
+                now, now,
             ),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def cancel_csv_job(job_id: str) -> bool:
+    """User-Cancel via UI-Button. Setzt status='cancelled' direkt in der DB —
+    der Worker pollt diesen Status zwischen Phase-Schritten und bricht
+    ab wenn er ihn sieht. Returnt True wenn ein laufender Job gefunden
+    wurde, False bei not-found / bereits terminal."""
+    now = _now_ms()
+    conn = _db()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE csv_import_jobs
+            SET status = 'cancelled',
+                message = 'Cancelled by user',
+                updated_at_ms = ?
+            WHERE job_id = ?
+              AND status IN ('queued', 'processing')
+            """,
+            (now, job_id),
+        )
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def is_csv_job_cancelled(job_id: str) -> bool:
+    """Worker-Helper: prüft ob ein laufender Job per UI gecancelled wurde.
+    Wird zwischen Phase-Schritten gepollt damit Cancel quasi-instant wirkt
+    (max 1 Phase-Step Latenz). Cheap query — index auf job_id (PK)."""
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT status FROM csv_import_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if not row:
+            return False
+        return row["status"] == "cancelled"
     finally:
         conn.close()
 

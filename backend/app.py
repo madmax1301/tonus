@@ -2303,13 +2303,28 @@ async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Dep
 
 @app.get("/api/import/csv/status/{job_id}")
 async def csv_import_status(job_id: str):
-    """Poll CSV import progress (aus SQLite). Seit Phase H zusätzlich
-    library_match_count, damit das Frontend während Phase 2 schon den
-    "✓ in Library"-Bucket-Counter live anzeigen kann."""
+    """Poll CSV/JSON import progress (aus SQLite). Liefert:
+    - library_match_count (Phase H) damit Frontend den "in library"-Counter live zeigen kann
+    - recovery_total + recovery_recovered (Phase 2.5) damit Frontend rechecked-Stats anzeigt
+    - source ("csv" | "spotify_history") aus payload_json damit Frontend
+      Tab-Label korrekt rendert (vorher hardcoded "CSV" auch bei JSON)
+    """
+    import json as _json
     job = get_csv_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="CSV import job not found")
     counts = count_csv_results(job_id)
+    # Source aus payload_json ableiten — bei legacy-Jobs ohne source-Feld
+    # default "csv". Spotify-History setzt {"source": "spotify_history"}.
+    source = "csv"
+    payload_raw = job.get("payload_json")
+    if payload_raw:
+        try:
+            payload = _json.loads(payload_raw)
+            if isinstance(payload, dict) and isinstance(payload.get("source"), str):
+                source = payload["source"]
+        except Exception:
+            pass
     return {
         "status": job["status"],
         "total": job["total"],
@@ -2317,9 +2332,26 @@ async def csv_import_status(job_id: str):
         "found": job["found"],
         "not_found": job["not_found"],
         "library_match_count": counts.get("library_match", 0),
+        "recovery_total": job.get("recovery_total", 0) or 0,
+        "recovery_recovered": job.get("recovery_recovered", 0) or 0,
+        "source": source,
         "message": job.get("message", ""),
         "filename": job.get("filename"),
     }
+
+
+@app.post("/api/import/csv/{job_id}/cancel")
+async def csv_import_cancel(job_id: str, _: None = Depends(require_token)):
+    """User-Cancel via UI. Setzt status='cancelled' in der DB; der Worker
+    pollt diesen Status zwischen Phase-Schritten und beendet den Job
+    sauber (max 1 Phase-Step Latenz). Idempotent: bereits terminale Jobs
+    (completed/error/cancelled) returnen `cancelled: false` ohne Fehler."""
+    from utils.job_store import cancel_csv_job
+    job = get_csv_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="CSV import job not found")
+    cancelled = cancel_csv_job(job_id)
+    return {"ok": True, "cancelled": cancelled, "previous_status": job.get("status")}
 
 
 @app.get("/api/import/csv/result/{job_id}")
