@@ -545,6 +545,36 @@ def upsert_import_job(
     """
     now = _now_ms()
     conn = _db()
+    # KRITISCH (Bug-Fix 2026-05-10):
+    # Im UPDATE-Pfad nutzen wir NICHT `excluded.<col>` sondern named bind-params
+    # mit COALESCE(:col, import_jobs.<col>). Grund: `excluded.<col>` reflektiert
+    # den COALESCE(?, default)-Wert aus dem INSERT-VALUES-Block — bei einem Call
+    # mit kwarg=None wird excluded auf den Default gesetzt (z.B. 'full' für mode),
+    # und der UPDATE überschreibt damit den existierenden Wert silent. Das hat
+    # verursacht, dass jedes status-Update vom Worker den mode='playlist_sync'
+    # auf 'full' zurückflippte → csv-Worker pickte den Job → race + error.
+    # Mit named params ist :mode der raw kwarg (None oder echter Wert),
+    # COALESCE(:mode, import_jobs.mode) preservt den existierenden Wert sauber.
+    params = {
+        "job_id": job_id,
+        "status": status,
+        "total": total,
+        "processed": processed,
+        "found": found,
+        "not_found": not_found,
+        "message": message,
+        "filename": filename,
+        "payload_json": payload_json,
+        "recovery_total": recovery_total,
+        "recovery_recovered": recovery_recovered,
+        "phase0_progress": phase0_progress,
+        "mode": mode,
+        "source": source,
+        "playlists_total": playlists_total,
+        "playlists_synced": playlists_synced,
+        "playlist_tracks_added": playlist_tracks_added,
+        "now": now,
+    }
     try:
         conn.execute(
             """
@@ -557,51 +587,44 @@ def upsert_import_job(
                 created_at_ms, updated_at_ms
             )
             VALUES (
-                ?,
-                COALESCE(?, 'queued'),
-                COALESCE(?, 0),
-                COALESCE(?, 0),
-                COALESCE(?, 0),
-                COALESCE(?, 0),
-                COALESCE(?, ''),
-                ?, ?,
-                COALESCE(?, 0),
-                COALESCE(?, 0),
-                COALESCE(?, 0),
-                COALESCE(?, 'full'),
-                COALESCE(?, 'csv'),
-                COALESCE(?, 0),
-                COALESCE(?, 0),
-                COALESCE(?, 0),
-                ?, ?
+                :job_id,
+                COALESCE(:status, 'queued'),
+                COALESCE(:total, 0),
+                COALESCE(:processed, 0),
+                COALESCE(:found, 0),
+                COALESCE(:not_found, 0),
+                COALESCE(:message, ''),
+                :filename, :payload_json,
+                COALESCE(:recovery_total, 0),
+                COALESCE(:recovery_recovered, 0),
+                COALESCE(:phase0_progress, 0),
+                COALESCE(:mode, 'full'),
+                COALESCE(:source, 'csv'),
+                COALESCE(:playlists_total, 0),
+                COALESCE(:playlists_synced, 0),
+                COALESCE(:playlist_tracks_added, 0),
+                :now, :now
             )
             ON CONFLICT(job_id) DO UPDATE SET
-                status                = COALESCE(excluded.status,                import_jobs.status),
-                total                 = COALESCE(excluded.total,                 import_jobs.total),
-                processed             = COALESCE(excluded.processed,             import_jobs.processed),
-                found                 = COALESCE(excluded.found,                 import_jobs.found),
-                not_found             = COALESCE(excluded.not_found,             import_jobs.not_found),
-                message               = COALESCE(excluded.message,               import_jobs.message),
-                filename              = COALESCE(excluded.filename,              import_jobs.filename),
-                payload_json          = COALESCE(excluded.payload_json,          import_jobs.payload_json),
-                recovery_total        = COALESCE(excluded.recovery_total,        import_jobs.recovery_total),
-                recovery_recovered    = COALESCE(excluded.recovery_recovered,    import_jobs.recovery_recovered),
-                phase0_progress       = COALESCE(excluded.phase0_progress,       import_jobs.phase0_progress),
-                mode                  = COALESCE(excluded.mode,                  import_jobs.mode),
-                source                = COALESCE(excluded.source,                import_jobs.source),
-                playlists_total       = COALESCE(excluded.playlists_total,       import_jobs.playlists_total),
-                playlists_synced      = COALESCE(excluded.playlists_synced,      import_jobs.playlists_synced),
-                playlist_tracks_added = COALESCE(excluded.playlist_tracks_added, import_jobs.playlist_tracks_added),
-                updated_at_ms         = excluded.updated_at_ms
+                status                = COALESCE(:status,                import_jobs.status),
+                total                 = COALESCE(:total,                 import_jobs.total),
+                processed             = COALESCE(:processed,             import_jobs.processed),
+                found                 = COALESCE(:found,                 import_jobs.found),
+                not_found             = COALESCE(:not_found,             import_jobs.not_found),
+                message               = COALESCE(:message,               import_jobs.message),
+                filename              = COALESCE(:filename,              import_jobs.filename),
+                payload_json          = COALESCE(:payload_json,          import_jobs.payload_json),
+                recovery_total        = COALESCE(:recovery_total,        import_jobs.recovery_total),
+                recovery_recovered    = COALESCE(:recovery_recovered,    import_jobs.recovery_recovered),
+                phase0_progress       = COALESCE(:phase0_progress,       import_jobs.phase0_progress),
+                mode                  = COALESCE(:mode,                  import_jobs.mode),
+                source                = COALESCE(:source,                import_jobs.source),
+                playlists_total       = COALESCE(:playlists_total,       import_jobs.playlists_total),
+                playlists_synced      = COALESCE(:playlists_synced,      import_jobs.playlists_synced),
+                playlist_tracks_added = COALESCE(:playlist_tracks_added, import_jobs.playlist_tracks_added),
+                updated_at_ms         = :now
             """,
-            (
-                job_id, status, total, processed, found, not_found,
-                message, filename, payload_json,
-                recovery_total, recovery_recovered, phase0_progress,
-                mode, source,
-                playlists_total, playlists_synced, playlist_tracks_added,
-                now, now,
-            ),
+            params,
         )
         conn.commit()
     finally:
