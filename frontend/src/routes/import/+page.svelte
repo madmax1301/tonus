@@ -1440,7 +1440,11 @@
             color: {accent};
           "
         >
-          {$t('import.live.eyebrow', { provider: provider || 'provider' })}
+          {#if csvStatus?.source === 'playlist_sync'}
+            {$t('import.live.eyebrow.playlist_sync')}
+          {:else}
+            {$t('import.live.eyebrow', { provider: provider || 'provider' })}
+          {/if}
         </div>
       </div>
 
