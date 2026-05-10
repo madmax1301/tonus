@@ -566,19 +566,63 @@ class JobWorker(threading.Thread):
         # not_found (User-Hinweis "diese Tracks sind nicht in deiner
         # Library") und triggern den Subsonic-Playlist-Reconcile.
         if mode == "playlist_sync":
+            # Vor dem not_found-Bucket: cross-link gegen die Download-Queue.
+            # Tracks die nicht in der Library liegen, aber bereits gequeued
+            # sind, bekommen die Playlist-Namen als Marker im Download-Job-
+            # Payload (`import_playlist_names`). Nach Download-Complete
+            # läuft der existierende _reconcile_imported_playlists und
+            # fügt sie zu den richtigen Subsonic-Playlists hinzu.
+            from utils.job_store import (
+                list_active_download_tracks,
+                merge_playlist_names_into_download_job,
+            )
+            queue_lookup: Dict[Tuple[str, str], List[str]] = {}
+            try:
+                for entry in list_active_download_tracks():
+                    sig = (
+                        _normalize_sig(entry["artist"]),
+                        _normalize_sig(entry["title"]),
+                    )
+                    queue_lookup.setdefault(sig, []).append(entry["job_id"])
+            except Exception as e:
+                print(f"[import {job_id}] queue-lookup failed: {type(e).__name__}: {e}", flush=True)
+
             misses_not_found: List[Dict[str, Any]] = []
+            queue_tagged_count = 0
             for row in remaining_pending:
                 try:
                     pl_names = _wjson.loads(row["playlist_names_json"]) if row["playlist_names_json"] else []
                 except Exception:
                     pl_names = []
-                misses_not_found.append({
-                    "original": row["original"],
-                    "requested_artist": (row["requested_artist"] or "").strip(),
-                    "requested_title": (row["requested_title"] or "").strip(),
-                    "track": None,
-                    "playlist_names": pl_names,
-                })
+                artist_orig = (row["requested_artist"] or "").strip()
+                title_orig = (row["requested_title"] or "").strip()
+                sig = (_normalize_sig(artist_orig), _normalize_sig(title_orig))
+                queue_jobs = queue_lookup.get(sig, [])
+                if queue_jobs and pl_names:
+                    # Track ist in der Download-Queue → playlist_names ins
+                    # download_job-payload mergen, damit der nach-Download-
+                    # Reconcile sie aufpflückt. Mehrere Queue-Jobs für den
+                    # gleichen (artist,title) sind möglich (z.B. Provider-
+                    # Failover-Re-queue) — wir taggen sie alle.
+                    tagged_any = False
+                    for dj_id in queue_jobs:
+                        try:
+                            added = merge_playlist_names_into_download_job(dj_id, pl_names)
+                            if added > 0:
+                                tagged_any = True
+                        except Exception as e:
+                            print(f"[import {job_id}] merge-pl into {dj_id} failed: {e}", flush=True)
+                    if tagged_any:
+                        queue_tagged_count += 1
+                else:
+                    # Weder Library-Match noch in Queue → echter Miss.
+                    misses_not_found.append({
+                        "original": row["original"],
+                        "requested_artist": artist_orig,
+                        "requested_title": title_orig,
+                        "track": None,
+                        "playlist_names": pl_names,
+                    })
             if misses_not_found:
                 insert_import_results(job_id, "not_found", misses_not_found)
 
@@ -602,10 +646,12 @@ class JobWorker(threading.Thread):
                 phase0_progress=100,
                 playlists_synced=int(recon_summary.get("playlists", 0) or 0),
                 playlist_tracks_added=int(recon_summary.get("tracks_added", 0) or 0),
+                playlist_queue_tagged=queue_tagged_count,
                 message=(
                     f"Playlist-Sync done — {recon_summary.get('tracks_added', 0)} "
                     f"tracks added to {recon_summary.get('playlists', 0)} playlist(s), "
-                    f"{len(misses_not_found)} not in library"
+                    f"{queue_tagged_count} tagged in queue, "
+                    f"{len(misses_not_found)} not in library/queue"
                 ),
             )
             return

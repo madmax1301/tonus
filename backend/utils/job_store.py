@@ -142,6 +142,12 @@ def init_jobs_db() -> None:
         _ensure_column(conn, "import_jobs", "playlists_total", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "import_jobs", "playlists_synced", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "import_jobs", "playlist_tracks_added", "INTEGER NOT NULL DEFAULT 0")
+        # Anzahl Tracks aus dem playlist_sync-CSV, die zwar nicht in der Library
+        # liegen, aber bereits in der Download-Queue sind. Für die wurde der
+        # download_jobs.payload_json["import_playlist_names"]-Marker erweitert,
+        # sodass _reconcile_imported_playlists nach Download-Complete sie
+        # automatisch zu den richtigen Subsonic-Playlists hinzufügt.
+        _ensure_column(conn, "import_jobs", "playlist_queue_tagged", "INTEGER NOT NULL DEFAULT 0")
 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS import_results (
@@ -524,6 +530,7 @@ def upsert_import_job(
     playlists_total: Optional[int] = None,
     playlists_synced: Optional[int] = None,
     playlist_tracks_added: Optional[int] = None,
+    playlist_queue_tagged: Optional[int] = None,
 ) -> None:
     """
     Partial upsert: nur Felder mit non-None werden im Update-Pfad
@@ -573,6 +580,7 @@ def upsert_import_job(
         "playlists_total": playlists_total,
         "playlists_synced": playlists_synced,
         "playlist_tracks_added": playlist_tracks_added,
+        "playlist_queue_tagged": playlist_queue_tagged,
         "now": now,
     }
     try:
@@ -583,7 +591,7 @@ def upsert_import_job(
                 message, filename, payload_json,
                 recovery_total, recovery_recovered, phase0_progress,
                 mode, source,
-                playlists_total, playlists_synced, playlist_tracks_added,
+                playlists_total, playlists_synced, playlist_tracks_added, playlist_queue_tagged,
                 created_at_ms, updated_at_ms
             )
             VALUES (
@@ -603,6 +611,7 @@ def upsert_import_job(
                 COALESCE(:playlists_total, 0),
                 COALESCE(:playlists_synced, 0),
                 COALESCE(:playlist_tracks_added, 0),
+                COALESCE(:playlist_queue_tagged, 0),
                 :now, :now
             )
             ON CONFLICT(job_id) DO UPDATE SET
@@ -622,6 +631,7 @@ def upsert_import_job(
                 playlists_total       = COALESCE(:playlists_total,       import_jobs.playlists_total),
                 playlists_synced      = COALESCE(:playlists_synced,      import_jobs.playlists_synced),
                 playlist_tracks_added = COALESCE(:playlist_tracks_added, import_jobs.playlist_tracks_added),
+                playlist_queue_tagged = COALESCE(:playlist_queue_tagged, import_jobs.playlist_queue_tagged),
                 updated_at_ms         = :now
             """,
             params,
@@ -812,5 +822,89 @@ def count_import_results(job_id: str) -> Dict[str, int]:
             (job_id,),
         ).fetchone()["n"]
         return {"matched": matched, "unmatched": unmatched, "library_match": library_match}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Playlist-Sync ↔ Download-Queue cross-link (2026-05-10)
+# ---------------------------------------------------------------------------
+
+def list_active_download_tracks() -> List[Dict[str, Any]]:
+    """Returnt für alle queued/processing Download-Jobs ein dict mit
+    {job_id, artist, title, payload_json}. Wird vom playlist_sync-Worker
+    genutzt um Tracks zu finden, die zwar nicht in der Library liegen,
+    aber bereits zum Download gequeued sind — die bekommen die
+    Playlist-Memberships als Marker im Payload und landen nach dem
+    Download via _reconcile_imported_playlists in den richtigen Subsonic-
+    Playlists."""
+    import json as _json
+    conn = _db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT job_id, payload_json
+            FROM download_jobs
+            WHERE status IN ('queued', 'processing')
+              AND payload_json IS NOT NULL
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        try:
+            payload = _json.loads(r["payload_json"]) if r["payload_json"] else {}
+        except Exception:
+            continue
+        track = payload.get("track") or {}
+        artist = track.get("artist") or track.get("artist_name") or ""
+        title = track.get("title") or track.get("name") or ""
+        if artist and title:
+            out.append({
+                "job_id": r["job_id"],
+                "artist": artist,
+                "title": title,
+                "payload": payload,
+            })
+    return out
+
+
+def merge_playlist_names_into_download_job(job_id: str, new_names: List[str]) -> int:
+    """Liest payload_json eines download_jobs, merged new_names in den
+    `import_playlist_names`-Marker (dedup), schreibt zurück. Returnt die
+    Anzahl tatsächlich neu hinzugefügter Namen (0 wenn alles schon drin)."""
+    import json as _json
+    if not new_names:
+        return 0
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT payload_json FROM download_jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if not row or not row["payload_json"]:
+            return 0
+        try:
+            payload = _json.loads(row["payload_json"])
+        except Exception:
+            return 0
+        existing = payload.get("import_playlist_names") or []
+        if not isinstance(existing, list):
+            existing = []
+        merged = list(existing)
+        added = 0
+        for name in new_names:
+            if name and name not in merged:
+                merged.append(name)
+                added += 1
+        if added == 0:
+            return 0
+        payload["import_playlist_names"] = merged
+        conn.execute(
+            "UPDATE download_jobs SET payload_json = ?, updated_at_ms = ? WHERE job_id = ?",
+            (_json.dumps(payload), _now_ms(), job_id),
+        )
+        conn.commit()
+        return added
     finally:
         conn.close()

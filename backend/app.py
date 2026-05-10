@@ -2453,6 +2453,7 @@ async def import_job_status(job_id: str):
         "playlists_total": job.get("playlists_total", 0) or 0,
         "playlists_synced": job.get("playlists_synced", 0) or 0,
         "playlist_tracks_added": job.get("playlist_tracks_added", 0) or 0,
+        "playlist_queue_tagged": job.get("playlist_queue_tagged", 0) or 0,
         "source": source,
         "message": job.get("message", ""),
         "filename": job.get("filename"),

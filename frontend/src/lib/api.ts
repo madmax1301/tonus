@@ -563,6 +563,10 @@ export interface CsvImportStatus {
   playlists_total?: number;
   playlists_synced?: number;
   playlist_tracks_added?: number;
+  /** Anzahl Tracks die nicht in der Library waren, aber in der Download-
+   *  Queue gefunden wurden — bekamen Playlist-Memberships als Marker im
+   *  Download-Job-Payload, landen nach Download in den Subsonic-Playlists. */
+  playlist_queue_tagged?: number;
   /** Source-Marker: "csv" für klassischen Bulk-Import, "spotify_history" für
    *  Streaming-History-JSON, "playlist_sync" für Library-Match + Reconcile-
    *  only-Pfad. Frontend nutzt das fürs Tab-Label. */

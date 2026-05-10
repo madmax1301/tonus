@@ -1641,17 +1641,24 @@
                 <span style="color: var(--color-fg-tertiary);">unique Playlists</span>
                 <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
               {/if}
-              {#if csvResult.not_found > 0}
-                <span style="color: var(--color-status-error); font-weight: 500;"
-                  >{csvResult.not_found.toLocaleString('de-DE')}</span
-                >
-                <span style="color: var(--color-fg-tertiary);"> nicht in Library</span>
-                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
-              {/if}
               <span style="color: var(--color-fg-secondary); font-weight: 500;"
                 >{(csvResult.library_match_count ?? 0).toLocaleString('de-DE')}</span
               >
               <span style="color: var(--color-fg-tertiary);"> {$t('import.result.library_match_suffix')}</span>
+              {#if (csvStatus.playlist_queue_tagged ?? 0) > 0}
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+                <span style="color: var(--color-fg-secondary); font-weight: 500;"
+                  >{(csvStatus.playlist_queue_tagged ?? 0).toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> in Queue (mit Playlist-Marker)</span>
+              {/if}
+              {#if csvResult.not_found > 0}
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+                <span style="color: var(--color-status-error); font-weight: 500;"
+                  >{csvResult.not_found.toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> nicht in Library/Queue</span>
+              {/if}
             {:else}
               {#if csvResult.not_found > 0}
                 <span style="color: var(--color-status-error); font-weight: 500;"
