@@ -749,7 +749,7 @@ class JobWorker(threading.Thread):
                         message=f"Matched {completed_unique}/{unique_total} unique tracks{lane_str}...",
                     )
 
-        # ---- Phase 2.5: Recovery-Pass ------------------------------------
+        # ---- Phase 2.5: Recovery-Pass (zweistufig) -----------------------
         # Deezer (und ähnliche Music-APIs) reagiert auf Burst-Loads NICHT immer
         # mit 429, sondern oft mit `200 OK + data:[]` als Soft-Throttle. Mein
         # _is_transient-Check fängt das nicht — leeres Array sieht aus wie
@@ -757,22 +757,30 @@ class JobWorker(threading.Thread):
         # Treffer für Tracks die Phase 2 als unmatched markiert hat) ist das
         # die Hauptursache für ~30 % "False-Negatives" im Initial-Pass.
         #
-        # Recovery: Cooldown + sequenzieller Re-Search aller 0-Result-Keys.
-        # Sequenziell weil Throttle-State sich nur ohne Burst auflöst. Delay
-        # zwischen Calls hält uns weit unter Deezer's Soft-Limit.
-        recovery_keys = [k for k in unique_keys if cache.get(k) is None]
+        # Zweistufige Recovery (seit 2026-05-10):
+        #
+        # **Phase 2.5a (Fast)** — gleiche Concurrency wie Phase 2 (Thread-Pool
+        # + Lane-Splitting), kurzer 5s-Cooldown vorab. Hypothese: viele Misses
+        # sind nur temporär (kurze 429-Welle, Network-Glitch, Soft-Throttle
+        # der nach 5s vorbei ist). Schnell-Retry fängt 60-80 % davon.
+        #
+        # **Phase 2.5b (Slow)** — die nach Phase 2.5a noch verbleibenden Keys.
+        # Längerer 15s-Cooldown + sequenzieller Re-Search mit 0.4s zwischen
+        # Calls. Hypothese: hartnäckige Soft-Throttles brauchen sanfte
+        # Behandlung. Fängt die echten Edge-Cases.
+        #
+        # Bar-Weighting: Phase 2 endet bei 70 %, Fast-Recovery 70-80 %,
+        # Slow-Recovery 80-95 %, Phase 3 (DB-write) 95-100 %.
+        initial_recovery_keys = [k for k in unique_keys if cache.get(k) is None]
         recovery_recovered = 0
-        # Phase-Weighting: Initial endet bei 70 %, kein Recovery → 95 %,
-        # mit Recovery wandert die Bar von 70 % → 95 % über die Recovery-
-        # Calls. Phase 3 (DB-write) zieht final auf 100 %.
+        recovery_total_n = len(initial_recovery_keys)
         phase2_end = int(0.70 * total)
+        fast_recovery_end = int(0.80 * total)
         no_recovery_end = int(0.95 * total)
-        if recovery_keys:
-            cooldown_s = 15
-            recovery_total_n = len(recovery_keys)
-            # recovery_total wird jetzt schon hier in der DB gesetzt damit das
-            # Frontend einen "rechecked 0 / N"-Counter live anzeigen kann auch
-            # während des 15s-Cooldowns. recovery_recovered=0 als initial.
+
+        if initial_recovery_keys:
+            # ── Phase 2.5a: Fast Recovery ─────────────────────────────
+            fast_cooldown_s = 5
             upsert_import_job(
                 job_id,
                 status="processing",
@@ -781,12 +789,11 @@ class JobWorker(threading.Thread):
                 recovery_total=recovery_total_n,
                 recovery_recovered=0,
                 message=(
-                    f"Recovery-Phase: {recovery_total_n} Initial-Misses werden "
-                    f"nach {cooldown_s} s Cooldown sequenziell nochmal probiert..."
+                    f"Recovery (fast): {recovery_total_n} Initial-Misses werden "
+                    f"parallel re-geprüft nach {fast_cooldown_s}s Cooldown..."
                 ),
             )
-            # Cooldown in 1s-Chunks damit shutdown UND user-cancel reagieren.
-            for _ in range(cooldown_s):
+            for _ in range(fast_cooldown_s):
                 if self._stop.is_set():
                     upsert_import_job(job_id, status="error", message="Interrupted")
                     return
@@ -794,44 +801,114 @@ class JobWorker(threading.Thread):
                     return
                 time.sleep(1)
 
-            # Single-thread, default lane (kein Splitting), 0.4 s zwischen Calls.
-            # Bei 100 Recovery-Keys → ~40 s Phase-Dauer, akzeptabel.
-            for idx, k in enumerate(recovery_keys):
-                if self._stop.is_set():
-                    upsert_import_job(job_id, status="error", message="Interrupted")
-                    return
-                if _check_user_cancel(phase2_end + idx):
-                    return
-                try:
-                    _, result, _, _ = _do_search(k, "default")
-                except Exception:
-                    result = None
-                if result is not None:
-                    cache[k] = result
-                    recovery_recovered += 1
-                time.sleep(0.4)
-                if (idx + 1) % 5 == 0:
-                    # Recovery-Anteil: 25 % der Bar zwischen Phase-2-Ende und
-                    # 95 %, linear über alle Recovery-Calls verteilt.
-                    recovery_share = int(0.25 * total * (idx + 1) / recovery_total_n)
-                    # Live-Counter weiter pflegen — pro Recovery-Treffer steigt
-                    # `found` um eins (skaliert), `not_found` sinkt entsprechend.
-                    matched_unique = sum(1 for v in cache.values() if v is not None)
-                    unmatched_unique = unique_total - matched_unique
-                    scale = total / max(1, unique_total)
-                    upsert_import_job(
-                        job_id,
-                        status="processing",
-                        total=total,
-                        processed=min(phase2_end + recovery_share, no_recovery_end),
-                        found=int(matched_unique * scale),
-                        not_found=int(unmatched_unique * scale),
-                        recovery_recovered=recovery_recovered,
-                        message=(
-                            f"Recovery: {idx + 1}/{recovery_total_n} re-checked, "
-                            f"+{recovery_recovered} zusätzlich gefunden..."
-                        ),
-                    )
+            fast_done = 0
+            with ThreadPoolExecutor(max_workers=_CSV_SEARCH_CONCURRENCY) as pool:
+                if _VPN_SPLIT_ENABLED:
+                    futures = [
+                        pool.submit(_do_search, k, _CSV_LANES[idx % len(_CSV_LANES)])
+                        for idx, k in enumerate(initial_recovery_keys)
+                    ]
+                else:
+                    futures = [
+                        pool.submit(_do_search, k, "default")
+                        for k in initial_recovery_keys
+                    ]
+                for fut in as_completed(futures):
+                    if self._stop.is_set():
+                        for f in futures:
+                            f.cancel()
+                        upsert_import_job(job_id, status="error", message="Interrupted")
+                        return
+                    if _check_user_cancel(phase2_end + fast_done):
+                        for f in futures:
+                            f.cancel()
+                        return
+                    try:
+                        key, result, _, _ = fut.result()
+                    except Exception:
+                        continue
+                    fast_done += 1
+                    if result is not None:
+                        cache[key] = result
+                        recovery_recovered += 1
+                    if fast_done % _CSV_PROGRESS_EVERY == 0:
+                        # Fast-Anteil: 10 % der Bar zwischen 70 % und 80 %.
+                        fast_share = int(0.10 * total * fast_done / recovery_total_n)
+                        matched_unique = sum(1 for v in cache.values() if v is not None)
+                        unmatched_unique = unique_total - matched_unique
+                        scale = total / max(1, unique_total)
+                        upsert_import_job(
+                            job_id,
+                            status="processing",
+                            total=total,
+                            processed=min(phase2_end + fast_share, fast_recovery_end),
+                            found=int(matched_unique * scale),
+                            not_found=int(unmatched_unique * scale),
+                            recovery_recovered=recovery_recovered,
+                            message=(
+                                f"Recovery (fast): {fast_done}/{recovery_total_n} re-checked, "
+                                f"+{recovery_recovered} zusätzlich gefunden..."
+                            ),
+                        )
+
+            # ── Phase 2.5b: Slow Recovery ─────────────────────────────
+            slow_recovery_keys = [k for k in initial_recovery_keys if cache.get(k) is None]
+            if slow_recovery_keys:
+                slow_cooldown_s = 15
+                slow_total_n = len(slow_recovery_keys)
+                upsert_import_job(
+                    job_id,
+                    status="processing",
+                    total=total,
+                    processed=fast_recovery_end,
+                    recovery_recovered=recovery_recovered,
+                    message=(
+                        f"Recovery (slow): {slow_total_n} verbleibende Misses werden "
+                        f"nach {slow_cooldown_s}s Cooldown sequenziell re-geprüft..."
+                    ),
+                )
+                for _ in range(slow_cooldown_s):
+                    if self._stop.is_set():
+                        upsert_import_job(job_id, status="error", message="Interrupted")
+                        return
+                    if _check_user_cancel(fast_recovery_end):
+                        return
+                    time.sleep(1)
+
+                # Sequenziell, default lane, 0.4s zwischen Calls.
+                for idx, k in enumerate(slow_recovery_keys):
+                    if self._stop.is_set():
+                        upsert_import_job(job_id, status="error", message="Interrupted")
+                        return
+                    if _check_user_cancel(fast_recovery_end + idx):
+                        return
+                    try:
+                        _, result, _, _ = _do_search(k, "default")
+                    except Exception:
+                        result = None
+                    if result is not None:
+                        cache[k] = result
+                        recovery_recovered += 1
+                    time.sleep(0.4)
+                    if (idx + 1) % 5 == 0:
+                        # Slow-Anteil: 15 % der Bar zwischen 80 % und 95 %.
+                        slow_share = int(0.15 * total * (idx + 1) / slow_total_n)
+                        matched_unique = sum(1 for v in cache.values() if v is not None)
+                        unmatched_unique = unique_total - matched_unique
+                        scale = total / max(1, unique_total)
+                        upsert_import_job(
+                            job_id,
+                            status="processing",
+                            total=total,
+                            processed=min(fast_recovery_end + slow_share, no_recovery_end),
+                            found=int(matched_unique * scale),
+                            not_found=int(unmatched_unique * scale),
+                            recovery_recovered=recovery_recovered,
+                            message=(
+                                f"Recovery (slow): {idx + 1}/{slow_total_n} re-checked, "
+                                f"+{recovery_recovered} total recovered..."
+                            ),
+                        )
         else:
             # Kein Recovery nötig — direkt zur 95 %-Marke springen, Phase 3
             # erledigt den letzten Schritt zu 100 %.
