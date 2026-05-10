@@ -136,6 +136,12 @@ def init_jobs_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_import_jobs_lane "
             "ON import_jobs(status, source, mode, created_at_ms)"
         )
+        # Playlist-Sync-Result-Summary (2026-05-10). Wird vom Endpoint gesetzt
+        # (playlists_total = unique playlist-names in CSV) und vom Worker beim
+        # mode-switch playlist_sync ergänzt (synced / tracks_added).
+        _ensure_column(conn, "import_jobs", "playlists_total", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "import_jobs", "playlists_synced", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "import_jobs", "playlist_tracks_added", "INTEGER NOT NULL DEFAULT 0")
 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS import_results (
@@ -515,6 +521,9 @@ def upsert_import_job(
     phase0_progress: Optional[int] = None,
     mode: Optional[str] = None,
     source: Optional[str] = None,
+    playlists_total: Optional[int] = None,
+    playlists_synced: Optional[int] = None,
+    playlist_tracks_added: Optional[int] = None,
 ) -> None:
     """
     Partial upsert: nur Felder mit non-None werden im Update-Pfad
@@ -544,6 +553,7 @@ def upsert_import_job(
                 message, filename, payload_json,
                 recovery_total, recovery_recovered, phase0_progress,
                 mode, source,
+                playlists_total, playlists_synced, playlist_tracks_added,
                 created_at_ms, updated_at_ms
             )
             VALUES (
@@ -560,29 +570,36 @@ def upsert_import_job(
                 COALESCE(?, 0),
                 COALESCE(?, 'full'),
                 COALESCE(?, 'csv'),
+                COALESCE(?, 0),
+                COALESCE(?, 0),
+                COALESCE(?, 0),
                 ?, ?
             )
             ON CONFLICT(job_id) DO UPDATE SET
-                status             = COALESCE(excluded.status,             import_jobs.status),
-                total              = COALESCE(excluded.total,              import_jobs.total),
-                processed          = COALESCE(excluded.processed,          import_jobs.processed),
-                found              = COALESCE(excluded.found,              import_jobs.found),
-                not_found          = COALESCE(excluded.not_found,          import_jobs.not_found),
-                message            = COALESCE(excluded.message,            import_jobs.message),
-                filename           = COALESCE(excluded.filename,           import_jobs.filename),
-                payload_json       = COALESCE(excluded.payload_json,       import_jobs.payload_json),
-                recovery_total     = COALESCE(excluded.recovery_total,     import_jobs.recovery_total),
-                recovery_recovered = COALESCE(excluded.recovery_recovered, import_jobs.recovery_recovered),
-                phase0_progress    = COALESCE(excluded.phase0_progress,    import_jobs.phase0_progress),
-                mode               = COALESCE(excluded.mode,               import_jobs.mode),
-                source             = COALESCE(excluded.source,             import_jobs.source),
-                updated_at_ms      = excluded.updated_at_ms
+                status                = COALESCE(excluded.status,                import_jobs.status),
+                total                 = COALESCE(excluded.total,                 import_jobs.total),
+                processed             = COALESCE(excluded.processed,             import_jobs.processed),
+                found                 = COALESCE(excluded.found,                 import_jobs.found),
+                not_found             = COALESCE(excluded.not_found,             import_jobs.not_found),
+                message               = COALESCE(excluded.message,               import_jobs.message),
+                filename              = COALESCE(excluded.filename,              import_jobs.filename),
+                payload_json          = COALESCE(excluded.payload_json,          import_jobs.payload_json),
+                recovery_total        = COALESCE(excluded.recovery_total,        import_jobs.recovery_total),
+                recovery_recovered    = COALESCE(excluded.recovery_recovered,    import_jobs.recovery_recovered),
+                phase0_progress       = COALESCE(excluded.phase0_progress,       import_jobs.phase0_progress),
+                mode                  = COALESCE(excluded.mode,                  import_jobs.mode),
+                source                = COALESCE(excluded.source,                import_jobs.source),
+                playlists_total       = COALESCE(excluded.playlists_total,       import_jobs.playlists_total),
+                playlists_synced      = COALESCE(excluded.playlists_synced,      import_jobs.playlists_synced),
+                playlist_tracks_added = COALESCE(excluded.playlist_tracks_added, import_jobs.playlist_tracks_added),
+                updated_at_ms         = excluded.updated_at_ms
             """,
             (
                 job_id, status, total, processed, found, not_found,
                 message, filename, payload_json,
                 recovery_total, recovery_recovered, phase0_progress,
                 mode, source,
+                playlists_total, playlists_synced, playlist_tracks_added,
                 now, now,
             ),
         )

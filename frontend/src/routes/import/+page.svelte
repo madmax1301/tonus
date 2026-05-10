@@ -1612,26 +1612,58 @@
               color: var(--color-fg-primary);
             "
           >
-            <span class="tabular-nums">{csvResult.found.toLocaleString('de-DE')}</span>
-            <span style="font-size: clamp(16px, 3.6vw, 22px); color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
-              matched
-            </span>
+            {#if csvStatus?.source === 'playlist_sync'}
+              <!-- Playlist-Sync-Hero: zeigt die Anzahl der Playlists +
+                   Tracks-Added als Hauptzahl, weil "matched" bei
+                   playlist_sync bedeutungslos ist (kein Provider-Match). -->
+              <span class="tabular-nums">{(csvStatus.playlist_tracks_added ?? 0).toLocaleString('de-DE')}</span>
+              <span style="font-size: clamp(16px, 3.6vw, 22px); color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
+                tracks → {(csvStatus.playlists_synced ?? 0).toLocaleString('de-DE')} Playlists
+              </span>
+            {:else}
+              <span class="tabular-nums">{csvResult.found.toLocaleString('de-DE')}</span>
+              <span style="font-size: clamp(16px, 3.6vw, 22px); color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
+                matched
+              </span>
+            {/if}
           </div>
           <div class="mt-3 text-[14px]" style="color: var(--color-fg-secondary);">
-            {#if csvResult.not_found > 0}
-              <span style="color: var(--color-status-error); font-weight: 500;"
-                >{csvResult.not_found.toLocaleString('de-DE')}</span
-              >
-              <span style="color: var(--color-fg-tertiary);"> {$t('import.result.not_found_suffix')}</span>
-            {:else}
-              {$t('import.result.all_found')}
-            {/if}
-            {#if (csvResult.library_match_count ?? 0) > 0}
-              <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+            {#if csvStatus?.source === 'playlist_sync'}
+              {#if (csvStatus.playlists_total ?? 0) > 0}
+                <span style="color: var(--color-fg-tertiary);">CSV enthielt</span>
+                <span style="color: var(--color-fg-secondary); font-weight: 500;">
+                  {(csvStatus.playlists_total ?? 0).toLocaleString('de-DE')}
+                </span>
+                <span style="color: var(--color-fg-tertiary);">unique Playlists</span>
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+              {/if}
+              {#if csvResult.not_found > 0}
+                <span style="color: var(--color-status-error); font-weight: 500;"
+                  >{csvResult.not_found.toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> nicht in Library</span>
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+              {/if}
               <span style="color: var(--color-fg-secondary); font-weight: 500;"
                 >{(csvResult.library_match_count ?? 0).toLocaleString('de-DE')}</span
               >
               <span style="color: var(--color-fg-tertiary);"> {$t('import.result.library_match_suffix')}</span>
+            {:else}
+              {#if csvResult.not_found > 0}
+                <span style="color: var(--color-status-error); font-weight: 500;"
+                  >{csvResult.not_found.toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> {$t('import.result.not_found_suffix')}</span>
+              {:else}
+                {$t('import.result.all_found')}
+              {/if}
+              {#if (csvResult.library_match_count ?? 0) > 0}
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+                <span style="color: var(--color-fg-secondary); font-weight: 500;"
+                  >{(csvResult.library_match_count ?? 0).toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> {$t('import.result.library_match_suffix')}</span>
+              {/if}
             {/if}
           </div>
         </div>
@@ -1650,30 +1682,35 @@
           >
             {$t('import.result.new_import')}
           </button>
-          <button
-            onclick={(e) => queueAllMatched(e)}
-            disabled={csvQueueAllBusy || csvResult.found === 0}
-            class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
-            style="
-              background: {accent};
-              color: #1a1410;
-              padding: 10px 22px;
-              border-radius: 999px;
-              font-size: 12px;
-              font-weight: 600;
-              letter-spacing: 0.04em;
-              text-transform: uppercase;
-              box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
-            "
-          >
-            {#if csvQueueAllBusy}
-              <Loader2 size={13} class="animate-spin" />
-              Queue …
-            {:else}
-              <Download size={13} strokeWidth={2} />
-              {csvResult.found.toLocaleString('de-DE')} queuen
-            {/if}
-          </button>
+          {#if csvStatus?.source !== 'playlist_sync'}
+            <!-- Queue-All-Button nur für CSV-Bulk + Spotify-History — bei
+                 Playlist-Sync gibt's nichts zu queuen, alle Treffer sind
+                 schon in der Library. -->
+            <button
+              onclick={(e) => queueAllMatched(e)}
+              disabled={csvQueueAllBusy || csvResult.found === 0}
+              class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+              style="
+                background: {accent};
+                color: #1a1410;
+                padding: 10px 22px;
+                border-radius: 999px;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+              "
+            >
+              {#if csvQueueAllBusy}
+                <Loader2 size={13} class="animate-spin" />
+                Queue …
+              {:else}
+                <Download size={13} strokeWidth={2} />
+                {csvResult.found.toLocaleString('de-DE')} queuen
+              {/if}
+            </button>
+          {/if}
         </div>
       </div>
       {#if csvQueueAllResult}

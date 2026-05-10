@@ -590,6 +590,8 @@ class JobWorker(threading.Thread):
                 found=len(library_hits),
                 not_found=len(misses_not_found),
                 phase0_progress=100,
+                playlists_synced=int(recon_summary.get("playlists", 0) or 0),
+                playlist_tracks_added=int(recon_summary.get("tracks_added", 0) or 0),
                 message=(
                     f"Playlist-Sync done — {recon_summary.get('tracks_added', 0)} "
                     f"tracks added to {recon_summary.get('playlists', 0)} playlist(s), "

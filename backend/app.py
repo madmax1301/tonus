@@ -2223,6 +2223,13 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     # (csv / spotify_history / playlist_sync). mode steuert ob Provider/
     # Download-Phasen ausgeführt werden.
     job_source = "playlist_sync" if mode == "playlist_sync" else "csv"
+    # Pre-stats für Result-Card: wieviele unique Playlists wurden in der CSV
+    # gefunden. Wird vom Worker als "playlists_total" durchgereicht und vom
+    # Frontend als "Playlists in CSV" angezeigt — User soll auf einen Blick
+    # sehen ob sein Export überhaupt Playlist-Spalten hatte.
+    playlists_in_csv = len({
+        name for p in parsed for name in (p.get("playlist_names") or [])
+    })
     upsert_import_job(
         job_id,
         status="queued",
@@ -2232,6 +2239,7 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
         payload_json=payload,
         mode=mode,
         source=job_source,
+        playlists_total=playlists_in_csv,
     )
 
     # Store parsed items in a temp table so the worker can read them
@@ -2405,6 +2413,9 @@ async def import_job_status(job_id: str):
         "recovery_total": job.get("recovery_total", 0) or 0,
         "recovery_recovered": job.get("recovery_recovered", 0) or 0,
         "phase0_progress": job.get("phase0_progress", 0) or 0,
+        "playlists_total": job.get("playlists_total", 0) or 0,
+        "playlists_synced": job.get("playlists_synced", 0) or 0,
+        "playlist_tracks_added": job.get("playlist_tracks_added", 0) or 0,
         "source": source,
         "message": job.get("message", ""),
         "filename": job.get("filename"),

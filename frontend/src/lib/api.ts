@@ -556,6 +556,13 @@ export interface CsvImportStatus {
    *  bewegt — der Counter (processed/total) bleibt bei 0 weil noch keine
    *  Tracks tatsächlich gematcht sind. */
   phase0_progress?: number;
+  /** Playlist-Sync-Stats. playlists_total = unique Playlist-Namen in der
+   *  CSV (vom Endpoint beim Submit gezählt), playlists_synced = Playlists
+   *  die der Reconcile in Navidrome touched hat, playlist_tracks_added =
+   *  Tracks die zu Subsonic-Playlists hinzugefügt wurden. */
+  playlists_total?: number;
+  playlists_synced?: number;
+  playlist_tracks_added?: number;
   /** Source-Marker: "csv" für klassischen Bulk-Import, "spotify_history" für
    *  Streaming-History-JSON, "playlist_sync" für Library-Match + Reconcile-
    *  only-Pfad. Frontend nutzt das fürs Tab-Label. */
