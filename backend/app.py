@@ -2183,18 +2183,9 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
                 "playlist_names": playlist_names,
             })
 
-    # Diagnose-Log + Empty-Guard: wenn der Parser nichts findet, sofort
-    # 400 zurück statt einen Stub-Job in DB anzulegen. Dann sieht User die
-    # Fehler im Submit-Response statt einem kryptischen Worker-State
-    # ("No pending items found"). Container-Log zeigt zusätzlich body-size
-    # + row-count damit man bei Encoding/Truncation-Verdacht die Werte hat.
-    print(
-        f"[import_csv] received csv_text len={len(request.csv_text)} "
-        f"raw_rows={len(rows)} parsed={len(parsed)} "
-        f"col_artist={col_artist} col_title={col_title} col_playlist={col_playlist} "
-        f"mode={request.mode!r} filename={request.filename!r}",
-        flush=True,
-    )
+    # Empty-Guard: wenn der Parser nichts findet, sofort 400 zurück statt
+    # einen Stub-Job in DB anzulegen — sonst sieht User nur kryptischen
+    # Worker-State ("No pending items found") in der UI.
     if not parsed:
         raise HTTPException(
             status_code=400,
@@ -2253,11 +2244,6 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     playlists_in_csv = len({
         name for p in parsed for name in (p.get("playlist_names") or [])
     })
-    print(
-        f"[import_csv] BEFORE-UPSERT job_id={job_id} mode={mode!r} "
-        f"job_source={job_source!r} playlists_in_csv={playlists_in_csv}",
-        flush=True,
-    )
     upsert_import_job(
         job_id,
         status="queued",
@@ -2268,15 +2254,6 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
         mode=mode,
         source=job_source,
         playlists_total=playlists_in_csv,
-    )
-    # Direkt nach dem upsert die DB-Werte zurücklesen damit wir definitiv
-    # sehen ob upsert die Werte persistiert hat
-    from utils.job_store import get_import_job as _get_job_dbg
-    _dbg = _get_job_dbg(job_id) or {}
-    print(
-        f"[import_csv] AFTER-UPSERT job_id={job_id} db_mode={_dbg.get('mode')!r} "
-        f"db_source={_dbg.get('source')!r} db_total={_dbg.get('total')!r}",
-        flush=True,
     )
 
     # Store parsed items in a temp table so the worker can read them

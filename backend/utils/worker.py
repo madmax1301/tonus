@@ -330,10 +330,6 @@ class JobWorker(threading.Thread):
             ).fetchone()
             if not row:
                 return None
-            print(
-                f"[worker:import:{self._import_lane}] picked job {row['job_id']}",
-                flush=True,
-            )
             conn.execute(
                 "UPDATE import_jobs SET status='processing', updated_at_ms=? WHERE job_id=?",
                 (_now_ms(), row["job_id"]),
