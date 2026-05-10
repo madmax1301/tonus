@@ -283,7 +283,7 @@ class NavidromeService:
 
         on_progress: optionaler Callable(file_count, sigs_count) der alle ~500
         Files aufgerufen wird damit Caller live-Status-Updates schreiben kann
-        (Worker → upsert_csv_job message). Cache-Hits triggern den Callback
+        (Worker → upsert_import_job message). Cache-Hits triggern den Callback
         nicht — der wäre da auch sinnlos (instant return).
         """
         global _LIBRARY_SIG_CACHE

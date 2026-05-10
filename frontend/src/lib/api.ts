@@ -607,25 +607,25 @@ export const importApi = {
       limit,
       filename
     }),
-  status: (jobId: string) => api.get<CsvImportStatus>(`/api/import/csv/status/${jobId}`),
+  status: (jobId: string) => api.get<CsvImportStatus>(`/api/import/jobs/${jobId}/status`),
   result: (jobId: string, offset = 0, limit = 200) =>
     api.get<CsvImportResult>(
-      `/api/import/csv/result/${jobId}?offset=${offset}&limit=${limit}`
+      `/api/import/jobs/${jobId}/result?offset=${offset}&limit=${limit}`
     ),
-  cancel: (jobId: string) => api.post<{ ok: boolean }>(`/api/import/csv/${jobId}/cancel`),
+  cancel: (jobId: string) => api.post<{ ok: boolean }>(`/api/import/jobs/${jobId}/cancel`),
   queueAll: (
     jobId: string,
     opts: { location?: 'local' | 'navidrome'; provider?: string } = {}
   ) =>
     api.post<{ queued?: number; skipped?: number; message?: string }>(
-      `/api/import/csv/queue-all/${jobId}`,
+      `/api/import/jobs/${jobId}/queue-all`,
       { location: opts.location ?? 'navidrome', provider: opts.provider }
     ),
   /**
    * Phase I.2 — Spotify Extended Streaming History Import.
    * Frontend hat die JSON-Files schon geparsed (FileReader + JSON.parse) und
    * sendet die Top-Level-Arrays als `files`. Backend aggregiert pro Track
-   * und legt einen csv_import_job an, der durch dieselbe Pipeline läuft wie
+   * und legt einen import_job an, der durch dieselbe Pipeline läuft wie
    * ein normaler CSV-Import (Library-Match → Provider → Queue → Reconcile).
    */
   startSpotifyHistory: (

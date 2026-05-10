@@ -70,9 +70,31 @@ def init_jobs_db() -> None:
         )
         """)
 
-        # CSV Import — persistente Jobs (überleben Server-Neustarts)
+        # Schema-Rename csv_import_* → import_* (2026-05-10, v0.3.0). Wenn auf
+        # einer alten DB die csv_import_jobs/csv_import_results Tabellen
+        # existieren und die neuen Namen NOCH NICHT, machen wir ein in-place
+        # ALTER TABLE RENAME — Daten bleiben erhalten. Idempotent: kommt
+        # niemand zweimal in den Branch.
+        def _rename_if_legacy(old: str, new: str) -> None:
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (old,)
+            )
+            has_old = cur.fetchone() is not None
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (new,)
+            )
+            has_new = cur.fetchone() is not None
+            if has_old and not has_new:
+                conn.execute(f"ALTER TABLE {old} RENAME TO {new}")
+                print(f"[job_store] migrated table {old} → {new}")
+        _rename_if_legacy("csv_import_jobs", "import_jobs")
+        _rename_if_legacy("csv_import_results", "import_results")
+
+        # Import-Jobs — persistente Jobs (überleben Server-Neustarts).
+        # CSV + Spotify-History teilen sich diese Tabelle, Source steht in
+        # payload_json["source"].
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS csv_import_jobs (
+        CREATE TABLE IF NOT EXISTS import_jobs (
             job_id TEXT PRIMARY KEY,
             status TEXT NOT NULL DEFAULT 'queued',
             total INTEGER NOT NULL DEFAULT 0,
@@ -89,22 +111,22 @@ def init_jobs_db() -> None:
         # Bestehende DBs nachziehen — vor diesen Spalten lebte der Worker mit
         # einem `message`-Feld-Hijack ("provider|limit|pending_raw"), der
         # zwei Zwecke vermischte: User-Status-Anzeige + Job-Payload. Trennen.
-        _ensure_column(conn, "csv_import_jobs", "filename", "TEXT")
-        _ensure_column(conn, "csv_import_jobs", "payload_json", "TEXT")
+        _ensure_column(conn, "import_jobs", "filename", "TEXT")
+        _ensure_column(conn, "import_jobs", "payload_json", "TEXT")
         # Recovery-Phase-Counter (Phase 2.5) — damit das Frontend live anzeigen
         # kann wieviele Tracks rechecked wurden und wieviele davon gerettet
         # waren. Vorher nur in der Status-Message als Text — kein machine-
         # readable counter im UI verfügbar.
-        _ensure_column(conn, "csv_import_jobs", "recovery_total", "INTEGER NOT NULL DEFAULT 0")
-        _ensure_column(conn, "csv_import_jobs", "recovery_recovered", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "import_jobs", "recovery_total", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "import_jobs", "recovery_recovered", "INTEGER NOT NULL DEFAULT 0")
         # Phase 0 Library-Scan-Progress (0–100). Wird vom Worker während des
         # Filesystem-Scans live gesetzt, damit die ProgressLine im Frontend
         # bereits in Phase 0 Bewegung zeigt — der Track-Counter (processed/total)
         # bleibt bei 0 weil noch keine Tracks tatsächlich gematcht sind.
-        _ensure_column(conn, "csv_import_jobs", "phase0_progress", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "import_jobs", "phase0_progress", "INTEGER NOT NULL DEFAULT 0")
 
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS csv_import_results (
+        CREATE TABLE IF NOT EXISTS import_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_id TEXT NOT NULL,
             result_type TEXT NOT NULL,
@@ -112,16 +134,16 @@ def init_jobs_db() -> None:
             requested_artist TEXT,
             requested_title TEXT,
             track_json TEXT,
-            FOREIGN KEY (job_id) REFERENCES csv_import_jobs(job_id)
+            FOREIGN KEY (job_id) REFERENCES import_jobs(job_id)
         )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_csv_results_job ON csv_import_results(job_id, result_type)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_csv_results_job ON import_results(job_id, result_type)")
         # Phase I: Playlist-aware Import. Trägt die Playlist(s) auf denen ein
         # Track im Source-CSV stand durch alle Phasen — Phase 0 library_match,
         # Phase 2 matched, Phase 4 download → reconcile als Subsonic-Playlist.
         # JSON-Liste damit ein Track auf mehreren Playlists landen kann
         # (TuneMyMusic kann multi-playlist-Exports erzeugen).
-        _ensure_column(conn, "csv_import_results", "playlist_names_json", "TEXT")
+        _ensure_column(conn, "import_results", "playlist_names_json", "TEXT")
 
         # ── Phase F: Multi-User-Auth ─────────────────────────────
         # users — registrierte Konten. password_hash = argon2id, totp_secret =
@@ -266,7 +288,7 @@ def reset_stale_inflight_jobs() -> int:
         conn.close()
 
 
-def reset_stale_csv_jobs() -> Dict[str, int]:
+def reset_stale_import_jobs() -> Dict[str, int]:
     """
     After a process restart, mark any in-flight CSV imports as 'error' and clean up
     their staging data (pending_raw / claimed). Old matched/unmatched results stay
@@ -278,19 +300,19 @@ def reset_stale_csv_jobs() -> Dict[str, int]:
     conn = _db()
     try:
         stale_ids = [r["job_id"] for r in conn.execute(
-            "SELECT job_id FROM csv_import_jobs WHERE status IN ('queued', 'processing')"
+            "SELECT job_id FROM import_jobs WHERE status IN ('queued', 'processing')"
         ).fetchall()]
         n_jobs = 0
         n_rows = 0
         if stale_ids:
             placeholders = ",".join("?" * len(stale_ids))
             cur = conn.execute(
-                f"DELETE FROM csv_import_results WHERE job_id IN ({placeholders}) AND result_type IN ('pending_raw', 'claimed')",
+                f"DELETE FROM import_results WHERE job_id IN ({placeholders}) AND result_type IN ('pending_raw', 'claimed')",
                 stale_ids,
             )
             n_rows = cur.rowcount or 0
             cur = conn.execute(
-                f"UPDATE csv_import_jobs SET status = 'error', message = 'Interrupted — server restarted', updated_at_ms = ? WHERE job_id IN ({placeholders})",
+                f"UPDATE import_jobs SET status = 'error', message = 'Interrupted — server restarted', updated_at_ms = ? WHERE job_id IN ({placeholders})",
                 (now, *stale_ids),
             )
             n_jobs = cur.rowcount or 0
@@ -465,7 +487,7 @@ def get_album_aggregate(album_id: str, *, exclude_job_id: Optional[str] = None) 
 # CSV-Import helpers (persistente Jobs in SQLite)
 # ---------------------------------------------------------------------------
 
-def upsert_csv_job(
+def upsert_import_job(
     job_id: str,
     *,
     status: Optional[str] = None,
@@ -503,7 +525,7 @@ def upsert_csv_job(
     try:
         conn.execute(
             """
-            INSERT INTO csv_import_jobs (
+            INSERT INTO import_jobs (
                 job_id, status, total, processed, found, not_found,
                 message, filename, payload_json,
                 recovery_total, recovery_recovered, phase0_progress,
@@ -524,17 +546,17 @@ def upsert_csv_job(
                 ?, ?
             )
             ON CONFLICT(job_id) DO UPDATE SET
-                status             = COALESCE(excluded.status,             csv_import_jobs.status),
-                total              = COALESCE(excluded.total,              csv_import_jobs.total),
-                processed          = COALESCE(excluded.processed,          csv_import_jobs.processed),
-                found              = COALESCE(excluded.found,              csv_import_jobs.found),
-                not_found          = COALESCE(excluded.not_found,          csv_import_jobs.not_found),
-                message            = COALESCE(excluded.message,            csv_import_jobs.message),
-                filename           = COALESCE(excluded.filename,           csv_import_jobs.filename),
-                payload_json       = COALESCE(excluded.payload_json,       csv_import_jobs.payload_json),
-                recovery_total     = COALESCE(excluded.recovery_total,     csv_import_jobs.recovery_total),
-                recovery_recovered = COALESCE(excluded.recovery_recovered, csv_import_jobs.recovery_recovered),
-                phase0_progress    = COALESCE(excluded.phase0_progress,    csv_import_jobs.phase0_progress),
+                status             = COALESCE(excluded.status,             import_jobs.status),
+                total              = COALESCE(excluded.total,              import_jobs.total),
+                processed          = COALESCE(excluded.processed,          import_jobs.processed),
+                found              = COALESCE(excluded.found,              import_jobs.found),
+                not_found          = COALESCE(excluded.not_found,          import_jobs.not_found),
+                message            = COALESCE(excluded.message,            import_jobs.message),
+                filename           = COALESCE(excluded.filename,           import_jobs.filename),
+                payload_json       = COALESCE(excluded.payload_json,       import_jobs.payload_json),
+                recovery_total     = COALESCE(excluded.recovery_total,     import_jobs.recovery_total),
+                recovery_recovered = COALESCE(excluded.recovery_recovered, import_jobs.recovery_recovered),
+                phase0_progress    = COALESCE(excluded.phase0_progress,    import_jobs.phase0_progress),
                 updated_at_ms      = excluded.updated_at_ms
             """,
             (
@@ -549,7 +571,7 @@ def upsert_csv_job(
         conn.close()
 
 
-def cancel_csv_job(job_id: str) -> bool:
+def cancel_import_job(job_id: str) -> bool:
     """User-Cancel via UI-Button. Setzt status='cancelled' direkt in der DB —
     der Worker pollt diesen Status zwischen Phase-Schritten und bricht
     ab wenn er ihn sieht. Returnt True wenn ein laufender Job gefunden
@@ -559,7 +581,7 @@ def cancel_csv_job(job_id: str) -> bool:
     try:
         cur = conn.execute(
             """
-            UPDATE csv_import_jobs
+            UPDATE import_jobs
             SET status = 'cancelled',
                 message = 'Cancelled by user',
                 updated_at_ms = ?
@@ -574,14 +596,14 @@ def cancel_csv_job(job_id: str) -> bool:
         conn.close()
 
 
-def is_csv_job_cancelled(job_id: str) -> bool:
+def is_import_job_cancelled(job_id: str) -> bool:
     """Worker-Helper: prüft ob ein laufender Job per UI gecancelled wurde.
     Wird zwischen Phase-Schritten gepollt damit Cancel quasi-instant wirkt
     (max 1 Phase-Step Latenz). Cheap query — index auf job_id (PK)."""
     conn = _db()
     try:
         row = conn.execute(
-            "SELECT status FROM csv_import_jobs WHERE job_id = ?",
+            "SELECT status FROM import_jobs WHERE job_id = ?",
             (job_id,),
         ).fetchone()
         if not row:
@@ -591,23 +613,23 @@ def is_csv_job_cancelled(job_id: str) -> bool:
         conn.close()
 
 
-def get_csv_job(job_id: str) -> Optional[Dict[str, Any]]:
+def get_import_job(job_id: str) -> Optional[Dict[str, Any]]:
     conn = _db()
     try:
-        row = conn.execute("SELECT * FROM csv_import_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        row = conn.execute("SELECT * FROM import_jobs WHERE job_id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
-def insert_csv_results(job_id: str, result_type: str, items: list) -> None:
+def insert_import_results(job_id: str, result_type: str, items: list) -> None:
     """Phase I: items dürfen optional `playlist_names: List[str]` enthalten —
     werden als JSON in playlist_names_json gespeichert, damit Reconcile später
     weiß auf welcher Subsonic-Playlist der Track landen soll."""
     conn = _db()
     try:
         conn.executemany(
-            "INSERT INTO csv_import_results (job_id, result_type, original, requested_artist, requested_title, track_json, playlist_names_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO import_results (job_id, result_type, original, requested_artist, requested_title, track_json, playlist_names_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     job_id,
@@ -626,7 +648,7 @@ def insert_csv_results(job_id: str, result_type: str, items: list) -> None:
         conn.close()
 
 
-def get_csv_results(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str, Any]:
+def get_import_results(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str, Any]:
     """Drei Buckets seit Phase H:
     - matched          → Provider-Lookup hat einen Treffer geliefert (downloadbar)
     - library_match    → bereits in Navidrome-Library, kein Download nötig (Phase H)
@@ -637,15 +659,15 @@ def get_csv_results(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str,
     conn = _db()
     try:
         matched = conn.execute(
-            "SELECT * FROM csv_import_results WHERE job_id = ? AND result_type = 'matched' ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT * FROM import_results WHERE job_id = ? AND result_type = 'matched' ORDER BY id LIMIT ? OFFSET ?",
             (job_id, limit, offset),
         ).fetchall()
         unmatched = conn.execute(
-            "SELECT * FROM csv_import_results WHERE job_id = ? AND result_type = 'unmatched' ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT * FROM import_results WHERE job_id = ? AND result_type = 'unmatched' ORDER BY id LIMIT ? OFFSET ?",
             (job_id, limit, offset),
         ).fetchall()
         library_match = conn.execute(
-            "SELECT * FROM csv_import_results WHERE job_id = ? AND result_type = 'library_match' ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT * FROM import_results WHERE job_id = ? AND result_type = 'library_match' ORDER BY id LIMIT ? OFFSET ?",
             (job_id, limit, offset),
         ).fetchall()
 
@@ -672,7 +694,7 @@ def get_csv_results(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str,
         conn.close()
 
 
-def get_csv_library_matches_with_playlists(job_id: str) -> List[Dict[str, Any]]:
+def get_import_library_matches_with_playlists(job_id: str) -> List[Dict[str, Any]]:
     """Phase I-Edge-Case: liefert alle library_match-Rows eines Jobs die
     `playlist_names_json` haben. Wird vom Reconcile gebraucht, weil Library-
     Match-Tracks keinen Download-Job erzeugen und damit aus dem normalen
@@ -686,7 +708,7 @@ def get_csv_library_matches_with_playlists(job_id: str) -> List[Dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT requested_artist, requested_title, playlist_names_json
-            FROM csv_import_results
+            FROM import_results
             WHERE job_id = ?
               AND result_type = 'library_match'
               AND playlist_names_json IS NOT NULL
@@ -712,21 +734,21 @@ def get_csv_library_matches_with_playlists(job_id: str) -> List[Dict[str, Any]]:
     return out
 
 
-def count_csv_results(job_id: str) -> Dict[str, int]:
+def count_import_results(job_id: str) -> Dict[str, int]:
     """Returns Counts für drei Buckets seit Phase H. matched/unmatched
     bleiben backward-kompatibel; library_match ist neu."""
     conn = _db()
     try:
         matched = conn.execute(
-            "SELECT COUNT(*) AS n FROM csv_import_results WHERE job_id = ? AND result_type = 'matched'",
+            "SELECT COUNT(*) AS n FROM import_results WHERE job_id = ? AND result_type = 'matched'",
             (job_id,),
         ).fetchone()["n"]
         unmatched = conn.execute(
-            "SELECT COUNT(*) AS n FROM csv_import_results WHERE job_id = ? AND result_type = 'unmatched'",
+            "SELECT COUNT(*) AS n FROM import_results WHERE job_id = ? AND result_type = 'unmatched'",
             (job_id,),
         ).fetchone()["n"]
         library_match = conn.execute(
-            "SELECT COUNT(*) AS n FROM csv_import_results WHERE job_id = ? AND result_type = 'library_match'",
+            "SELECT COUNT(*) AS n FROM import_results WHERE job_id = ? AND result_type = 'library_match'",
             (job_id,),
         ).fetchone()["n"]
         return {"matched": matched, "unmatched": unmatched, "library_match": library_match}

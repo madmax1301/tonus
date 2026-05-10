@@ -23,10 +23,10 @@ from utils.job_store import (
     _db,
     _now_ms,
     upsert_job,
-    upsert_csv_job,
-    insert_csv_results,
+    upsert_import_job,
+    insert_import_results,
     get_job,
-    is_csv_job_cancelled,
+    is_import_job_cancelled,
 )
 
 
@@ -198,9 +198,9 @@ class JobWorker(threading.Thread):
                         consecutive_errors = 0
                         continue
                 else:
-                    csv_job = self._poll_next_queued_csv()
-                    if csv_job:
-                        self._process_csv_import(csv_job)
+                    import_job = self._poll_next_queued_import()
+                    if import_job:
+                        self._process_import_job(import_job)
                         consecutive_errors = 0
                         continue
                 self._stop.wait(timeout=2.0)
@@ -275,13 +275,13 @@ class JobWorker(threading.Thread):
     # CSV import job polling
     # ------------------------------------------------------------------
 
-    def _poll_next_queued_csv(self) -> Optional[Dict[str, Any]]:
+    def _poll_next_queued_import(self) -> Optional[Dict[str, Any]]:
         conn = _db()
         try:
             row = conn.execute(
                 """
                 SELECT job_id, payload_json, message, total
-                FROM csv_import_jobs
+                FROM import_jobs
                 WHERE status = 'queued'
                 ORDER BY created_at_ms ASC
                 LIMIT 1
@@ -291,7 +291,7 @@ class JobWorker(threading.Thread):
                 return None
 
             conn.execute(
-                "UPDATE csv_import_jobs SET status='processing', updated_at_ms=? WHERE job_id=?",
+                "UPDATE import_jobs SET status='processing', updated_at_ms=? WHERE job_id=?",
                 (_now_ms(), row["job_id"]),
             )
             conn.commit()
@@ -335,7 +335,7 @@ class JobWorker(threading.Thread):
     # CSV import execution
     # ------------------------------------------------------------------
 
-    def _process_csv_import(self, csv_job: Dict[str, Any]) -> None:
+    def _process_import_job(self, import_job: Dict[str, Any]) -> None:
         """Match pending_raw items against Deezer, write results to SQLite.
 
         Performance-Architektur (seit Phase H):
@@ -352,10 +352,10 @@ class JobWorker(threading.Thread):
         3. Erst nachdem der Cache vollständig ist, werden alle Original-Rows
            (inkl. Duplikate) materialisiert und in 500er-Chunks geschrieben.
         """
-        job_id: str = csv_job["job_id"]
-        provider: str = csv_job["provider"]
-        search_limit: int = csv_job["search_limit"]
-        total: int = csv_job["total"]
+        job_id: str = import_job["job_id"]
+        provider: str = import_job["provider"]
+        search_limit: int = import_job["search_limit"]
+        total: int = import_job["total"]
 
         from services.deezer import DeezerService
         from services.spotify import SpotifyService
@@ -365,8 +365,8 @@ class JobWorker(threading.Thread):
         # damit Cancel quasi-instant wirkt (max 1 Phase-Step Latenz).
         # Returnt True wenn cancelled — Caller soll dann sofort `return`.
         def _check_user_cancel(processed_so_far: int = 0) -> bool:
-            if is_csv_job_cancelled(job_id):
-                upsert_csv_job(
+            if is_import_job_cancelled(job_id):
+                upsert_import_job(
                     job_id,
                     status="cancelled",
                     message=f"Cancelled by user ({processed_so_far}/{total} processed)",
@@ -380,7 +380,7 @@ class JobWorker(threading.Thread):
         else:
             svc = SpotifyService()
         if svc is None:
-            upsert_csv_job(job_id, status="error", message=f"Provider '{provider}' not available")
+            upsert_import_job(job_id, status="error", message=f"Provider '{provider}' not available")
             return
 
         # Claim pending raw items (prevent re-processing on restart). Phase I:
@@ -389,12 +389,12 @@ class JobWorker(threading.Thread):
         conn = _db()
         try:
             pending = conn.execute(
-                "SELECT id, original, requested_artist, requested_title, playlist_names_json FROM csv_import_results WHERE job_id = ? AND result_type = 'pending_raw' ORDER BY id",
+                "SELECT id, original, requested_artist, requested_title, playlist_names_json FROM import_results WHERE job_id = ? AND result_type = 'pending_raw' ORDER BY id",
                 (job_id,),
             ).fetchall()
             if pending:
                 conn.execute(
-                    "UPDATE csv_import_results SET result_type = 'claimed' WHERE job_id = ? AND result_type = 'pending_raw'",
+                    "UPDATE import_results SET result_type = 'claimed' WHERE job_id = ? AND result_type = 'pending_raw'",
                     (job_id,),
                 )
                 conn.commit()
@@ -402,7 +402,7 @@ class JobWorker(threading.Thread):
             conn.close()
 
         if not pending:
-            upsert_csv_job(job_id, status="error", message="No pending items found")
+            upsert_import_job(job_id, status="error", message="No pending items found")
             return
 
         # ---- Phase 0: Library-Match-First (Phase H) ----------------------
@@ -416,7 +416,7 @@ class JobWorker(threading.Thread):
         # Libraries — ohne Live-Progress denkt User der Worker hängt. Daher
         # progress-callback an library_signatures() der jede ~500 Files den
         # CSV-Job-Status updatet.
-        upsert_csv_job(
+        upsert_import_job(
             job_id,
             status="processing",
             total=total,
@@ -438,7 +438,7 @@ class JobWorker(threading.Thread):
                 ratio = min(0.9, file_count / 50000.0)
             phase0_pct = int(round(ratio * 100))
             try:
-                upsert_csv_job(
+                upsert_import_job(
                     job_id,
                     status="processing",
                     total=total,
@@ -454,13 +454,13 @@ class JobWorker(threading.Thread):
             # Phase 0 fertig — finalen 100% schreiben damit Bar voll bei
             # Übergang zu Phase 2 wenn dort processed=0 noch ist.
             try:
-                upsert_csv_job(job_id, phase0_progress=100)
+                upsert_import_job(job_id, phase0_progress=100)
             except Exception:
                 pass
         except Exception as e:
             print(f"[csv-import] library scan failed: {type(e).__name__}: {e} — skip Phase 0")
             library_sigs = set()
-            upsert_csv_job(
+            upsert_import_job(
                 job_id,
                 status="processing",
                 total=total,
@@ -496,7 +496,7 @@ class JobWorker(threading.Thread):
                 remaining_pending.append(row)
 
         if library_hits:
-            insert_csv_results(job_id, "library_match", library_hits)
+            insert_import_results(job_id, "library_match", library_hits)
             print(f"[csv-import] Phase 0: {len(library_hits)} tracks already in library, skipping provider lookup")
 
         # Erster User-Cancel-Checkpoint nach Phase 0 — Library-Scan kann
@@ -508,7 +508,7 @@ class JobWorker(threading.Thread):
         # Klare Phase-Trennung im Status — sonst sieht User die ganze
         # Phase 1 (Dedup) noch unter "Phase 0: scanning library..." weil
         # Phase 1 keine eigene Status-Message hat.
-        upsert_csv_job(
+        upsert_import_job(
             job_id,
             status="processing",
             total=total,
@@ -521,7 +521,7 @@ class JobWorker(threading.Thread):
         pending = remaining_pending
         if not pending:
             # Alle Tracks sind schon in der Library → fertig ohne Provider-Phase
-            upsert_csv_job(
+            upsert_import_job(
                 job_id,
                 status="completed",
                 total=total,
@@ -553,7 +553,7 @@ class JobWorker(threading.Thread):
                 key_to_original[key] = (artist_orig, title_orig)
 
         unique_total = len(unique_keys)
-        upsert_csv_job(
+        upsert_import_job(
             job_id,
             status="processing",
             total=total,
@@ -691,7 +691,7 @@ class JobWorker(threading.Thread):
                 if self._stop.is_set():
                     for f in futures:
                         f.cancel()
-                    upsert_csv_job(job_id, status="error", message="Interrupted")
+                    upsert_import_job(job_id, status="error", message="Interrupted")
                     return
                 # User-Cancel-Check zwischen Futures — Phase 2 ist die
                 # längste Phase (kann mehrere Minuten dauern bei großen
@@ -739,7 +739,7 @@ class JobWorker(threading.Thread):
                         )
                     else:
                         lane_str = ""
-                    upsert_csv_job(
+                    upsert_import_job(
                         job_id,
                         status="processing",
                         total=total,
@@ -773,7 +773,7 @@ class JobWorker(threading.Thread):
             # recovery_total wird jetzt schon hier in der DB gesetzt damit das
             # Frontend einen "rechecked 0 / N"-Counter live anzeigen kann auch
             # während des 15s-Cooldowns. recovery_recovered=0 als initial.
-            upsert_csv_job(
+            upsert_import_job(
                 job_id,
                 status="processing",
                 total=total,
@@ -788,7 +788,7 @@ class JobWorker(threading.Thread):
             # Cooldown in 1s-Chunks damit shutdown UND user-cancel reagieren.
             for _ in range(cooldown_s):
                 if self._stop.is_set():
-                    upsert_csv_job(job_id, status="error", message="Interrupted")
+                    upsert_import_job(job_id, status="error", message="Interrupted")
                     return
                 if _check_user_cancel(phase2_end):
                     return
@@ -798,7 +798,7 @@ class JobWorker(threading.Thread):
             # Bei 100 Recovery-Keys → ~40 s Phase-Dauer, akzeptabel.
             for idx, k in enumerate(recovery_keys):
                 if self._stop.is_set():
-                    upsert_csv_job(job_id, status="error", message="Interrupted")
+                    upsert_import_job(job_id, status="error", message="Interrupted")
                     return
                 if _check_user_cancel(phase2_end + idx):
                     return
@@ -819,7 +819,7 @@ class JobWorker(threading.Thread):
                     matched_unique = sum(1 for v in cache.values() if v is not None)
                     unmatched_unique = unique_total - matched_unique
                     scale = total / max(1, unique_total)
-                    upsert_csv_job(
+                    upsert_import_job(
                         job_id,
                         status="processing",
                         total=total,
@@ -835,7 +835,7 @@ class JobWorker(threading.Thread):
         else:
             # Kein Recovery nötig — direkt zur 95 %-Marke springen, Phase 3
             # erledigt den letzten Schritt zu 100 %.
-            upsert_csv_job(
+            upsert_import_job(
                 job_id,
                 status="processing",
                 total=total,
@@ -853,10 +853,10 @@ class JobWorker(threading.Thread):
         def _flush() -> None:
             nonlocal batch_matched, batch_unmatched
             if batch_matched:
-                insert_csv_results(job_id, "matched", batch_matched)
+                insert_import_results(job_id, "matched", batch_matched)
                 batch_matched = []
             if batch_unmatched:
-                insert_csv_results(job_id, "unmatched", batch_unmatched)
+                insert_import_results(job_id, "unmatched", batch_unmatched)
                 batch_unmatched = []
 
         for row in pending:
@@ -900,7 +900,7 @@ class JobWorker(threading.Thread):
                 # es trotzdem damit Cancel innerhalb 1-2 Sekunden wirkt.
                 if _check_user_cancel(processed):
                     return
-                upsert_csv_job(
+                upsert_import_job(
                     job_id,
                     status="processing",
                     total=total,
@@ -915,11 +915,11 @@ class JobWorker(threading.Thread):
         counts_conn = _db()
         try:
             matched_count = counts_conn.execute(
-                "SELECT COUNT(*) AS n FROM csv_import_results WHERE job_id = ? AND result_type = 'matched'",
+                "SELECT COUNT(*) AS n FROM import_results WHERE job_id = ? AND result_type = 'matched'",
                 (job_id,),
             ).fetchone()["n"]
             unmatched_count = counts_conn.execute(
-                "SELECT COUNT(*) AS n FROM csv_import_results WHERE job_id = ? AND result_type = 'unmatched'",
+                "SELECT COUNT(*) AS n FROM import_results WHERE job_id = ? AND result_type = 'unmatched'",
                 (job_id,),
             ).fetchone()["n"]
         finally:
@@ -928,7 +928,7 @@ class JobWorker(threading.Thread):
         cleanup_conn = _db()
         try:
             cleanup_conn.execute(
-                "DELETE FROM csv_import_results WHERE job_id = ? AND result_type = 'claimed'",
+                "DELETE FROM import_results WHERE job_id = ? AND result_type = 'claimed'",
                 (job_id,),
             )
             cleanup_conn.commit()
@@ -972,7 +972,7 @@ class JobWorker(threading.Thread):
             )
         )
 
-        upsert_csv_job(
+        upsert_import_job(
             job_id,
             status="completed",
             total=total,
