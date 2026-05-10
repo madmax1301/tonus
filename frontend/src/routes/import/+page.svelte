@@ -80,6 +80,14 @@
   let spotifyError = $state<string | null>(null);
   let spotifyDragOver = $state(false);
 
+  // Playlist-Sync — Library-Match + Reconcile-only Pfad. Eigene State-Trennung
+  // damit CSV-Bulk-Drop und Playlist-Sync-Drop sich nicht über den Weg laufen.
+  let playlistSyncText = $state('');
+  let playlistSyncFilename = $state<string | null>(null);
+  let playlistSyncBusy = $state(false);
+  let playlistSyncDragOver = $state(false);
+  let playlistSyncDragDepth = 0;
+
   async function readJsonFile(file: File): Promise<unknown> {
     const text = await file.text();
     return JSON.parse(text);
@@ -338,6 +346,94 @@
     } finally {
       csvBusy = false;
     }
+  }
+
+  // Playlist-Sync submit — schickt CSV mit mode=playlist_sync, Backend skipped
+  // Provider/Download und macht nur Library-Match + Subsonic-Playlist-
+  // Reconcile. Pipeline-State (csvStatus, csvJobId, polling) wird wiederver-
+  // wendet, weil das Backend einen normalen import_job anlegt — nur eben
+  // mit anderem Mode.
+  async function submitPlaylistSync() {
+    if (!playlistSyncText.trim()) return;
+    playlistSyncBusy = true;
+    csvError = null;
+    csvResult = null;
+    csvQueueAllResult = null;
+    tweenProcessed.set(0, { duration: 0 });
+    tweenFound.set(0, { duration: 0 });
+    tweenNotFound.set(0, { duration: 0 });
+    try {
+      const r = await importApi.startPlaylistSync(
+        playlistSyncText,
+        playlistSyncFilename || undefined
+      );
+      csvJobId = r.job_id;
+      csvFilename = playlistSyncFilename;
+      csvStatus = {
+        status: 'queued',
+        total: r.total ?? 0,
+        processed: 0,
+        found: 0,
+        not_found: 0,
+        message: r.message,
+        filename: playlistSyncFilename,
+        // Frontend-Hint: Tab-Label rendert sofort als "Playlist-Sync".
+        // Backend bestätigt das beim ersten Poll mit demselben Wert.
+        source: 'playlist_sync'
+      };
+      if (browser) {
+        try {
+          localStorage.setItem(ACTIVE_CSV_KEY, r.job_id);
+        } catch {
+          /* private mode / quota — silent */
+        }
+      }
+      pollCsv();
+    } catch (err) {
+      csvError = err instanceof Error ? err.message : 'Playlist-Sync fehlgeschlagen';
+    } finally {
+      playlistSyncBusy = false;
+    }
+  }
+
+  // Card-scoped Drop-Handler für Playlist-Sync. Verhindert dass eine CSV
+  // die in der Playlist-Sync-Card landet versehentlich in csvText (Bulk)
+  // gerät — eigene state, eigene drop-zone.
+  function onPlaylistSyncDragEnter(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    playlistSyncDragDepth++;
+    playlistSyncDragOver = true;
+  }
+  function onPlaylistSyncDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }
+  function onPlaylistSyncDragLeave(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    playlistSyncDragDepth = Math.max(0, playlistSyncDragDepth - 1);
+    if (playlistSyncDragDepth === 0) playlistSyncDragOver = false;
+  }
+  async function onPlaylistSyncDrop(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    playlistSyncDragDepth = 0;
+    playlistSyncDragOver = false;
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    playlistSyncText = await f.text();
+    playlistSyncFilename = f.name;
+  }
+  async function onPlaylistSyncFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const f = input.files?.[0];
+    if (!f) return;
+    playlistSyncText = await f.text();
+    playlistSyncFilename = f.name;
   }
 
   function pollCsv() {
@@ -835,6 +931,8 @@
     >
       {#if csvStatus?.source === 'spotify_history'}
         {$t('import.tab.spotify_history')}
+      {:else if csvStatus?.source === 'playlist_sync'}
+        {$t('import.tab.playlist_sync')}
       {:else}
         {$t('import.tab.csv')}
       {/if}
@@ -1085,6 +1183,119 @@
         </button>
         <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
           {$t('import.spotify_history.hint')}
+        </span>
+      </div>
+    </div>
+
+    <!-- ─── Playlist-Sync — Library-Match + Reconcile only (2026-05-10) ─── -->
+    <!-- CSV mit Playlist-Spalte → Tracks die bereits in Library liegen werden    -->
+    <!-- direkt zu Subsonic-Playlists hinzugefügt. KEIN Provider-Lookup, KEIN     -->
+    <!-- Download. Use case: User hat Bulk-Import schon laufen lassen, will jetzt -->
+    <!-- nur die Playlist-Memberships nachziehen.                                 -->
+    <div
+      role="region"
+      aria-label="Playlist-Sync"
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.4);
+        backdrop-filter: blur(28px) saturate(1.15);
+        -webkit-backdrop-filter: blur(28px) saturate(1.15);
+        border: 1px solid {playlistSyncDragOver ? accent : 'var(--color-border-soft)'};
+        border-radius: 18px;
+        padding: clamp(16px, 3vw, 22px);
+        margin-bottom: 18px;
+        transition: border-color 0.18s ease;
+      "
+      ondragenter={onPlaylistSyncDragEnter}
+      ondragover={onPlaylistSyncDragOver}
+      ondragleave={onPlaylistSyncDragLeave}
+      ondrop={onPlaylistSyncDrop}
+    >
+      <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 10px; letter-spacing: 0.22em; color: {accent};"
+          >
+            {$t('import.playlist_sync.eyebrow')}
+          </div>
+          <div
+            class="mt-1.5 font-medium"
+            style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.01em; color: var(--color-fg-primary);"
+          >
+            {$t('import.playlist_sync.title')}
+          </div>
+        </div>
+      </div>
+      <p class="text-[13px] mb-3" style="color: var(--color-fg-secondary); max-width: 600px;">
+        {$t('import.playlist_sync.body')}
+      </p>
+
+      <!-- File-Drop-Zone (eigene state — playlistSyncText, nicht csvText) -->
+      <label
+        class="flex items-center justify-center gap-2 cursor-pointer text-[13px]"
+        style="
+          background: rgba(0,0,0,0.25);
+          border: 1.5px dashed {playlistSyncDragOver ? accent : 'var(--color-border-soft)'};
+          border-radius: 14px;
+          padding: 18px;
+          color: var(--color-fg-secondary);
+          transition: border-color 0.18s ease;
+        "
+      >
+        <Upload size={16} strokeWidth={1.4} />
+        <span>{$t('import.playlist_sync.drop_hint')}</span>
+        <input
+          type="file"
+          accept=".csv,.tsv,.txt,text/*"
+          onchange={onPlaylistSyncFile}
+          style="display: none;"
+        />
+      </label>
+
+      {#if playlistSyncText && playlistSyncFilename}
+        <div class="mt-3 flex flex-wrap gap-1.5">
+          <span
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] tabular-nums"
+            style="background: rgba(255,255,255,0.06); border: 1px solid var(--color-border-soft); border-radius: 999px; color: var(--color-fg-secondary);"
+          >
+            {playlistSyncFilename}
+            <button
+              type="button"
+              onclick={() => { playlistSyncText = ''; playlistSyncFilename = null; }}
+              aria-label="Remove"
+              style="background: transparent; color: var(--color-fg-tertiary); padding: 0 0 0 4px; border: 0; cursor: pointer;"
+            >×</button>
+          </span>
+        </div>
+      {/if}
+
+      <div class="mt-4 flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          onclick={submitPlaylistSync}
+          disabled={playlistSyncBusy || !playlistSyncText.trim()}
+          class="inline-flex items-center gap-1.5 transition-opacity"
+          style="
+            background: {accent};
+            color: #1a1410;
+            padding: 10px 22px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+            opacity: {playlistSyncBusy || !playlistSyncText.trim() ? 0.5 : 1};
+            cursor: {playlistSyncBusy || !playlistSyncText.trim() ? 'not-allowed' : 'pointer'};
+          "
+        >
+          {playlistSyncBusy
+            ? $t('import.playlist_sync.submitting')
+            : $t('import.playlist_sync.submit')}
+        </button>
+        <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
+          {$t('import.playlist_sync.hint')}
         </span>
       </div>
     </div>

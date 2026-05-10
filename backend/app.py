@@ -503,6 +503,15 @@ class CsvImportRequest(BaseModel):
     # Optional: original-Filename für UI-Anzeige (Tab zeigt sonst nur job_id).
     # Liefert das Frontend bei File-Upload mit; bei Text-Paste bleibt's null.
     filename: Optional[str] = None
+    # Mode-Switch (2026-05-10):
+    #   None / "full"          → klassischer Bulk-Import: Phase 0..5
+    #   "playlist_sync"        → Library-Match + Playlist-Reconcile only.
+    #                            Skip Provider-Phase + Download. Use case:
+    #                            User hat Tracks bereits via Bulk-Import,
+    #                            will jetzt nur die Playlist-Memberships aus
+    #                            einer CSV (TuneMyMusic / Spotify-Export)
+    #                            in seine Navidrome-Playlists einreihen.
+    mode: Optional[str] = None
 
 
 class URLDownloadRequest(BaseModel):
@@ -2180,8 +2189,21 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     # Spalte (vorher: Hijack des `message`-Felds als "provider|limit|pending_raw"-
     # String, was bei verzögertem Worker-Pickup als Status-Message in der UI
     # auftauchte). Filename optional für UI-Anzeige.
+    #
+    # Mode-Switch + Source-Marker:
+    #   - mode="playlist_sync" → Worker skipped Provider/Download, macht nur
+    #     Library-Match + Playlist-Reconcile. source="playlist_sync" damit
+    #     Frontend Tab-Label "Playlist-Sync" rendert.
+    #   - mode=None / "full"   → Default Bulk-Import-Pipeline. source="csv".
     import json as _json
-    payload = _json.dumps({"provider": provider, "search_limit": search_limit})
+    mode = (request.mode or "full").strip().lower()
+    if mode not in ("full", "playlist_sync"):
+        mode = "full"
+    payload_dict: Dict[str, Any] = {"provider": provider, "search_limit": search_limit}
+    if mode == "playlist_sync":
+        payload_dict["mode"] = "playlist_sync"
+        payload_dict["source"] = "playlist_sync"
+    payload = _json.dumps(payload_dict)
     fname = (request.filename or "").strip() or None
 
     upsert_import_job(

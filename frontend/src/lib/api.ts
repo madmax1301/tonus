@@ -557,8 +557,9 @@ export interface CsvImportStatus {
    *  Tracks tatsächlich gematcht sind. */
   phase0_progress?: number;
   /** Source-Marker: "csv" für klassischen Bulk-Import, "spotify_history" für
-   *  Streaming-History-JSON. Frontend nutzt das fürs Tab-Label. */
-  source?: 'csv' | 'spotify_history';
+   *  Streaming-History-JSON, "playlist_sync" für Library-Match + Reconcile-
+   *  only-Pfad. Frontend nutzt das fürs Tab-Label. */
+  source?: 'csv' | 'spotify_history' | 'playlist_sync';
   message?: string;
   /** Original-Filename (CSV-Upload), oder null bei Text-Paste. */
   filename?: string | null;
@@ -606,6 +607,19 @@ export const importApi = {
       provider,
       limit,
       filename
+    }),
+  /**
+   * Playlist-Sync — Library-Match + Reconcile-only Pfad. Skip Provider/
+   * Download komplett. Use case: Tracks sind bereits via Bulk-Import in
+   * der Navidrome-Library, User will nur die Playlist-Memberships aus
+   * einer CSV (z.B. Spotify-Export, TuneMyMusic) als Subsonic-Playlists
+   * anlegen.
+   */
+  startPlaylistSync: (csvText: string, filename?: string) =>
+    api.post<CsvImportStartResponse>('/api/import/csv', {
+      csv_text: csvText,
+      filename,
+      mode: 'playlist_sync'
     }),
   status: (jobId: string) => api.get<CsvImportStatus>(`/api/import/jobs/${jobId}/status`),
   result: (jobId: string, offset = 0, limit = 200) =>

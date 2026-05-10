@@ -302,6 +302,7 @@ class JobWorker(threading.Thread):
             # phase, die noch vor dem Schema-Upgrade angelegt wurden.
             provider = "deezer"
             search_limit = 3
+            mode = "full"
             payload_raw = row["payload_json"]
             if payload_raw:
                 try:
@@ -310,6 +311,8 @@ class JobWorker(threading.Thread):
                         provider = payload["provider"]
                     if isinstance(payload.get("search_limit"), int):
                         search_limit = payload["search_limit"]
+                    if isinstance(payload.get("mode"), str):
+                        mode = payload["mode"]
                 except (json.JSONDecodeError, TypeError):
                     pass
             else:
@@ -326,6 +329,7 @@ class JobWorker(threading.Thread):
                 "job_id": row["job_id"],
                 "provider": provider,
                 "search_limit": search_limit,
+                "mode": mode,
                 "total": row["total"],
             }
         finally:
@@ -356,6 +360,10 @@ class JobWorker(threading.Thread):
         provider: str = import_job["provider"]
         search_limit: int = import_job["search_limit"]
         total: int = import_job["total"]
+        # Mode aus payload_json (siehe _poll_next_queued_import). "full" =
+        # klassischer Bulk-Import-Flow, "playlist_sync" = nur Library-Match
+        # + Reconcile (skip Provider/Download). Default "full".
+        mode: str = import_job.get("mode", "full") or "full"
 
         from services.deezer import DeezerService
         from services.spotify import SpotifyService
@@ -503,6 +511,57 @@ class JobWorker(threading.Thread):
         # 30-60s dauern, da soll User abbrechen können bevor Provider-
         # Calls überhaupt anfangen.
         if _check_user_cancel(0):
+            return
+
+        # ---- Mode-Switch: playlist_sync ----------------------------------
+        # User-Wunsch (2026-05-10): wenn Tracks bereits via Bulk-Import in
+        # der Library liegen, nur die Playlist-Memberships aus einer CSV
+        # in Navidrome-Playlists übertragen — kein Provider-Lookup, kein
+        # Download. Phase 0 hat library_hits + remaining_pending bestimmt;
+        # bei playlist_sync schreiben wir die remaining_pending direkt als
+        # not_found (User-Hinweis "diese Tracks sind nicht in deiner
+        # Library") und triggern den Subsonic-Playlist-Reconcile.
+        if mode == "playlist_sync":
+            misses_not_found: List[Dict[str, Any]] = []
+            for row in remaining_pending:
+                try:
+                    pl_names = _wjson.loads(row["playlist_names_json"]) if row["playlist_names_json"] else []
+                except Exception:
+                    pl_names = []
+                misses_not_found.append({
+                    "original": row["original"],
+                    "requested_artist": (row["requested_artist"] or "").strip(),
+                    "requested_title": (row["requested_title"] or "").strip(),
+                    "track": None,
+                    "playlist_names": pl_names,
+                })
+            if misses_not_found:
+                insert_import_results(job_id, "not_found", misses_not_found)
+
+            # Reconcile: library_match-Tracks zu Subsonic-Playlists. Lazy-
+            # Import um circular dep (app→worker) zu vermeiden — zur Lauf-
+            # zeit ist app.py voll geladen.
+            recon_summary = {"playlists": 0, "tracks_added": 0}
+            try:
+                from app import _reconcile_import_library_matches
+                recon_summary = _reconcile_import_library_matches(job_id)
+            except Exception as e:
+                print(f"[import {job_id}] playlist_sync reconcile failed: {type(e).__name__}: {e}", flush=True)
+
+            upsert_import_job(
+                job_id,
+                status="completed",
+                total=total,
+                processed=total,
+                found=len(library_hits),
+                not_found=len(misses_not_found),
+                phase0_progress=100,
+                message=(
+                    f"Playlist-Sync done — {recon_summary.get('tracks_added', 0)} "
+                    f"tracks added to {recon_summary.get('playlists', 0)} playlist(s), "
+                    f"{len(misses_not_found)} not in library"
+                ),
+            )
             return
 
         # Klare Phase-Trennung im Status — sonst sieht User die ganze
