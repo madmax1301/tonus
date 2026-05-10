@@ -32,16 +32,16 @@ It's a single-tenant tool you self-host on a NAS (or any Docker host). All crede
 
 **Stable enough to use daily:**
 
-- Core acquisition: Deezer/Spotify search → YouTube download → Navidrome scan trigger → file delivered, tagged, and visible in your library
+- Core acquisition: Deezer/Spotify search → YouTube/SoundCloud download → Navidrome scan trigger → file delivered, tagged, and visible in your library
+- Bulk import: drop a CSV (or a Spotify Extended Streaming History export) and Tonus matches every track against your existing Navidrome library first, queues only the missing ones, and reconciles playlist memberships into Subsonic playlists
 - Auth: multi-user with TOTP-2FA, Personal Access Tokens, brute-force lifetime ban
 - Encrypted-at-rest provider credentials and TOTP secrets (Fernet)
 - Persistent app data on a separate volume (auth + queue + settings survive image swaps)
-- Multi-arch image (amd64 + arm64), pin to `:0.1` for production
+- Multi-arch image (amd64 + arm64), pin to `:0.3` for production
 
 **Working but rough edges:**
 
 - YouTube bot-detection occasionally requires a manual cookie export
-- CSV-import resume after browser reload works but UI feedback is sparse
 - Dual-VPN source-IP-splitting is NAS-mode only and silently disables itself if the bind addresses are unreachable
 
 **Out of scope right now:** Subsonic-direct (without Navidrome), Ansible/Helm/non-Docker deployment.
@@ -81,7 +81,12 @@ If your acquisition needs are already handled by a Lidarr-based stack and Soulse
 
 ## Features
 
-- **Multi-provider search** — Deezer (free, no key) or Spotify (catalog) for metadata; audio stream falls back across Deezer ↔ YouTube as needed
+- **Multi-provider search** — Deezer (free, no key) or Spotify (catalog) for metadata; audio falls back across YouTube ↔ SoundCloud automatically based on score and availability
+- **Bulk import (v0.3.0)** — three import paths share one pipeline:
+  - **CSV-Bulk** — drag a TuneMyMusic / Soundiiz / hand-rolled CSV; Tonus parses Artist + Track Name (and an optional Playlist column) and matches against your Navidrome library before touching any provider
+  - **Spotify Extended Streaming History** — drop the JSON files from your Spotify data export; tracks are aggregated and auto-grouped into per-year + per-month Subsonic playlists
+  - **Playlist-Sync** — match-only mode for tracks already in your library; existing files are added to Subsonic playlists, missing tracks get tagged so they land in the right playlist after download
+- **Library-Match-First** — every import compares against your existing Navidrome catalog before any provider call; expected provider-cost reduction grows with library size
 - **First-run onboarding wizard** — admin account, optional 2FA (TOTP), provider connections, all in the browser
 - **Per-user accounts with admin separation** — non-admins see a stripped-down settings panel; admins manage users, tokens, providers, bans
 - **Personal Access Tokens (PATs)** — for the Navidrome plugin and scripts; revocable, scoped to your account
@@ -331,8 +336,8 @@ Tonus uses two release channels — bleeding-edge `:dev` for testing, and immuta
 |---|---|---|---|
 | `:dev` | dev (bleeding-edge) | Every push to `dev` | Latest commit on `dev` |
 | `:sha-abc1234` | dev (pinned) | Never (immutable) | A specific commit |
-| `:0.1.0` | stable (pinned) | Never (immutable) | A specific tagged release |
-| `:0.1` | stable (rolling within minor) | New patch tags `v0.1.x` | Latest patch in `0.1.x` |
+| `:0.3.0` | stable (pinned) | Never (immutable) | A specific tagged release |
+| `:0.3` | stable (rolling within minor) | New patch tags `v0.3.x` | Latest patch in `0.3.x` |
 | `:latest` | stable (rolling) | New semver tag `vX.Y.Z` | Most recent tagged release |
 
 For production, pin to a fixed minor:
@@ -340,10 +345,10 @@ For production, pin to a fixed minor:
 ```yaml
 services:
   tonus:
-    image: ghcr.io/madmax1301/tonus:0.1
+    image: ghcr.io/madmax1301/tonus:0.3
 ```
 
-You'll get every patch release automatically but stay locked out of `0.2.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
+You'll get every patch release automatically but stay locked out of `0.4.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
 
 ## FAQ
 
