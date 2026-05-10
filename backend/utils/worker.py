@@ -103,11 +103,27 @@ def _looks_like_429(message: str, error: str) -> bool:
 
 
 class JobWorker(threading.Thread):
-    """Generischer Worker — job_type="download" oder "import"."""
+    """Generischer Worker.
 
-    def __init__(self, job_type: str) -> None:
-        super().__init__(daemon=True, name=f"worker-{job_type}")
+    job_type="download" → Download-Lane.
+    job_type="import"   → Import-Lane.
+
+    import_lane (nur relevant wenn job_type="import"): Filter im Polling.
+      None             → pollt alle Import-Jobs (legacy single-worker)
+      "csv"            → mode='full'  AND source='csv'
+      "spotify_history"→ mode='full'  AND source='spotify_history'
+      "playlist_sync"  → mode='playlist_sync' (source ignoriert)
+
+    Mehrere JobWorker-Instanzen mit unterschiedlichen import_lane-Werten
+    laufen parallel — User-Wunsch (2026-05-10): Bulk-CSV soll Playlist-Sync
+    nicht blockieren.
+    """
+
+    def __init__(self, job_type: str, import_lane: Optional[str] = None) -> None:
+        thread_name = f"worker-{job_type}" + (f":{import_lane}" if import_lane else "")
+        super().__init__(daemon=True, name=thread_name)
         self._job_type = job_type
+        self._import_lane = import_lane
         self._stop: threading.Event = threading.Event()
         self._lock: threading.Lock = threading.Lock()
         # Per-Lane "ready_at" (ms): wann ist die Lane wieder benutzbar (Cooldown vorbei)?
@@ -180,8 +196,9 @@ class JobWorker(threading.Thread):
 
     def run(self) -> None:
         # Boot-Log damit Operator im Container-Log Worker-Lebenszeichen sieht.
-        # Hilft bei Diagnose ob beide Threads (download+csv) wirklich laufen.
-        print(f"[worker:{self._job_type}] loop started, polling for jobs", flush=True)
+        # Hilft bei Diagnose ob alle Lanes (download + 3× import) wirklich laufen.
+        lane_suffix = f":{self._import_lane}" if self._import_lane else ""
+        print(f"[worker:{self._job_type}{lane_suffix}] loop started, polling for jobs", flush=True)
         consecutive_errors = 0
         while not self._stop.is_set():
             try:
@@ -276,16 +293,33 @@ class JobWorker(threading.Thread):
     # ------------------------------------------------------------------
 
     def _poll_next_queued_import(self) -> Optional[Dict[str, Any]]:
+        # Lane-Filter (Multi-Worker-Trennung 2026-05-10):
+        #   - import_lane=None              → alle Imports
+        #   - import_lane="csv"             → mode='full' AND source='csv'
+        #   - import_lane="spotify_history" → mode='full' AND source='spotify_history'
+        #   - import_lane="playlist_sync"   → mode='playlist_sync'
+        # Index idx_import_jobs_lane(status, source, mode, created_at_ms)
+        # macht das Polling O(log n) statt full-table-scan.
         conn = _db()
         try:
+            if self._import_lane == "playlist_sync":
+                where_sql = "status = 'queued' AND mode = 'playlist_sync'"
+                params: Tuple[Any, ...] = ()
+            elif self._import_lane in ("csv", "spotify_history"):
+                where_sql = "status = 'queued' AND mode = 'full' AND source = ?"
+                params = (self._import_lane,)
+            else:
+                where_sql = "status = 'queued'"
+                params = ()
             row = conn.execute(
-                """
+                f"""
                 SELECT job_id, payload_json, message, total
                 FROM import_jobs
-                WHERE status = 'queued'
+                WHERE {where_sql}
                 ORDER BY created_at_ms ASC
                 LIMIT 1
-                """
+                """,
+                params,
             ).fetchone()
             if not row:
                 return None

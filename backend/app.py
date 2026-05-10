@@ -315,12 +315,23 @@ def _verify_vpn_source_bindings() -> None:
 
 _verify_vpn_source_bindings()
 
-# Background worker — zwei unabhängige Threads: Downloads + CSV-Import parallel
+# Background worker — vier unabhängige Threads (User-Wunsch 2026-05-10):
+#   - download              → Track-Downloads, eigene Lane
+#   - import:csv            → klassischer Bulk-CSV-Import (full pipeline)
+#   - import:spotify_history→ JSON-Streaming-History-Import (full pipeline)
+#   - import:playlist_sync  → Library-Match + Reconcile only, KEIN Provider
+# Lane-Filter in _poll_next_queued_import sorgt für saubere Trennung. Damit
+# blockiert ein laufender Bulk-CSV-Import nicht mehr eine startende Playlist-
+# Sync — beide laufen parallel.
 _download_worker = JobWorker(job_type="download")
-_import_worker = JobWorker(job_type="import")
+_csv_worker = JobWorker(job_type="import", import_lane="csv")
+_spotify_history_worker = JobWorker(job_type="import", import_lane="spotify_history")
+_playlist_sync_worker = JobWorker(job_type="import", import_lane="playlist_sync")
 _download_worker.start()
-_import_worker.start()
-print("Worker threads started (download + csv)")
+_csv_worker.start()
+_spotify_history_worker.start()
+_playlist_sync_worker.start()
+print("Worker threads started (download + import:csv + import:spotify_history + import:playlist_sync)")
 
 # Phase 0 Pre-Warm: Library-Signature-Cache beim Container-Boot asynchron
 # aufbauen, damit der ERSTE CSV-Import nach Restart nicht 30-60s in Phase 0
@@ -353,7 +364,9 @@ _prewarm_thread.start()
 def _shutdown_workers():
     print("Shutting down workers...")
     _download_worker.shutdown(timeout=60)
-    _import_worker.shutdown(timeout=300)
+    _csv_worker.shutdown(timeout=300)
+    _spotify_history_worker.shutdown(timeout=300)
+    _playlist_sync_worker.shutdown(timeout=60)
     print("Workers stopped")
 
 # CORS middleware (still useful for API endpoints)
@@ -2206,6 +2219,10 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     payload = _json.dumps(payload_dict)
     fname = (request.filename or "").strip() or None
 
+    # source-Spalte ist Lane-Routing für die 4-Lane-Worker-Architektur
+    # (csv / spotify_history / playlist_sync). mode steuert ob Provider/
+    # Download-Phasen ausgeführt werden.
+    job_source = "playlist_sync" if mode == "playlist_sync" else "csv"
     upsert_import_job(
         job_id,
         status="queued",
@@ -2213,6 +2230,8 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
         message=f"Queued — waiting for worker ({len(parsed)} tracks)",
         filename=fname,
         payload_json=payload,
+        mode=mode,
+        source=job_source,
     )
 
     # Store parsed items in a temp table so the worker can read them
@@ -2326,6 +2345,8 @@ async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Dep
         message=f"Queued — waiting for worker ({len(tracks)} tracks from {stats['total_events']} events)",
         filename=fname,
         payload_json=payload,
+        mode="full",
+        source="spotify_history",
     )
 
     # Phase I-Schema: artist/title/playlist_names werden direkt durchgereicht.

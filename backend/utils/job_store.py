@@ -124,6 +124,18 @@ def init_jobs_db() -> None:
         # bereits in Phase 0 Bewegung zeigt — der Track-Counter (processed/total)
         # bleibt bei 0 weil noch keine Tracks tatsächlich gematcht sind.
         _ensure_column(conn, "import_jobs", "phase0_progress", "INTEGER NOT NULL DEFAULT 0")
+        # 4-Lane Worker-Routing (2026-05-10). mode + source als eigene Spalten
+        # damit Worker per SQL-Filter pollen kann — vorher waren beide Werte
+        # nur in payload_json eingebettet, was LIKE-Scans nötig gemacht hätte.
+        # Mit Index auf (status, source, mode) wird Polling-Filter-Cost trivial.
+        # Default 'full'/'csv' damit existierende Pre-v0.3.0-Jobs sauber als
+        # Bulk-Import-Jobs erkannt werden.
+        _ensure_column(conn, "import_jobs", "mode", "TEXT NOT NULL DEFAULT 'full'")
+        _ensure_column(conn, "import_jobs", "source", "TEXT NOT NULL DEFAULT 'csv'")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_import_jobs_lane "
+            "ON import_jobs(status, source, mode, created_at_ms)"
+        )
 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS import_results (
@@ -501,6 +513,8 @@ def upsert_import_job(
     recovery_total: Optional[int] = None,
     recovery_recovered: Optional[int] = None,
     phase0_progress: Optional[int] = None,
+    mode: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> None:
     """
     Partial upsert: nur Felder mit non-None werden im Update-Pfad
@@ -529,6 +543,7 @@ def upsert_import_job(
                 job_id, status, total, processed, found, not_found,
                 message, filename, payload_json,
                 recovery_total, recovery_recovered, phase0_progress,
+                mode, source,
                 created_at_ms, updated_at_ms
             )
             VALUES (
@@ -543,6 +558,8 @@ def upsert_import_job(
                 COALESCE(?, 0),
                 COALESCE(?, 0),
                 COALESCE(?, 0),
+                COALESCE(?, 'full'),
+                COALESCE(?, 'csv'),
                 ?, ?
             )
             ON CONFLICT(job_id) DO UPDATE SET
@@ -557,12 +574,15 @@ def upsert_import_job(
                 recovery_total     = COALESCE(excluded.recovery_total,     import_jobs.recovery_total),
                 recovery_recovered = COALESCE(excluded.recovery_recovered, import_jobs.recovery_recovered),
                 phase0_progress    = COALESCE(excluded.phase0_progress,    import_jobs.phase0_progress),
+                mode               = COALESCE(excluded.mode,               import_jobs.mode),
+                source             = COALESCE(excluded.source,             import_jobs.source),
                 updated_at_ms      = excluded.updated_at_ms
             """,
             (
                 job_id, status, total, processed, found, not_found,
                 message, filename, payload_json,
                 recovery_total, recovery_recovered, phase0_progress,
+                mode, source,
                 now, now,
             ),
         )
