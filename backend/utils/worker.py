@@ -301,11 +301,12 @@ class JobWorker(threading.Thread):
         # Index idx_import_jobs_lane(status, source, mode, created_at_ms)
         # macht das Polling O(log n) statt full-table-scan.
         #
-        # Atomic poll-and-claim via UPDATE…RETURNING (2026-05-10): SQLite
-        # 3.35+ unterstützt RETURNING. Eine einzelne UPDATE-Statement, die
-        # gleichzeitig den nächsten queued-Job claimt UND die row zurückgibt
-        # — race-frei ohne explizites BEGIN IMMEDIATE (welches bei vier
-        # parallelen Workern zu Lock-Stau geführt hat).
+        # Race-Tolerance: bei klassischem SELECT+UPDATE könnten zwei Worker-
+        # Threads in derselben Lane denselben Job picken. Mit klar getrennten
+        # Lanes (jeder hat genau einen Worker pro Lane) ist das praktisch
+        # ausgeschlossen. Frühere atomare Versuche (BEGIN IMMEDIATE und
+        # UPDATE…RETURNING) verursachten Lock-Stau bzw. Silent-Fail im
+        # Container — daher zurück zur einfachen zweistufigen Variante.
         conn = _db()
         try:
             if self._import_lane == "playlist_sync":
@@ -319,21 +320,25 @@ class JobWorker(threading.Thread):
                 params = ()
             row = conn.execute(
                 f"""
-                UPDATE import_jobs
-                SET status = 'processing', updated_at_ms = ?
-                WHERE job_id = (
-                    SELECT job_id FROM import_jobs
-                    WHERE {where_sql}
-                    ORDER BY created_at_ms ASC
-                    LIMIT 1
-                )
-                RETURNING job_id, payload_json, message, total
+                SELECT job_id, payload_json, message, total
+                FROM import_jobs
+                WHERE {where_sql}
+                ORDER BY created_at_ms ASC
+                LIMIT 1
                 """,
-                (_now_ms(),) + params,
+                params,
             ).fetchone()
-            conn.commit()
             if not row:
                 return None
+            print(
+                f"[worker:import:{self._import_lane}] picked job {row['job_id']}",
+                flush=True,
+            )
+            conn.execute(
+                "UPDATE import_jobs SET status='processing', updated_at_ms=? WHERE job_id=?",
+                (_now_ms(), row["job_id"]),
+            )
+            conn.commit()
 
             # Provider/search_limit aus payload_json (sauberer Weg, seit
             # Schema-Migration). Fallback auf den alten message-Hijack
