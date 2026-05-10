@@ -371,7 +371,7 @@ class JobWorker(threading.Thread):
                     status="cancelled",
                     message=f"Cancelled by user ({processed_so_far}/{total} processed)",
                 )
-                print(f"[csv-import {job_id}] cancelled by user at {processed_so_far}/{total}", flush=True)
+                print(f"[import {job_id}] cancelled by user at {processed_so_far}/{total}", flush=True)
                 return True
             return False
 
@@ -458,7 +458,7 @@ class JobWorker(threading.Thread):
             except Exception:
                 pass
         except Exception as e:
-            print(f"[csv-import] library scan failed: {type(e).__name__}: {e} — skip Phase 0")
+            print(f"[import] library scan failed: {type(e).__name__}: {e} — skip Phase 0")
             library_sigs = set()
             upsert_import_job(
                 job_id,
@@ -497,7 +497,7 @@ class JobWorker(threading.Thread):
 
         if library_hits:
             insert_import_results(job_id, "library_match", library_hits)
-            print(f"[csv-import] Phase 0: {len(library_hits)} tracks already in library, skipping provider lookup")
+            print(f"[import] Phase 0: {len(library_hits)} tracks already in library, skipping provider lookup")
 
         # Erster User-Cancel-Checkpoint nach Phase 0 — Library-Scan kann
         # 30-60s dauern, da soll User abbrechen können bevor Provider-
