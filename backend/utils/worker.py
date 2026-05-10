@@ -300,6 +300,15 @@ class JobWorker(threading.Thread):
         #   - import_lane="playlist_sync"   → mode='playlist_sync'
         # Index idx_import_jobs_lane(status, source, mode, created_at_ms)
         # macht das Polling O(log n) statt full-table-scan.
+        #
+        # Atomic poll-and-claim via BEGIN IMMEDIATE (2026-05-10): bei vier
+        # parallelen Workern könnten zwei Threads beim SELECT denselben
+        # queued-Job sehen, bevor der erste UPDATE den Status auf 'processing'
+        # geflippt hat. Beide würden den Job processen, der zweite findet
+        # `pending_raw` leer (wurde von Thread A geclaimt) → setzt error
+        # "No pending items found" obwohl Thread A erfolgreich war. BEGIN
+        # IMMEDIATE acquired ein RESERVED-Lock auf der DB, andere Writers
+        # blockieren bis zum COMMIT — Race ausgeschlossen.
         conn = _db()
         try:
             if self._import_lane == "playlist_sync":
@@ -311,6 +320,7 @@ class JobWorker(threading.Thread):
             else:
                 where_sql = "status = 'queued'"
                 params = ()
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 f"""
                 SELECT job_id, payload_json, message, total
@@ -322,6 +332,7 @@ class JobWorker(threading.Thread):
                 params,
             ).fetchone()
             if not row:
+                conn.rollback()
                 return None
 
             conn.execute(
