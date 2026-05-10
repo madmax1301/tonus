@@ -103,7 +103,7 @@ def _looks_like_429(message: str, error: str) -> bool:
 
 
 class JobWorker(threading.Thread):
-    """Generischer Worker — job_type="download" oder "csv"."""
+    """Generischer Worker — job_type="download" oder "import"."""
 
     def __init__(self, job_type: str) -> None:
         super().__init__(daemon=True, name=f"worker-{job_type}")

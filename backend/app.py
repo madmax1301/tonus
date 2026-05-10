@@ -2242,7 +2242,7 @@ async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Dep
     1. spotify_history.parse_streaming_history() aggregiert pro (artist, title)
        und leitet Year/Month-Auto-Playlists ab
     2. Aggregat wird in import_jobs/import_results eingereiht
-       (gleiches Schema wie /api/import/csv) — der existing CSV-Worker
+       (gleiches Schema wie /api/import/csv) — der existing Import-Worker
        übernimmt von hier (Phase 0 Library-Match, Phase 2 Provider-Lookup)
     3. import_playlist_names werden via Phase I durch alle Buckets
        durchgereicht und beim queue_all + Reconcile in Subsonic-Playlists
