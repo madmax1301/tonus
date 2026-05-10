@@ -301,14 +301,11 @@ class JobWorker(threading.Thread):
         # Index idx_import_jobs_lane(status, source, mode, created_at_ms)
         # macht das Polling O(log n) statt full-table-scan.
         #
-        # Atomic poll-and-claim via BEGIN IMMEDIATE (2026-05-10): bei vier
-        # parallelen Workern könnten zwei Threads beim SELECT denselben
-        # queued-Job sehen, bevor der erste UPDATE den Status auf 'processing'
-        # geflippt hat. Beide würden den Job processen, der zweite findet
-        # `pending_raw` leer (wurde von Thread A geclaimt) → setzt error
-        # "No pending items found" obwohl Thread A erfolgreich war. BEGIN
-        # IMMEDIATE acquired ein RESERVED-Lock auf der DB, andere Writers
-        # blockieren bis zum COMMIT — Race ausgeschlossen.
+        # Atomic poll-and-claim via UPDATE…RETURNING (2026-05-10): SQLite
+        # 3.35+ unterstützt RETURNING. Eine einzelne UPDATE-Statement, die
+        # gleichzeitig den nächsten queued-Job claimt UND die row zurückgibt
+        # — race-frei ohne explizites BEGIN IMMEDIATE (welches bei vier
+        # parallelen Workern zu Lock-Stau geführt hat).
         conn = _db()
         try:
             if self._import_lane == "playlist_sync":
@@ -320,26 +317,23 @@ class JobWorker(threading.Thread):
             else:
                 where_sql = "status = 'queued'"
                 params = ()
-            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 f"""
-                SELECT job_id, payload_json, message, total
-                FROM import_jobs
-                WHERE {where_sql}
-                ORDER BY created_at_ms ASC
-                LIMIT 1
+                UPDATE import_jobs
+                SET status = 'processing', updated_at_ms = ?
+                WHERE job_id = (
+                    SELECT job_id FROM import_jobs
+                    WHERE {where_sql}
+                    ORDER BY created_at_ms ASC
+                    LIMIT 1
+                )
+                RETURNING job_id, payload_json, message, total
                 """,
-                params,
+                (_now_ms(),) + params,
             ).fetchone()
-            if not row:
-                conn.rollback()
-                return None
-
-            conn.execute(
-                "UPDATE import_jobs SET status='processing', updated_at_ms=? WHERE job_id=?",
-                (_now_ms(), row["job_id"]),
-            )
             conn.commit()
+            if not row:
+                return None
 
             # Provider/search_limit aus payload_json (sauberer Weg, seit
             # Schema-Migration). Fallback auf den alten message-Hijack
