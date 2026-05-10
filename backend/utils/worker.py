@@ -15,7 +15,7 @@ import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests  # für HTTPError-Detection im 429-Failover (Dual-VPN-Splitting)
 
@@ -574,7 +574,7 @@ class JobWorker(threading.Thread):
             # fügt sie zu den richtigen Subsonic-Playlists hinzu.
             from utils.job_store import (
                 list_active_download_tracks,
-                merge_playlist_names_into_download_job,
+                bulk_merge_playlist_names_into_download_jobs,
             )
             queue_lookup: Dict[Tuple[str, str], List[str]] = {}
             try:
@@ -587,8 +587,12 @@ class JobWorker(threading.Thread):
             except Exception as e:
                 print(f"[import {job_id}] queue-lookup failed: {type(e).__name__}: {e}", flush=True)
 
+            # Erst alle merge-Updates in-memory sammeln, dann EIN Batch-
+            # Update gegen die DB. Vermeidet 8000× open+commit+close die
+            # mit dem parallelen Library-Sync-BG-Thread konkurrieren.
             misses_not_found: List[Dict[str, Any]] = []
-            queue_tagged_count = 0
+            pending_queue_updates: Dict[str, List[str]] = {}
+            tracks_with_queue_match: List[Tuple[str, List[str]]] = []  # (dj_id, pl_names) for counting after batch
             for row in remaining_pending:
                 try:
                     pl_names = _wjson.loads(row["playlist_names_json"]) if row["playlist_names_json"] else []
@@ -599,21 +603,14 @@ class JobWorker(threading.Thread):
                 sig = (_normalize_sig(artist_orig), _normalize_sig(title_orig))
                 queue_jobs = queue_lookup.get(sig, [])
                 if queue_jobs and pl_names:
-                    # Track ist in der Download-Queue → playlist_names ins
-                    # download_job-payload mergen, damit der nach-Download-
-                    # Reconcile sie aufpflückt. Mehrere Queue-Jobs für den
-                    # gleichen (artist,title) sind möglich (z.B. Provider-
-                    # Failover-Re-queue) — wir taggen sie alle.
-                    tagged_any = False
+                    # Track ist in der Download-Queue → playlist_names sammeln,
+                    # später als Batch ins payload_json mergen.
                     for dj_id in queue_jobs:
-                        try:
-                            added = merge_playlist_names_into_download_job(dj_id, pl_names)
-                            if added > 0:
-                                tagged_any = True
-                        except Exception as e:
-                            print(f"[import {job_id}] merge-pl into {dj_id} failed: {e}", flush=True)
-                    if tagged_any:
-                        queue_tagged_count += 1
+                        existing = pending_queue_updates.setdefault(dj_id, [])
+                        for name in pl_names:
+                            if name and name not in existing:
+                                existing.append(name)
+                        tracks_with_queue_match.append((dj_id, pl_names))
                 else:
                     # Weder Library-Match noch in Queue → echter Miss.
                     misses_not_found.append({
@@ -623,6 +620,31 @@ class JobWorker(threading.Thread):
                         "track": None,
                         "playlist_names": pl_names,
                     })
+
+            # Single-shot bulk merge — eine Connection, eine Transaction.
+            queue_tagged_count = 0
+            if pending_queue_updates:
+                try:
+                    merge_results = bulk_merge_playlist_names_into_download_jobs(pending_queue_updates)
+                    # queue_tagged_count = Anzahl unique Tracks (nicht dj_ids)
+                    # die wirklich neue Namen erhielten. Tracks mit mehrfach-
+                    # match auf verschiedene dj_ids zählen einmal — solange
+                    # mind. ein dj_id added > 0 hatte.
+                    tagged_dj_ids = {jid for jid, added in merge_results.items() if added > 0}
+                    seen_tracks: Set[Tuple[str, ...]] = set()
+                    for dj_id, names in tracks_with_queue_match:
+                        if dj_id in tagged_dj_ids:
+                            track_key = (dj_id,)  # einfach via dj_id; same dj kann nicht doppelt tagged werden
+                            if track_key not in seen_tracks:
+                                seen_tracks.add(track_key)
+                                queue_tagged_count += 1
+                    print(
+                        f"[import {job_id}] queue-tag batch: "
+                        f"{queue_tagged_count} tracks tagged across {len(tagged_dj_ids)} download_jobs",
+                        flush=True,
+                    )
+                except Exception as e:
+                    print(f"[import {job_id}] bulk queue-tag failed: {type(e).__name__}: {e}", flush=True)
             if misses_not_found:
                 insert_import_results(job_id, "not_found", misses_not_found)
 

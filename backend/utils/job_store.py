@@ -873,7 +873,11 @@ def list_active_download_tracks() -> List[Dict[str, Any]]:
 def merge_playlist_names_into_download_job(job_id: str, new_names: List[str]) -> int:
     """Liest payload_json eines download_jobs, merged new_names in den
     `import_playlist_names`-Marker (dedup), schreibt zurück. Returnt die
-    Anzahl tatsächlich neu hinzugefügter Namen (0 wenn alles schon drin)."""
+    Anzahl tatsächlich neu hinzugefügter Namen (0 wenn alles schon drin).
+
+    HINWEIS: bei vielen Calls in Folge → bulk_merge_playlist_names_into_download_jobs
+    nutzen. Single-Call-Variante macht open+commit+close pro Aufruf, das
+    blockiert mit anderen DB-Writers (Library-Sync) bei großen Imports."""
     import json as _json
     if not new_names:
         return 0
@@ -906,5 +910,71 @@ def merge_playlist_names_into_download_job(job_id: str, new_names: List[str]) ->
         )
         conn.commit()
         return added
+    finally:
+        conn.close()
+
+
+def bulk_merge_playlist_names_into_download_jobs(
+    updates: Dict[str, List[str]]
+) -> Dict[str, int]:
+    """Batch-Variante von merge_playlist_names_into_download_job.
+
+    `updates` = {download_job_id: [new_playlist_names, ...]}.
+    Eine Connection, eine Transaction, alle SELECTs und UPDATEs in einem
+    Pass. Returnt {download_job_id: anzahl_neu_hinzugefügter_namen}.
+
+    Hintergrund (2026-05-10): bei playlist_sync mit ~8000 Queue-Matches
+    machte die Single-Call-Variante 8000× open+commit+close auf der DB.
+    Das blockierte den parallelen Library-Sync-BG-Thread mit "database
+    is locked"-Errors. Batch reduziert auf eine Lock-Acquisition.
+    """
+    import json as _json
+    if not updates:
+        return {}
+    conn = _db()
+    result: Dict[str, int] = {}
+    try:
+        # Eine Big-SELECT für alle relevanten Jobs auf einmal.
+        job_ids = list(updates.keys())
+        placeholders = ",".join(["?"] * len(job_ids))
+        rows = conn.execute(
+            f"SELECT job_id, payload_json FROM download_jobs WHERE job_id IN ({placeholders})",
+            job_ids,
+        ).fetchall()
+
+        write_tuples: List[Tuple[Any, ...]] = []
+        now = _now_ms()
+        for r in rows:
+            jid = r["job_id"]
+            new_names = updates.get(jid) or []
+            if not new_names or not r["payload_json"]:
+                result[jid] = 0
+                continue
+            try:
+                payload = _json.loads(r["payload_json"])
+            except Exception:
+                result[jid] = 0
+                continue
+            existing = payload.get("import_playlist_names") or []
+            if not isinstance(existing, list):
+                existing = []
+            merged = list(existing)
+            added = 0
+            for name in new_names:
+                if name and name not in merged:
+                    merged.append(name)
+                    added += 1
+            result[jid] = added
+            if added > 0:
+                payload["import_playlist_names"] = merged
+                write_tuples.append((_json.dumps(payload), now, jid))
+
+        if write_tuples:
+            conn.executemany(
+                "UPDATE download_jobs SET payload_json = ?, updated_at_ms = ? WHERE job_id = ?",
+                write_tuples,
+            )
+            conn.commit()
+        return result
     finally:
         conn.close()
