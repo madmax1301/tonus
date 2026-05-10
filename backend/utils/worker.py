@@ -522,7 +522,8 @@ class JobWorker(threading.Thread):
         library_hits: List[Dict[str, Any]] = []
         remaining_pending: List[Any] = []
         import json as _wjson
-        for row in pending:
+        pending_total = len(pending)
+        for idx, row in enumerate(pending):
             artist_orig = (row["requested_artist"] or "").strip()
             title_orig = (row["requested_title"] or "").strip()
             sig = (_normalize_sig(artist_orig), _normalize_sig(title_orig))
@@ -547,6 +548,29 @@ class JobWorker(threading.Thread):
             else:
                 remaining_pending.append(row)
 
+            # Live-Progress alle 500 Items im Library-Match-Loop. Bei
+            # playlist_sync ist Phase 0 die Hauptarbeit — User soll den
+            # Counter steigen sehen. Bei full mode setzen wir nur found/
+            # not_found als Hint, processed bleibt 0 weil Phase 2 da der
+            # tatsächliche Counter-Treiber ist (vermeidet Zähler-Sprünge
+            # bei Phase-Übergang).
+            if (idx + 1) % 500 == 0 or (idx + 1) == pending_total:
+                try:
+                    upsert_import_job(
+                        job_id,
+                        status="processing",
+                        total=total,
+                        processed=(idx + 1) if mode == "playlist_sync" else None,
+                        found=len(library_hits),
+                        not_found=len(remaining_pending),
+                        message=(
+                            f"Phase 0: matched {idx + 1}/{pending_total} tracks against library "
+                            f"— {len(library_hits)} hits, {len(remaining_pending)} pending"
+                        ),
+                    )
+                except Exception:
+                    pass
+
         if library_hits:
             insert_import_results(job_id, "library_match", library_hits)
             print(f"[import] Phase 0: {len(library_hits)} tracks already in library, skipping provider lookup")
@@ -566,6 +590,22 @@ class JobWorker(threading.Thread):
         # not_found (User-Hinweis "diese Tracks sind nicht in deiner
         # Library") und triggern den Subsonic-Playlist-Reconcile.
         if mode == "playlist_sync":
+            # Phase 0 fertig — UI-Update mit dem Match-Ergebnis bevor wir in
+            # die Queue-Tagging-Phase gehen. Sonst sieht User nichts zwischen
+            # Library-Scan und Final-Result.
+            upsert_import_job(
+                job_id,
+                status="processing",
+                total=total,
+                processed=total,
+                found=len(library_hits),
+                not_found=len(remaining_pending),
+                message=(
+                    f"Phase 0 done — {len(library_hits)} in library, "
+                    f"{len(remaining_pending)} not yet. Tagging Download-Queue..."
+                ),
+            )
+
             # Vor dem not_found-Bucket: cross-link gegen die Download-Queue.
             # Tracks die nicht in der Library liegen, aber bereits gequeued
             # sind, bekommen die Playlist-Namen als Marker im Download-Job-
@@ -652,9 +692,41 @@ class JobWorker(threading.Thread):
             # Import um circular dep (app→worker) zu vermeiden — zur Lauf-
             # zeit ist app.py voll geladen.
             recon_summary = {"playlists": 0, "tracks_added": 0}
+            # Pre-Reconcile-Status — User sieht klar dass Phase 0 + Queue-Tag
+            # durch sind und jetzt der Subsonic-API-Walk losgeht.
+            upsert_import_job(
+                job_id,
+                status="processing",
+                total=total,
+                processed=total,
+                found=len(library_hits),
+                not_found=len(misses_not_found),
+                playlist_queue_tagged=queue_tagged_count,
+                message=(
+                    f"Queue-tagging done ({queue_tagged_count} tracks tagged). "
+                    f"Reconciling Subsonic-Playlists..."
+                ),
+            )
+
+            # Callback für progressive Reconcile-Updates — der Subsonic-API-
+            # Walk kann bei vielen Playlists (200+) Minuten dauern. User soll
+            # sehen welche Playlist gerade dran ist, nicht raten was passiert.
+            def _on_playlist_progress(idx: int, total_pl: int, name: str) -> None:
+                try:
+                    short = name[:40] + "…" if len(name) > 40 else name
+                    upsert_import_job(
+                        job_id,
+                        status="processing",
+                        message=f"Reconcile {idx + 1}/{total_pl}: '{short}'",
+                    )
+                except Exception:
+                    pass
+
             try:
                 from app import _reconcile_import_library_matches
-                recon_summary = _reconcile_import_library_matches(job_id)
+                recon_summary = _reconcile_import_library_matches(
+                    job_id, on_playlist_progress=_on_playlist_progress
+                )
             except Exception as e:
                 print(f"[import {job_id}] playlist_sync reconcile failed: {type(e).__name__}: {e}", flush=True)
 

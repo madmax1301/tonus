@@ -3286,7 +3286,10 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
 _reconcile_plugin_playlists = _reconcile_imported_playlists
 
 
-def _reconcile_import_library_matches(job_id: str) -> Dict[str, int]:
+def _reconcile_import_library_matches(
+    job_id: str,
+    on_playlist_progress: Optional[Any] = None,
+) -> Dict[str, int]:
     """Phase I-Edge-Case-Fix: für library_match-Tracks eines CSV-Imports
     direkt zu den Subsonic-Playlists hinzufügen.
 
@@ -3301,7 +3304,10 @@ def _reconcile_import_library_matches(job_id: str) -> Dict[str, int]:
     eine Import) und idempotent (read-before-write in
     `add_tracks_to_playlist`).
 
-    Triggered nach queue_all aus dem CSV-Import-Flow.
+    on_playlist_progress: optionaler Callable(idx, total, playlist_name)
+    der bei jedem Playlist-Schritt aufgerufen wird — Worker nutzt das
+    um die UI-Status-Message live mit dem aktuellen Reconcile-Schritt
+    zu aktualisieren ("Reconciling playlist 42/197: Favorite Songs").
     """
     from collections import defaultdict
 
@@ -3321,8 +3327,14 @@ def _reconcile_import_library_matches(job_id: str) -> Dict[str, int]:
     if not by_playlist:
         return {"playlists": 0, "tracks_added": 0, "library_tracks_processed": len(rows)}
 
+    total_playlists = len(by_playlist)
     total_added = 0
-    for playlist_name, items in by_playlist.items():
+    for idx, (playlist_name, items) in enumerate(by_playlist.items()):
+        if on_playlist_progress is not None:
+            try:
+                on_playlist_progress(idx, total_playlists, playlist_name)
+            except Exception:
+                pass
         existing = navidrome_service.find_playlist_by_name(playlist_name)
         if existing:
             playlist_id = existing.get("id")
