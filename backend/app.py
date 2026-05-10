@@ -2253,6 +2253,11 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     playlists_in_csv = len({
         name for p in parsed for name in (p.get("playlist_names") or [])
     })
+    print(
+        f"[import_csv] BEFORE-UPSERT job_id={job_id} mode={mode!r} "
+        f"job_source={job_source!r} playlists_in_csv={playlists_in_csv}",
+        flush=True,
+    )
     upsert_import_job(
         job_id,
         status="queued",
@@ -2263,6 +2268,15 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
         mode=mode,
         source=job_source,
         playlists_total=playlists_in_csv,
+    )
+    # Direkt nach dem upsert die DB-Werte zurücklesen damit wir definitiv
+    # sehen ob upsert die Werte persistiert hat
+    from utils.job_store import get_import_job as _get_job_dbg
+    _dbg = _get_job_dbg(job_id) or {}
+    print(
+        f"[import_csv] AFTER-UPSERT job_id={job_id} db_mode={_dbg.get('mode')!r} "
+        f"db_source={_dbg.get('source')!r} db_total={_dbg.get('total')!r}",
+        flush=True,
     )
 
     # Store parsed items in a temp table so the worker can read them
