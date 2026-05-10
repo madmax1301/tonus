@@ -44,17 +44,18 @@ from utils.job_store import (
     _now_ms,
     init_jobs_db,
     reset_stale_inflight_jobs,
-    reset_stale_csv_jobs,
+    reset_stale_import_jobs,
     upsert_job,
     get_job,
     get_album_aggregate,
     record_completed_download,
     has_completed_download,
-    upsert_csv_job,
-    get_csv_job,
-    insert_csv_results,
-    get_csv_results,
-    count_csv_results,
+    upsert_import_job,
+    get_import_job,
+    insert_import_results,
+    get_import_results,
+    count_import_results,
+    get_import_library_matches_with_playlists,
 )
 from utils.worker import JobWorker
 from utils.auth import require_token, require_admin, auth_required
@@ -234,7 +235,7 @@ init_jobs_db()
 _stale = reset_stale_inflight_jobs()
 if _stale:
     print(f"Reset {_stale} stale download job(s) (queued/processing) after server start")
-_csv_stale = reset_stale_csv_jobs()
+_csv_stale = reset_stale_import_jobs()
 if _csv_stale.get("jobs_reset") or _csv_stale.get("rows_purged"):
     print(
         f"Reset {_csv_stale['jobs_reset']} stale CSV import job(s) and purged "
@@ -314,18 +315,58 @@ def _verify_vpn_source_bindings() -> None:
 
 _verify_vpn_source_bindings()
 
-# Background worker — zwei unabhängige Threads: Downloads + CSV-Import parallel
+# Background worker — vier unabhängige Threads (User-Wunsch 2026-05-10):
+#   - download              → Track-Downloads, eigene Lane
+#   - import:csv            → klassischer Bulk-CSV-Import (full pipeline)
+#   - import:spotify_history→ JSON-Streaming-History-Import (full pipeline)
+#   - import:playlist_sync  → Library-Match + Reconcile only, KEIN Provider
+# Lane-Filter in _poll_next_queued_import sorgt für saubere Trennung. Damit
+# blockiert ein laufender Bulk-CSV-Import nicht mehr eine startende Playlist-
+# Sync — beide laufen parallel.
 _download_worker = JobWorker(job_type="download")
-_csv_worker = JobWorker(job_type="csv")
+_csv_worker = JobWorker(job_type="import", import_lane="csv")
+_spotify_history_worker = JobWorker(job_type="import", import_lane="spotify_history")
+_playlist_sync_worker = JobWorker(job_type="import", import_lane="playlist_sync")
 _download_worker.start()
 _csv_worker.start()
-print("Worker threads started (download + csv)")
+_spotify_history_worker.start()
+_playlist_sync_worker.start()
+print("Worker threads started (download + import:csv + import:spotify_history + import:playlist_sync)")
+
+# Phase 0 Pre-Warm: Library-Signature-Cache beim Container-Boot asynchron
+# aufbauen, damit der ERSTE CSV-Import nach Restart nicht 30-60s in Phase 0
+# hängt. Daemon-Thread blockiert App-Start nicht — wenn der App-Boot fertig
+# ist und kein Import läuft, bauen wir den Cache nebenbei. Falls ein Import
+# vorher startet, übernimmt dessen Lock-Acquire die Arbeit.
+def _prewarm_library_signatures():
+    try:
+        import time as _time
+        _time.sleep(2.0)  # App + Worker erst stabil hochfahren lassen
+        from services.navidrome import NavidromeService
+        print("[prewarm] starting library_signatures() warmup...", flush=True)
+        t0 = _time.time()
+        sigs = NavidromeService().library_signatures()
+        elapsed = _time.time() - t0
+        print(f"[prewarm] library cache ready: {len(sigs)} signatures, {elapsed:.1f}s", flush=True)
+    except Exception as e:
+        # Pre-warm-Fehler dürfen App-Boot nicht stören — Worker macht's
+        # ggf. später beim ersten Import erneut.
+        print(f"[prewarm] failed: {type(e).__name__}: {e} — first import will rebuild cache", flush=True)
+
+_prewarm_thread = threading.Thread(
+    target=_prewarm_library_signatures,
+    name="library-prewarm",
+    daemon=True,
+)
+_prewarm_thread.start()
 
 @app.on_event("shutdown")
 def _shutdown_workers():
     print("Shutting down workers...")
     _download_worker.shutdown(timeout=60)
     _csv_worker.shutdown(timeout=300)
+    _spotify_history_worker.shutdown(timeout=300)
+    _playlist_sync_worker.shutdown(timeout=60)
     print("Workers stopped")
 
 # CORS middleware (still useful for API endpoints)
@@ -475,6 +516,15 @@ class CsvImportRequest(BaseModel):
     # Optional: original-Filename für UI-Anzeige (Tab zeigt sonst nur job_id).
     # Liefert das Frontend bei File-Upload mit; bei Text-Paste bleibt's null.
     filename: Optional[str] = None
+    # Mode-Switch (2026-05-10):
+    #   None / "full"          → klassischer Bulk-Import: Phase 0..5
+    #   "playlist_sync"        → Library-Match + Playlist-Reconcile only.
+    #                            Skip Provider-Phase + Download. Use case:
+    #                            User hat Tracks bereits via Bulk-Import,
+    #                            will jetzt nur die Playlist-Memberships aus
+    #                            einer CSV (TuneMyMusic / Spotify-Export)
+    #                            in seine Navidrome-Playlists einreihen.
+    mode: Optional[str] = None
 
 
 class URLDownloadRequest(BaseModel):
@@ -2051,7 +2101,7 @@ def get_recommendations(request: RecommendationRequest):
 async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)):
     """
     CSV-Import (persistent): speichert Job in SQLite, Worker holt ihn ab.
-    Gibt sofort eine job_id zurück — Status unter /api/import/csv/status/{job_id} pollbar.
+    Gibt sofort eine job_id zurück — Status unter /api/import/jobs/{job_id}/status pollbar.
     """
     import csv, io, re as _re
 
@@ -2080,14 +2130,21 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     if not rows:
         rows = [[line.strip()] for line in lines]
 
-    # Auto-detect header: look for "artist" and "track"/"title" columns
+    # Auto-detect header: look for "artist", "track"/"title" und (Phase I)
+    # optional "playlist"-Spalte. TuneMyMusic-Exports haben standardmäßig
+    # eine "Playlist Name"-Spalte; andere Exports haben sie nicht — dann
+    # bleibt col_playlist=None und der Track hat keine playlist_names.
     col_artist, col_title = 0, 1
+    col_playlist: Optional[int] = None
     if rows and len(rows[0]) >= 2:
         first = [c.strip().lower().lstrip('\ufeff') for c in rows[0]]
         artist_cols = [i for i, c in enumerate(first) if 'artist' in c]
         title_cols  = [i for i, c in enumerate(first) if 'track' in c or 'title' in c or 'name' in c]
+        playlist_cols = [i for i, c in enumerate(first) if 'playlist' in c]
         if artist_cols and title_cols:
             col_artist, col_title = artist_cols[0], title_cols[0]
+            if playlist_cols:
+                col_playlist = playlist_cols[0]
             rows = rows[1:]
     elif rows and any(kw in (rows[0][0].strip().lower().lstrip('\ufeff')) for kw in ['track', 'title', 'name']):
         col_artist, col_title = 1, 0
@@ -2097,11 +2154,13 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     for row in rows:
         if not row:
             continue
-        artist, title = "", ""
-        max_col = max(col_artist, col_title)
+        artist, title, playlist_cell = "", "", ""
+        max_col = max(col_artist, col_title, col_playlist if col_playlist is not None else 0)
         if len(row) > max_col:
             artist = row[col_artist].strip().strip('"').strip("'") if col_artist < len(row) else ""
             title  = row[col_title].strip().strip('"').strip("'")  if col_title  < len(row) else ""
+            if col_playlist is not None and col_playlist < len(row):
+                playlist_cell = row[col_playlist].strip().strip('"').strip("'")
         elif len(row) == 1:
             parts = _re.split(r"\s*[-–—]\s*", row[0].strip(), maxsplit=1)
             if len(parts) == 2:
@@ -2110,9 +2169,35 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
             else:
                 title = parts[0].strip()
         if title:
-            parsed.append({"artist": artist, "title": title, "raw": row[0].strip() if row else f"{artist} {title}".strip()})
+            # Phase I: Multi-Playlist-Membership in einer Zelle. TuneMyMusic
+            # liefert pro Track einen einzelnen Playlist-Namen, aber wir
+            # parsen comma- oder semicolon-separated falls Tools mehrere
+            # Memberships in einer Zelle haben.
+            playlist_names = [
+                p.strip() for p in _re.split(r"[,;]", playlist_cell) if p.strip()
+            ] if playlist_cell else []
+            parsed.append({
+                "artist": artist,
+                "title": title,
+                "raw": row[0].strip() if row else f"{artist} {title}".strip(),
+                "playlist_names": playlist_names,
+            })
 
-    # Eindeutige job_id auf Basis der Wall-Clock-Zeit (csv_import_jobs hat keine numeric id-Spalte)
+    # Empty-Guard: wenn der Parser nichts findet, sofort 400 zurück statt
+    # einen Stub-Job in DB anzulegen — sonst sieht User nur kryptischen
+    # Worker-State ("No pending items found") in der UI.
+    if not parsed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "CSV-Inhalt konnte nicht erkannt werden — bitte prüfe dass die Datei "
+                "Spalten 'Artist' + 'Track Name' enthält (optional 'Playlist Name'). "
+                f"Empfangen: {len(request.csv_text)} Bytes, {len(rows)} Roh-Zeilen, "
+                f"0 valide Tracks geparsed."
+            ),
+        )
+
+    # Eindeutige job_id auf Basis der Wall-Clock-Zeit (import_jobs hat keine numeric id-Spalte)
     import time as _time
     from utils.job_store import _db as _csv_db
     job_id = f"csv-{int(_time.time() * 1000)}"
@@ -2121,8 +2206,8 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     # aber wir wollen keine fremden Results mit den neuen vermischen), zuerst alle Reste löschen.
     conn = _csv_db()
     try:
-        conn.execute("DELETE FROM csv_import_results WHERE job_id = ?", (job_id,))
-        conn.execute("DELETE FROM csv_import_jobs    WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM import_results WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM import_jobs    WHERE job_id = ?", (job_id,))
         conn.commit()
     finally:
         conn.close()
@@ -2131,82 +2216,279 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
     # Spalte (vorher: Hijack des `message`-Felds als "provider|limit|pending_raw"-
     # String, was bei verzögertem Worker-Pickup als Status-Message in der UI
     # auftauchte). Filename optional für UI-Anzeige.
+    #
+    # Mode-Switch + Source-Marker:
+    #   - mode="playlist_sync" → Worker skipped Provider/Download, macht nur
+    #     Library-Match + Playlist-Reconcile. source="playlist_sync" damit
+    #     Frontend Tab-Label "Playlist-Sync" rendert.
+    #   - mode=None / "full"   → Default Bulk-Import-Pipeline. source="csv".
     import json as _json
-    payload = _json.dumps({"provider": provider, "search_limit": search_limit})
+    mode = (request.mode or "full").strip().lower()
+    if mode not in ("full", "playlist_sync"):
+        mode = "full"
+    payload_dict: Dict[str, Any] = {"provider": provider, "search_limit": search_limit}
+    if mode == "playlist_sync":
+        payload_dict["mode"] = "playlist_sync"
+        payload_dict["source"] = "playlist_sync"
+    payload = _json.dumps(payload_dict)
     fname = (request.filename or "").strip() or None
 
-    upsert_csv_job(
+    # source-Spalte ist Lane-Routing für die 4-Lane-Worker-Architektur
+    # (csv / spotify_history / playlist_sync). mode steuert ob Provider/
+    # Download-Phasen ausgeführt werden.
+    job_source = "playlist_sync" if mode == "playlist_sync" else "csv"
+    # Pre-stats für Result-Card: wieviele unique Playlists wurden in der CSV
+    # gefunden. Wird vom Worker als "playlists_total" durchgereicht und vom
+    # Frontend als "Playlists in CSV" angezeigt — User soll auf einen Blick
+    # sehen ob sein Export überhaupt Playlist-Spalten hatte.
+    playlists_in_csv = len({
+        name for p in parsed for name in (p.get("playlist_names") or [])
+    })
+    upsert_import_job(
         job_id,
         status="queued",
         total=len(parsed),
         message=f"Queued — waiting for worker ({len(parsed)} tracks)",
         filename=fname,
         payload_json=payload,
+        mode=mode,
+        source=job_source,
+        playlists_total=playlists_in_csv,
     )
 
     # Store parsed items in a temp table so the worker can read them
-    # (use csv_import_results with result_type='pending' as staging)
-    insert_csv_results(job_id, "pending_raw", [
-        {"original": p["raw"], "requested_artist": p["artist"], "requested_title": p["title"]}
+    # (use import_results with result_type='pending' as staging).
+    # Phase I: playlist_names werden mit gespeichert, Worker kann sie
+    # zu library_match/matched-Buckets durchreichen.
+    insert_import_results(job_id, "pending_raw", [
+        {
+            "original": p["raw"],
+            "requested_artist": p["artist"],
+            "requested_title": p["title"],
+            "playlist_names": p.get("playlist_names") or [],
+        }
         for p in parsed
     ])
 
     return {"status": "queued", "job_id": job_id, "total": len(parsed), "filename": fname}
 
 
-@app.get("/api/import/csv/status/{job_id}")
-async def csv_import_status(job_id: str):
-    """Poll CSV import progress (aus SQLite)."""
-    job = get_csv_job(job_id)
+class SpotifyHistoryImportRequest(BaseModel):
+    """Phase I.2 — Spotify Extended Streaming History Import.
+
+    files: Liste von parsed JSON-Arrays (jedes Array eine
+    Streaming_History_Audio_*.json). Frontend liest Files via FileReader,
+    JSON.parse und sendet sie als Top-Level-Array damit Backend keinen
+    String→JSON-Roundtrip mehr braucht.
+
+    Filter-Defaults sind Spotifys eigene "Listened-To"-Heuristik (≥30s)
+    plus Playlist-Counts pro Jahr/Monat.
+    """
+    files: List[List[Dict[str, Any]]]
+    provider: Optional[str] = None
+    limit: Optional[int] = 3
+    min_ms_played: Optional[int] = 0
+    min_play_count: Optional[int] = 1
+    date_from: Optional[str] = None  # YYYY-MM-DD
+    date_to: Optional[str] = None
+    auto_playlist_year: Optional[bool] = True
+    auto_playlist_month: Optional[bool] = True
+    playlist_prefix: Optional[str] = "Spotify History"
+    filename: Optional[str] = None  # nur für UI-Anzeige (z.B. "Spotify History · 24 Files")
+
+
+@app.post("/api/import/spotify-history")
+async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Depends(require_token)):
+    """Importiert eine oder mehrere Spotify-Extended-Streaming-History-JSONs.
+
+    Pipeline-Integration:
+    1. spotify_history.parse_streaming_history() aggregiert pro (artist, title)
+       und leitet Year/Month-Auto-Playlists ab
+    2. Aggregat wird in import_jobs/import_results eingereiht
+       (gleiches Schema wie /api/import/csv) — der existing Import-Worker
+       übernimmt von hier (Phase 0 Library-Match, Phase 2 Provider-Lookup)
+    3. import_playlist_names werden via Phase I durch alle Buckets
+       durchgereicht und beim queue_all + Reconcile in Subsonic-Playlists
+       übersetzt
+    """
+    from services.spotify_history import parse_streaming_history
+    import json as _json
+    import time as _time
+    from utils.job_store import _db as _hist_db
+
+    provider = resolve_metadata_provider(req.provider)
+    search_limit = max(1, min(req.limit or 3, 5))
+
+    # Aggregation. parse_streaming_history is pure — kein DB-Touch, kein
+    # Side-Effect — also sicher synchron im Request.
+    # None-explizit-Check statt `or` — sonst macht User-eingabe 0 (alle Tracks
+    # rein) silent zum Default 30000. Same für min_play_count.
+    result = parse_streaming_history(
+        req.files,
+        min_ms_played=int(req.min_ms_played if req.min_ms_played is not None else 0),
+        min_play_count=int(req.min_play_count if req.min_play_count is not None else 1),
+        date_from=req.date_from,
+        date_to=req.date_to,
+        auto_playlist_year=bool(req.auto_playlist_year if req.auto_playlist_year is not None else True),
+        auto_playlist_month=bool(req.auto_playlist_month if req.auto_playlist_month is not None else True),
+        playlist_prefix=(req.playlist_prefix or "Spotify History").strip() or "Spotify History",
+    )
+    tracks = result["tracks"]
+    stats = result["stats"]
+
+    if not tracks:
+        # Aggregat ist leer — keine Tracks die importierbar wären. Wir geben
+        # die stats zurück damit User sieht warum (zu strenger Filter,
+        # nur Podcasts in den Files, etc.) — aber kein import_job angelegt.
+        return {
+            "status": "empty",
+            "message": "No tracks after filtering",
+            "stats": stats,
+        }
+
+    job_id = f"spotify-hist-{int(_time.time() * 1000)}"
+
+    # Cleanup analog zu /api/import/csv falls dieser job_id schon existiert
+    conn = _hist_db()
+    try:
+        conn.execute("DELETE FROM import_results WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM import_jobs    WHERE job_id = ?", (job_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    payload = _json.dumps({"provider": provider, "search_limit": search_limit, "source": "spotify_history"})
+    fname = (req.filename or "").strip() or f"Spotify History · {len(req.files)} Files"
+
+    upsert_import_job(
+        job_id,
+        status="queued",
+        total=len(tracks),
+        message=f"Queued — waiting for worker ({len(tracks)} tracks from {stats['total_events']} events)",
+        filename=fname,
+        payload_json=payload,
+        mode="full",
+        source="spotify_history",
+    )
+
+    # Phase I-Schema: artist/title/playlist_names werden direkt durchgereicht.
+    # Worker pickt die als pending_raw und läuft die ganze Pipeline (Phase 0
+    # Library-Match → Phase 2 Provider-Lookup → Phase 3 materialize).
+    insert_import_results(job_id, "pending_raw", [
+        {
+            "original": f"{t['artist']} - {t['title']}",
+            "requested_artist": t["artist"],
+            "requested_title": t["title"],
+            "playlist_names": t.get("playlist_names") or [],
+        }
+        for t in tracks
+    ])
+
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "total": len(tracks),
+        "filename": fname,
+        "stats": stats,
+    }
+
+
+@app.get("/api/import/jobs/{job_id}/status")
+async def import_job_status(job_id: str):
+    """Poll CSV/JSON import progress (aus SQLite). Liefert:
+    - library_match_count (Phase H) damit Frontend den "in library"-Counter live zeigen kann
+    - recovery_total + recovery_recovered (Phase 2.5) damit Frontend rechecked-Stats anzeigt
+    - source ("csv" | "spotify_history") aus payload_json damit Frontend
+      Tab-Label korrekt rendert (vorher hardcoded "CSV" auch bei JSON)
+    """
+    import json as _json
+    job = get_import_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="CSV import job not found")
+    counts = count_import_results(job_id)
+    # Source aus payload_json ableiten — bei legacy-Jobs ohne source-Feld
+    # default "csv". Spotify-History setzt {"source": "spotify_history"}.
+    source = "csv"
+    payload_raw = job.get("payload_json")
+    if payload_raw:
+        try:
+            payload = _json.loads(payload_raw)
+            if isinstance(payload, dict) and isinstance(payload.get("source"), str):
+                source = payload["source"]
+        except Exception:
+            pass
     return {
         "status": job["status"],
         "total": job["total"],
         "processed": job["processed"],
         "found": job["found"],
         "not_found": job["not_found"],
+        "library_match_count": counts.get("library_match", 0),
+        "recovery_total": job.get("recovery_total", 0) or 0,
+        "recovery_recovered": job.get("recovery_recovered", 0) or 0,
+        "phase0_progress": job.get("phase0_progress", 0) or 0,
+        "playlists_total": job.get("playlists_total", 0) or 0,
+        "playlists_synced": job.get("playlists_synced", 0) or 0,
+        "playlist_tracks_added": job.get("playlist_tracks_added", 0) or 0,
+        "playlist_queue_tagged": job.get("playlist_queue_tagged", 0) or 0,
+        "source": source,
         "message": job.get("message", ""),
         "filename": job.get("filename"),
     }
 
 
-@app.get("/api/import/csv/result/{job_id}")
-async def csv_import_result(
+@app.post("/api/import/jobs/{job_id}/cancel")
+async def import_job_cancel(job_id: str, _: None = Depends(require_token)):
+    """User-Cancel via UI. Setzt status='cancelled' in der DB; der Worker
+    pollt diesen Status zwischen Phase-Schritten und beendet den Job
+    sauber (max 1 Phase-Step Latenz). Idempotent: bereits terminale Jobs
+    (completed/error/cancelled) returnen `cancelled: false` ohne Fehler."""
+    from utils.job_store import cancel_import_job
+    job = get_import_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="CSV import job not found")
+    cancelled = cancel_import_job(job_id)
+    return {"ok": True, "cancelled": cancelled, "previous_status": job.get("status")}
+
+
+@app.get("/api/import/jobs/{job_id}/result")
+async def import_job_result(
     job_id: str,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
 ):
     """CSV-Import-Ergebnisse paginiert aus SQLite."""
-    job = get_csv_job(job_id)
+    job = get_import_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="CSV import job not found")
     if job["status"] != "completed":
         raise HTTPException(status_code=400, detail="CSV import not yet completed")
 
-    results = get_csv_results(job_id, offset=offset, limit=limit)
-    counts = count_csv_results(job_id)
+    results = get_import_results(job_id, offset=offset, limit=limit)
+    counts = count_import_results(job_id)
     return {
         "total": job["total"],
         "found": counts["matched"],
         "not_found": counts["unmatched"],
+        "library_match_count": counts.get("library_match", 0),
         "matched": results["matched"],
         "unmatched": results["unmatched"],
+        "library_match": results.get("library_match", []),
     }
 
 
-@app.delete("/api/import/csv/{job_id}")
-async def delete_csv_import(job_id: str, _: None = Depends(require_token)):
+@app.delete("/api/import/jobs/{job_id}")
+async def delete_import_job(job_id: str, _: None = Depends(require_token)):
     """Löscht einen CSV-Import-Job inkl. aller matched/unmatched Results.
 
-    Greift auf csv_import_jobs UND csv_import_results — der Job verschwindet
+    Greift auf import_jobs UND import_results — der Job verschwindet
     komplett, kann danach mit derselben job_id nicht mehr abgerufen werden.
     Idempotent: löschen eines nicht-existierenden Jobs ist OK (deleted=0).
     """
     conn = _db()
     try:
-        conn.execute("DELETE FROM csv_import_results WHERE job_id = ?", (job_id,))
-        cur = conn.execute("DELETE FROM csv_import_jobs WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM import_results WHERE job_id = ?", (job_id,))
+        cur = conn.execute("DELETE FROM import_jobs WHERE job_id = ?", (job_id,))
         n = cur.rowcount or 0
         conn.commit()
         return {"ok": True, "deleted_jobs": n, "job_id": job_id}
@@ -2223,7 +2505,7 @@ class CsvQueueAllRequest(BaseModel):
     navidrome_library: Optional[str] = None
 
 
-@app.post("/api/import/csv/queue-all/{job_id}")
+@app.post("/api/import/jobs/{job_id}/queue-all")
 async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(require_token)):
     """Schreibe ALLE matched Tracks aus einem CSV-Import in die Download-Queue.
 
@@ -2234,10 +2516,10 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
     """
     import json as _json
 
-    csv_job = get_csv_job(job_id)
-    if not csv_job:
+    import_job = get_import_job(job_id)
+    if not import_job:
         raise HTTPException(status_code=404, detail="CSV import job not found")
-    if csv_job["status"] != "completed":
+    if import_job["status"] != "completed":
         raise HTTPException(status_code=400, detail="CSV import not yet completed")
 
     provider = resolve_metadata_provider(req.provider)
@@ -2249,17 +2531,20 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
     if location == "navidrome":
         navidrome_path = resolve_navidrome_library_path_optional(req.navidrome_library)
 
-    # ----- Schritt 1: alle matched Track-JSONs aus DB lesen + parsen -----
+    # ----- Schritt 1: alle matched Track-JSONs + playlist_names aus DB lesen + parsen -----
+    # Phase I: playlist_names_json wird mitgelesen damit der Download-Job
+    # den Playlist-Marker `import_playlist_names` im Payload trägt — das
+    # ist die Quelle für `_reconcile_imported_playlists` nach Download.
     conn = _db()
     try:
         rows = conn.execute(
-            "SELECT track_json FROM csv_import_results WHERE job_id = ? AND result_type = 'matched'",
+            "SELECT track_json, playlist_names_json FROM import_results WHERE job_id = ? AND result_type = 'matched'",
             (job_id,),
         ).fetchall()
     finally:
         conn.close()
 
-    candidates: list = []  # list of (track_id, track_dict)
+    candidates: list = []  # list of (track_id, track_dict, playlist_names)
     errors = 0
     for row in rows:
         if not row["track_json"]:
@@ -2274,7 +2559,11 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
         if not tid:
             errors += 1
             continue
-        candidates.append((tid, track))
+        try:
+            playlist_names = _json.loads(row["playlist_names_json"]) if row["playlist_names_json"] else []
+        except Exception:
+            playlist_names = []
+        candidates.append((tid, track, playlist_names))
 
     # ----- Schritt 2: bulk-Lookup auf existierende download_jobs (statt N Einzelqueries) -----
     skipped_dup = 0
@@ -2283,7 +2572,7 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
     if candidates:
         conn = _db()
         try:
-            track_ids = [tid for tid, _ in candidates]
+            track_ids = [tid for tid, _, _ in candidates]
             # SQLite-Parameterlimit (~999) → in 500er-Chunks aufteilen
             chunk = 500
             for i in range(0, len(track_ids), chunk):
@@ -2318,7 +2607,7 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
 
     insert_tuples: list = []
     queued = 0
-    for tid, track in candidates:
+    for tid, track, playlist_names in candidates:
         if tid in in_flight_ids or tid in completed_provider_pairs:
             skipped_dup += 1
             continue
@@ -2335,6 +2624,11 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
 
         track_for_queue = _slim_track_for_queue(track)
         payload = dict(payload_template, record_track_id=tid, track=track_for_queue)
+        # Phase I: import_playlist_names im Payload setzen wenn der Track
+        # auf mindestens einer Playlist im Source-CSV stand. Reconcile
+        # (siehe _reconcile_imported_playlists) liest diesen Marker.
+        if playlist_names:
+            payload["import_playlist_names"] = playlist_names
         insert_tuples.append((
             tid, "queued", "queued", 0, msg,
             None, None, None,  # file_path, download_url, error
@@ -2369,11 +2663,25 @@ async def csv_queue_all(job_id: str, req: CsvQueueAllRequest, _: None = Depends(
         finally:
             conn.close()
 
+    # ----- Schritt 5: Library-Match-Tracks zu Playlists (Phase I-Edge-Case) -----
+    # Library-Match-Tracks haben keinen Download-Job (Tracks sind ja schon
+    # da), würden aber ohne diesen Schritt nie zu ihren Playlists hinzu-
+    # gefügt. Job-scoped Reconcile direkt aus import_results.
+    library_recon: Dict[str, int] = {"playlists": 0, "tracks_added": 0, "library_tracks_processed": 0}
+    try:
+        library_recon = _reconcile_import_library_matches(job_id)
+    except Exception as e:
+        # Reconcile-Failure soll queue_all nicht killen — Tracks sind in der
+        # Queue, das ist der wichtige Teil. Reconcile kann manuell oder
+        # beim nächsten Plugin-Sync nachgezogen werden.
+        print(f"[csv-queue-all] library-reconcile failed (non-fatal): {type(e).__name__}: {e}")
+
     return {
         "queued": queued,
         "skipped_duplicate": skipped_dup,
         "errors": errors,
         "total_matched": len(rows),
+        "library_playlists_reconciled": library_recon,
     }
 
 
@@ -2680,7 +2988,7 @@ async def url_search(req: URLSearchRequest):
 #
 # Diese drei Routen sind die einzige Schnittstelle, die das Navidrome-Plugin
 # (separates Repo `tonus-navidrome-plugin`) braucht. Alles andere kann es
-# über die bestehenden /api/import/csv* + /api/download* Endpoints erreichen.
+# über die bestehenden /api/import/csv + /api/import/jobs + /api/download* Endpoints erreichen.
 # Bewusst klein gehalten, damit Plugin-Wartung minimal bleibt.
 # ---------------------------------------------------------------------------
 
@@ -2825,19 +3133,30 @@ def _resolve_playlist_name_template(template: Optional[str]) -> Optional[str]:
     return template.replace("{date}", date.today().isoformat()).strip()
 
 
-def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
-    """Findet alle 'completed'-Tracks der letzten N Tage, die zu einem
-    plugin-sync-Run gehören (Marker ``plugin_sync_playlist_name`` im payload),
-    und fügt sie idempotent zu ihrer Subsonic-Playlist in Navidrome hinzu.
+def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
+    """Findet alle 'completed'-Tracks der letzten N Tage die einen Playlist-
+    Marker tragen, und fügt sie idempotent zu ihrer Subsonic-Playlist in
+    Navidrome hinzu.
+
+    Phase I: zwei Marker werden akzeptiert:
+    - ``plugin_sync_playlist_name`` (Single-String) — vom Navidrome-Plugin
+      gesetzt, ein Track gehört zu genau einer Sync-Run-Playlist
+    - ``import_playlist_names`` (List[str]) — vom CSV-Import (TuneMyMusic)
+      gesetzt, ein Track kann auf mehreren Playlists landen wenn das
+      CSV multiple Memberships kommasepariert in einer Zelle hat
 
     Architektur: Wir tracken keine separate Sync-Run-Tabelle, sondern lesen
-    den Marker aus ``download_jobs.payload_json``. Idempotenz greift über
+    die Marker aus ``download_jobs.payload_json``. Idempotenz greift über
     read-before-write in ``add_tracks_to_playlist`` — der Helper kann beliebig
     oft laufen ohne Duplikate zu erzeugen.
 
     Wird automatisch am Anfang/Ende jedes ``_run_plugin_sync`` aufgerufen.
     Tracks deren Subsonic-Index-Eintrag noch nicht existiert (Scanner war
     noch nicht durch) werden beim nächsten Reconcile-Lauf nachgezogen.
+
+    Backward-Compat: alter Funktionsname `_reconcile_plugin_playlists` ist
+    unten als Alias verfügbar, damit existing Plugin-Sync-Aufrufe weiter
+    funktionieren.
     """
     import json as _json
     from collections import defaultdict
@@ -2850,7 +3169,8 @@ def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
             SELECT job_id, payload_json FROM download_jobs
             WHERE status = 'completed'
               AND created_at_ms >= ?
-              AND payload_json LIKE '%plugin_sync_playlist_name%'
+              AND (payload_json LIKE '%plugin_sync_playlist_name%'
+                   OR payload_json LIKE '%import_playlist_names%')
             """,
             (cutoff_ms,),
         ).fetchall()
@@ -2865,21 +3185,32 @@ def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
             payload = _json.loads(r["payload_json"])
         except Exception:
             continue
-        playlist_name = payload.get("plugin_sync_playlist_name")
-        if not playlist_name:
-            continue
-        # Multi-User-Modus: Tracks mit `plugin_sync_navidrome_user`-Marker
-        # werden vom Plugin via Subsonic-API im Namen dieses Users gepushed.
-        # Backend-Reconcile skippt diese Tracks, sonst würden Playlists
-        # doppelt entstehen (einmal Admin-owned, einmal user-owned).
-        if payload.get("plugin_sync_navidrome_user"):
+
+        # Sammle alle Playlist-Memberships dieses Tracks. Plugin-Marker ist
+        # Single-String, Import-Marker ist List — wir vereinheitlichen zu
+        # einer Liste damit der Track auf alle ihre Playlists landet.
+        playlist_names: List[str] = []
+        plugin_name = payload.get("plugin_sync_playlist_name")
+        if plugin_name:
+            # Multi-User-Modus: Tracks mit `plugin_sync_navidrome_user`-Marker
+            # werden vom Plugin via Subsonic-API im Namen dieses Users gepushed.
+            # Backend-Reconcile skippt diese Tracks, sonst würden Playlists
+            # doppelt entstehen (einmal Admin-owned, einmal user-owned).
+            if not payload.get("plugin_sync_navidrome_user"):
+                playlist_names.append(plugin_name)
+        import_names = payload.get("import_playlist_names") or []
+        if isinstance(import_names, list):
+            playlist_names.extend(p for p in import_names if isinstance(p, str) and p.strip())
+
+        if not playlist_names:
             continue
         track_obj = payload.get("track") or {}
         artist = (track_obj.get("artist") or "").strip()
         title = (track_obj.get("name") or "").strip()
         if not artist or not title:
             continue
-        by_playlist[playlist_name].append({"artist": artist, "title": title})
+        for pl_name in playlist_names:
+            by_playlist[pl_name].append({"artist": artist, "title": title})
 
     if not by_playlist:
         return {"playlists": 0, "tracks_added": 0}
@@ -2922,6 +3253,106 @@ def _reconcile_plugin_playlists(max_age_days: int = 60) -> Dict[str, int]:
         )
 
     return {"playlists": len(by_playlist), "tracks_added": total_added}
+
+
+# Backward-Compat-Alias: existing Plugin-Sync-Code ruft die Funktion unter
+# dem alten Namen auf. Beide Namen zeigen auf dieselbe Implementation —
+# `_reconcile_imported_playlists` ist der semantisch breitere Name (deckt
+# Plugin- und CSV-Import-Pfade ab), `_reconcile_plugin_playlists` bleibt
+# als no-op-Alias damit Aufrufer nicht synchron migriert werden müssen.
+_reconcile_plugin_playlists = _reconcile_imported_playlists
+
+
+def _reconcile_import_library_matches(
+    job_id: str,
+    on_playlist_progress: Optional[Any] = None,
+) -> Dict[str, int]:
+    """Phase I-Edge-Case-Fix: für library_match-Tracks eines CSV-Imports
+    direkt zu den Subsonic-Playlists hinzufügen.
+
+    Hintergrund: `_reconcile_imported_playlists()` liest aus `download_jobs`,
+    aber Library-Match-Tracks erzeugen keinen Download-Job (queue_all
+    filtert auf result_type='matched'). Sie würden ohne diesen Helper
+    nie zu ihren Subsonic-Playlists hinzugefügt — obwohl sie schon in
+    Navidrome liegen und der User explizit `playlist`-Memberships im
+    CSV angegeben hat.
+
+    Diese Funktion ist job-scoped (kein Cutoff über Zeit, nur dieser
+    eine Import) und idempotent (read-before-write in
+    `add_tracks_to_playlist`).
+
+    on_playlist_progress: optionaler Callable(idx, total, playlist_name)
+    der bei jedem Playlist-Schritt aufgerufen wird — Worker nutzt das
+    um die UI-Status-Message live mit dem aktuellen Reconcile-Schritt
+    zu aktualisieren ("Reconciling playlist 42/197: Favorite Songs").
+    """
+    from collections import defaultdict
+
+    rows = get_import_library_matches_with_playlists(job_id)
+    if not rows:
+        return {"playlists": 0, "tracks_added": 0, "library_tracks_processed": 0}
+
+    by_playlist: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+    for r in rows:
+        artist = r["requested_artist"].strip()
+        title = r["requested_title"].strip()
+        if not artist or not title:
+            continue
+        for pl_name in r["playlist_names"]:
+            by_playlist[pl_name].append({"artist": artist, "title": title})
+
+    if not by_playlist:
+        return {"playlists": 0, "tracks_added": 0, "library_tracks_processed": len(rows)}
+
+    total_playlists = len(by_playlist)
+    total_added = 0
+    for idx, (playlist_name, items) in enumerate(by_playlist.items()):
+        if on_playlist_progress is not None:
+            try:
+                on_playlist_progress(idx, total_playlists, playlist_name)
+            except Exception:
+                pass
+        existing = navidrome_service.find_playlist_by_name(playlist_name)
+        if existing:
+            playlist_id = existing.get("id")
+        else:
+            playlist_id = navidrome_service.create_playlist(playlist_name)
+        if not playlist_id:
+            print(f"[csv-library-reconcile] could not get/create playlist '{playlist_name}'")
+            continue
+
+        # Subsonic-IDs auflösen — sollten alle existieren (Tracks sind ja
+        # bereits in Library), aber falls Subsonic-Index noch nicht durchge-
+        # zogen ist (frisch gescant), gibt's Misses wie im normalen Reconcile.
+        sub_ids: List[str] = []
+        unresolved = 0
+        for it in items:
+            sid = navidrome_service.find_track_id_by_artist_title(it["artist"], it["title"])
+            if sid:
+                sub_ids.append(sid)
+            else:
+                unresolved += 1
+        if not sub_ids:
+            print(
+                f"[csv-library-reconcile] '{playlist_name}': "
+                f"no resolvable subsonic IDs ({unresolved} unresolved of {len(items)})"
+            )
+            continue
+
+        result = navidrome_service.add_tracks_to_playlist(playlist_id, sub_ids)
+        added = result.get("added", 0)
+        total_added += added
+        print(
+            f"[csv-library-reconcile] '{playlist_name}' (pid={playlist_id}): "
+            f"+{added} library tracks (already in playlist: {result.get('already_present', 0)}, "
+            f"unresolved: {unresolved})"
+        )
+
+    return {
+        "playlists": len(by_playlist),
+        "tracks_added": total_added,
+        "library_tracks_processed": len(rows),
+    }
 
 
 def _check_mix_tracks_in_library(req: PluginMixDiscoveryRequest) -> List[Dict[str, str]]:

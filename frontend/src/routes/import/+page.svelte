@@ -61,8 +61,189 @@
   let csvQueueAllResult = $state<string | null>(null);
   let csvLoadMoreBusy = $state(false);
   let csvExportBusy = $state(false);
+  let csvCancelBusy = $state(false);
   let csvExportProgress = $state<{ loaded: number; total: number } | null>(null);
   const PAGE_SIZE = 200;
+
+  // ─── Phase I.2 — Spotify Extended Streaming History State ──────────
+  // Multi-File-Drop in eigener Card. Files werden lokal via FileReader
+  // geparsed (JSON.parse pro File), aggregiert serverseitig, dann ab
+  // dem Resultat geht's denselben Pipeline-Pfad wie ein normaler CSV-
+  // Import (csvJobId wird gesetzt, gleicher Status-Display).
+  let spotifyFiles = $state<File[]>([]);
+  let spotifyMinPlays = $state(1);
+  let spotifyMinSeconds = $state(0); // 0 = alle Tracks (auch skipped) — User-Policy 2026-05-08
+  let spotifyAutoPlaylistYear = $state(true);
+  let spotifyAutoPlaylistMonth = $state(true);
+  let spotifyPlaylistPrefix = $state('Spotify History');
+  let spotifyBusy = $state(false);
+  let spotifyError = $state<string | null>(null);
+  let spotifyDragOver = $state(false);
+
+  // Playlist-Sync — Library-Match + Reconcile-only Pfad. Eigene State-Trennung
+  // damit CSV-Bulk-Drop und Playlist-Sync-Drop sich nicht über den Weg laufen.
+  let playlistSyncText = $state('');
+  let playlistSyncFilename = $state<string | null>(null);
+  let playlistSyncBusy = $state(false);
+  let playlistSyncDragOver = $state(false);
+  let playlistSyncDragDepth = 0;
+
+  async function readJsonFile(file: File): Promise<unknown> {
+    const text = await file.text();
+    return JSON.parse(text);
+  }
+
+  function addSpotifyFiles(files: FileList | File[] | null) {
+    if (!files) return;
+    const next: File[] = [...spotifyFiles];
+    for (const f of Array.from(files)) {
+      // Nur JSON-Files akzeptieren — gegen versehentliches Drop von CSVs
+      // oder Unterordnern. Spotify-File-Convention ist Streaming_History_*.json
+      if (f.name.toLowerCase().endsWith('.json')) {
+        next.push(f);
+      }
+    }
+    // Dedup nach Name+Size — ein File zweimal droppen ist meist unbeabsichtigt.
+    const seen = new Set<string>();
+    spotifyFiles = next.filter((f) => {
+      const k = `${f.name}::${f.size}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    spotifyError = null;
+  }
+
+  function removeSpotifyFile(idx: number) {
+    spotifyFiles = spotifyFiles.filter((_, i) => i !== idx);
+  }
+
+  async function submitSpotifyHistory() {
+    if (spotifyBusy || !spotifyFiles.length) return;
+    spotifyBusy = true;
+    spotifyError = null;
+    try {
+      // Parse alle Files lokal (kein Backend-Roundtrip pro File). Bei großen
+      // Multi-Year-Imports mehrere MB schnell, FileReader ist non-blocking.
+      const parsed: Array<Array<Record<string, unknown>>> = [];
+      for (const f of spotifyFiles) {
+        try {
+          const data = await readJsonFile(f);
+          if (Array.isArray(data)) {
+            parsed.push(data as Array<Record<string, unknown>>);
+          } else {
+            // Spotify-Files SIND Top-Level-Arrays. Etwas anderes = falscher
+            // Datei-Typ. Wir skippen statt zu crashen damit User andere
+            // Dateien noch behalten kann.
+            console.warn(`[spotify-history] ${f.name} ist kein JSON-Array — skip`);
+          }
+        } catch (e) {
+          console.warn(`[spotify-history] ${f.name} parse-fail:`, e);
+        }
+      }
+      if (!parsed.length) {
+        spotifyError = $t('import.spotify_history.error.no_valid_files');
+        spotifyBusy = false;
+        return;
+      }
+      const r = await importApi.startSpotifyHistory(parsed, {
+        provider: provider || undefined,
+        min_ms_played: Math.max(0, spotifyMinSeconds * 1000),
+        min_play_count: Math.max(1, spotifyMinPlays),
+        auto_playlist_year: spotifyAutoPlaylistYear,
+        auto_playlist_month: spotifyAutoPlaylistMonth,
+        playlist_prefix: spotifyPlaylistPrefix.trim() || 'Spotify History',
+        filename: `Spotify History · ${spotifyFiles.length} Files`,
+      });
+      if (r.status === 'empty') {
+        // Aktionable Hint statt nur Stats — sage dem User was er ändern
+        // kann. Bei filtered_short ist Min-Sek-Senkung der Fix; bei
+        // play_count-Filter Min-Plays-Senkung.
+        const stats = r.stats;
+        const hints: string[] = [];
+        if (stats.filtered_short > 0) {
+          hints.push(
+            `${stats.filtered_short.toLocaleString('de-DE')} ${$t('import.spotify_history.empty.short_filter')}`
+          );
+        }
+        if (stats.skipped_play_count_below_threshold > 0) {
+          hints.push(
+            `${stats.skipped_play_count_below_threshold.toLocaleString('de-DE')} ${$t('import.spotify_history.empty.play_count_filter')}`
+          );
+        }
+        if (stats.filtered_non_music > 0) {
+          hints.push(
+            `${stats.filtered_non_music.toLocaleString('de-DE')} ${$t('import.spotify_history.empty.non_music')}`
+          );
+        }
+        spotifyError =
+          `${$t('import.spotify_history.error.empty')} ${stats.total_events.toLocaleString('de-DE')} ${$t('import.spotify_history.empty.events_total')}` +
+          (hints.length ? ` — ${hints.join(', ')}` : '');
+        spotifyBusy = false;
+        return;
+      }
+      // Job ist queued — gleiche Pipeline wie CSV. State umstellen
+      // analog zum CSV-startCsv-Pfad: csvJobId UND csvStatus initial
+      // setzen damit die Live-Card sofort gerendert wird (statt eine
+      // Sekunde leer bis zum ersten Poll-Tick), localStorage-Resume
+      // setzen, pollCsv() explizit triggern.
+      const newJobId = r.job_id ?? null;
+      csvJobId = newJobId;
+      csvFilename = r.filename ?? null;
+      csvResult = null;
+      csvError = null;
+      csvStatus = {
+        status: 'queued',
+        total: r.total ?? 0,
+        processed: 0,
+        found: 0,
+        not_found: 0,
+        message: r.message ?? `Queued — Spotify history (${r.total ?? 0} tracks)`,
+        filename: r.filename ?? null,
+      };
+      if (browser && newJobId) {
+        try {
+          localStorage.setItem(ACTIVE_CSV_KEY, newJobId);
+        } catch {
+          /* private mode / quota — silent */
+        }
+      }
+      spotifyFiles = [];
+      spotifyBusy = false;
+      // pollCsv kickt den ersten Status-Refresh sofort an statt
+      // erst beim 1s-Tick — die Live-Card zeigt damit die Phase-0-
+      // Library-Scan-Progress ohne Verzögerung
+      pollCsv();
+    } catch (e) {
+      spotifyError = e instanceof Error ? e.message : String(e);
+      spotifyBusy = false;
+    }
+  }
+
+  function onSpotifyDragEnter(ev: DragEvent) {
+    ev.preventDefault();
+    spotifyDragOver = true;
+  }
+  function onSpotifyDragLeave(ev: DragEvent) {
+    ev.preventDefault();
+    spotifyDragOver = false;
+  }
+  function onSpotifyDragOver(ev: DragEvent) {
+    ev.preventDefault();
+    spotifyDragOver = true;
+  }
+  function onSpotifyDrop(ev: DragEvent) {
+    ev.preventDefault();
+    spotifyDragOver = false;
+    if (ev.dataTransfer?.files) {
+      addSpotifyFiles(ev.dataTransfer.files);
+    }
+  }
+  function onSpotifyFileInput(ev: Event) {
+    const tgt = ev.target as HTMLInputElement;
+    if (tgt.files) addSpotifyFiles(tgt.files);
+    tgt.value = ''; // erlaubt re-select desselben File
+  }
 
   // Viewport-aware Vinyl-size — Phone shrinkt das 260px-Cover (mit Disc-Offset
   // ~403px Gesamt) sonst überläuft. SSR-safe via $effect (clientside-only).
@@ -96,6 +277,30 @@
     }
   }
   onDestroy(stopCsvPoll);
+
+  /**
+   * User-Cancel via UI-Button — sowohl für CSV als auch Spotify-History.
+   * Backend-Endpoint setzt status='cancelled' atomic in der DB; Worker
+   * pollt das zwischen Phase-Schritten und beendet sauber. Confirm-Dialog
+   * verhindert Accidental-Cancel; bei großen Imports kann das viel
+   * verlorene Verarbeitungsarbeit bedeuten.
+   */
+  async function cancelImport() {
+    if (!csvJobId || csvCancelBusy) return;
+    if (!confirm($t('import.cancel.confirm'))) return;
+    csvCancelBusy = true;
+    try {
+      await importApi.cancel(csvJobId);
+      // Status wird vom existing pollCsv aktualisiert sobald Worker den
+      // Cancel sieht. UI rendert dann "cancelled"-State, button geht
+      // disabled. Cleanup (csvJobId=null + localStorage) macht der
+      // Status-Watcher in pollCsv sobald er einen terminalen Status sieht.
+    } catch (e) {
+      csvError = e instanceof Error ? e.message : String(e);
+    } finally {
+      csvCancelBusy = false;
+    }
+  }
 
   async function startCsv() {
     if (!csvText.trim()) return;
@@ -143,6 +348,94 @@
     }
   }
 
+  // Playlist-Sync submit — schickt CSV mit mode=playlist_sync, Backend skipped
+  // Provider/Download und macht nur Library-Match + Subsonic-Playlist-
+  // Reconcile. Pipeline-State (csvStatus, csvJobId, polling) wird wiederver-
+  // wendet, weil das Backend einen normalen import_job anlegt — nur eben
+  // mit anderem Mode.
+  async function submitPlaylistSync() {
+    if (!playlistSyncText.trim()) return;
+    playlistSyncBusy = true;
+    csvError = null;
+    csvResult = null;
+    csvQueueAllResult = null;
+    tweenProcessed.set(0, { duration: 0 });
+    tweenFound.set(0, { duration: 0 });
+    tweenNotFound.set(0, { duration: 0 });
+    try {
+      const r = await importApi.startPlaylistSync(
+        playlistSyncText,
+        playlistSyncFilename || undefined
+      );
+      csvJobId = r.job_id;
+      csvFilename = playlistSyncFilename;
+      csvStatus = {
+        status: 'queued',
+        total: r.total ?? 0,
+        processed: 0,
+        found: 0,
+        not_found: 0,
+        message: r.message,
+        filename: playlistSyncFilename,
+        // Frontend-Hint: Tab-Label rendert sofort als "Playlist-Sync".
+        // Backend bestätigt das beim ersten Poll mit demselben Wert.
+        source: 'playlist_sync'
+      };
+      if (browser) {
+        try {
+          localStorage.setItem(ACTIVE_CSV_KEY, r.job_id);
+        } catch {
+          /* private mode / quota — silent */
+        }
+      }
+      pollCsv();
+    } catch (err) {
+      csvError = err instanceof Error ? err.message : 'Playlist-Sync fehlgeschlagen';
+    } finally {
+      playlistSyncBusy = false;
+    }
+  }
+
+  // Card-scoped Drop-Handler für Playlist-Sync. Verhindert dass eine CSV
+  // die in der Playlist-Sync-Card landet versehentlich in csvText (Bulk)
+  // gerät — eigene state, eigene drop-zone.
+  function onPlaylistSyncDragEnter(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    playlistSyncDragDepth++;
+    playlistSyncDragOver = true;
+  }
+  function onPlaylistSyncDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }
+  function onPlaylistSyncDragLeave(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    playlistSyncDragDepth = Math.max(0, playlistSyncDragDepth - 1);
+    if (playlistSyncDragDepth === 0) playlistSyncDragOver = false;
+  }
+  async function onPlaylistSyncDrop(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    playlistSyncDragDepth = 0;
+    playlistSyncDragOver = false;
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    playlistSyncText = await f.text();
+    playlistSyncFilename = f.name;
+  }
+  async function onPlaylistSyncFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const f = input.files?.[0];
+    if (!f) return;
+    playlistSyncText = await f.text();
+    playlistSyncFilename = f.name;
+  }
+
   function pollCsv() {
     if (!csvJobId) return;
     stopCsvPoll();
@@ -175,6 +468,18 @@
         } else if (s.status === 'error') {
           stopCsvPoll();
           csvError = s.message ?? 'CSV-Import-Fehler';
+          if (browser) {
+            try {
+              localStorage.removeItem(ACTIVE_CSV_KEY);
+            } catch {
+              /* noop */
+            }
+          }
+        } else if (s.status === 'cancelled') {
+          // Cancel ist terminal — Polling stoppen, localStorage clearen.
+          // csvStatus bleibt gesetzt damit UI noch "Cancelled by user"
+          // mit Status anzeigen kann; User kann dann manuell zurück.
+          stopCsvPoll();
           if (browser) {
             try {
               localStorage.removeItem(ACTIVE_CSV_KEY);
@@ -518,15 +823,24 @@
     const f = e.dataTransfer?.files?.[0];
     if (!f) return;
     csvText = await f.text();
+    csvFilename = f.name;
   }
 
   // Bar-Progress aus dem tweened processed-Counter — damit die Bar
   // synchron zum smooth Counter läuft, nicht zu den Backend-Snapshots.
-  const csvProgress = $derived(
-    csvStatus && csvStatus.total
-      ? Math.round(($tweenProcessed / csvStatus.total) * 100)
-      : 0
-  );
+  //
+  // Phase 0 (Library-Scan) belegt 0–10% des Bars (phase0_progress 0..100).
+  // Phase 2+ belegt 10–100% (processed/total skaliert auf 90%). Das hält
+  // den Track-Counter ehrlich bei 0 während Phase 0 läuft, aber der Bar
+  // zeigt trotzdem Setup-Fortschritt.
+  const csvProgress = $derived.by(() => {
+    if (!csvStatus || !csvStatus.total) return 0;
+    const phase0Pct = Math.max(0, Math.min(100, csvStatus.phase0_progress ?? 0));
+    const trackPct =
+      csvStatus.total > 0 ? Math.min(1, $tweenProcessed / csvStatus.total) : 0;
+    // Phase 0 → 0..10%, danach Tracks → 10..100%
+    return Math.round(phase0Pct * 0.1 + trackPct * 90);
+  });
 
   // Accent — Import hat keinen Cover-Hue, daher konstant Default-Gold.
   const accent = $derived(tint(DEFAULT_HUE));
@@ -615,7 +929,13 @@
         border-bottom: 2px solid {accent};
       "
     >
-      CSV
+      {#if csvStatus?.source === 'spotify_history'}
+        {$t('import.tab.spotify_history')}
+      {:else if csvStatus?.source === 'playlist_sync'}
+        {$t('import.tab.playlist_sync')}
+      {:else}
+        {$t('import.tab.csv')}
+      {/if}
     </div>
     {#if csvJobId}
       <div class="text-[12px] truncate" style="color: var(--color-fg-tertiary); max-width: 360px;">
@@ -645,149 +965,204 @@
   </div>
 
   {#if !csvJobId}
-    <!-- ─── Glass Drop-Zone ─────────────────────────────────── -->
+    <!-- ─── TuneMyMusic-Helper-Card (Phase I) ────────────────── -->
+    <!-- Erklärt User wie er Spotify/Deezer-Playlists ohne OAuth nach Tonus  -->
+    <!-- bekommt: tunemymusic.com → CSV-Export → hier hochladen.              -->
     <div
-      role="region"
-      aria-label="CSV-Eingabe"
       class="relative overflow-hidden tonus-fadein"
       style="
-        background: rgba(20, 20, 24, 0.5);
-        backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
-        border: 1px solid {dragOver ? accent : 'var(--color-border-soft)'};
-        border-radius: 22px;
-        padding: clamp(16px, 4vw, 28px);
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        transition: border-color 0.18s ease;
+        background: rgba(20, 20, 24, 0.4);
+        backdrop-filter: blur(28px) saturate(1.15);
+        -webkit-backdrop-filter: blur(28px) saturate(1.15);
+        border: 1px solid var(--color-border-soft);
+        border-radius: 18px;
+        padding: clamp(16px, 3vw, 22px);
+        margin-bottom: 18px;
       "
-      ondragenter={onDragEnter}
-      ondragover={onDragOver}
-      ondragleave={onDragLeave}
-      ondrop={onDrop}
     >
-      <!-- Drag overlay -->
-      {#if dragOver}
-        <div
-          class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
-          style="
-            background: rgba(20, 20, 24, 0.85);
-            border: 2px dashed {accent};
-            border-radius: 22px;
-            backdrop-filter: blur(8px);
-          "
-        >
-          <div class="text-center">
-            <Upload size={48} strokeWidth={1.2} style="color: {accent}; margin-inline: auto;" />
-            <div
-              class="font-semibold uppercase mt-3"
-              style="font-size: 11px; letter-spacing: 0.24em; color: {accent};"
-            >
-              {$t('import.dropzone.drop_overlay')}
-            </div>
-          </div>
-        </div>
-      {/if}
-
-      <!-- Header row: title + actions -->
-      <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+      <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
         <div>
           <div
             class="font-semibold uppercase"
-            style="
-              font-size: 11px;
-              letter-spacing: 0.2em;
-              color: var(--color-fg-tertiary);
-            "
+            style="font-size: 10px; letter-spacing: 0.22em; color: {accent};"
           >
-            {$t('import.dropzone.eyebrow')}
+            {$t('import.tunemymusic.eyebrow')}
           </div>
           <div
-            class="mt-1"
-            style="
-              font-family: var(--font-display);
-              font-size: 22px;
-              font-weight: 500;
-              letter-spacing: -0.015em;
-              color: var(--color-fg-primary);
-            "
+            class="mt-1.5 font-medium"
+            style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.01em; color: var(--color-fg-primary);"
           >
-            {$t('import.dropzone.title')}
+            {$t('import.tunemymusic.title')}
           </div>
         </div>
-        <div class="flex items-center gap-2">
-          <label
-            class="inline-flex items-center gap-1.5 cursor-pointer transition-colors"
-            style="
-              background: rgba(255, 255, 255, 0.04);
-              border: 1px solid var(--color-border-soft);
-              color: var(--color-fg-secondary);
-              padding: 6px 14px;
-              border-radius: 999px;
-              font-size: 11.5px;
-            "
+        <a
+          href="https://www.tunemymusic.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center gap-1.5 text-[12px] font-medium tabular-nums px-3 py-1.5"
+          style="
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--color-border-soft);
+            border-radius: 999px;
+            color: var(--color-fg-primary);
+            text-decoration: none;
+          "
+        >
+          tunemymusic.com →
+        </a>
+      </div>
+      <ol class="text-[13px] space-y-1.5 ml-4" style="color: var(--color-fg-secondary); list-style: decimal;">
+        <li>{$t('import.tunemymusic.step1')}</li>
+        <li>{$t('import.tunemymusic.step2')}</li>
+        <li>{$t('import.tunemymusic.step3')}</li>
+      </ol>
+      <div class="mt-3 text-[11px]" style="color: var(--color-fg-tertiary);">
+        {$t('import.tunemymusic.limit_note')}
+      </div>
+    </div>
+
+    <!-- ─── Spotify Extended Streaming History (Phase I.2) ───── -->
+    <div
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.4);
+        backdrop-filter: blur(28px) saturate(1.15);
+        -webkit-backdrop-filter: blur(28px) saturate(1.15);
+        border: 1px solid {spotifyDragOver ? accent : 'var(--color-border-soft)'};
+        border-radius: 18px;
+        padding: clamp(16px, 3vw, 22px);
+        margin-bottom: 18px;
+        transition: border-color 0.18s ease;
+      "
+      ondragenter={onSpotifyDragEnter}
+      ondragover={onSpotifyDragOver}
+      ondragleave={onSpotifyDragLeave}
+      ondrop={onSpotifyDrop}
+    >
+      <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 10px; letter-spacing: 0.22em; color: {accent};"
           >
-            <Upload size={12} strokeWidth={1.5} />
-            {$t('import.dropzone.choose_file')}
-            <input
-              type="file"
-              accept=".csv,.tsv,.txt,text/*"
-              onchange={onCsvFile}
-              class="hidden"
-            />
-          </label>
-          {#if csvText}
-            <button
-              type="button"
-              onclick={() => (csvText = '')}
-              class="inline-flex items-center gap-1.5 transition-colors"
-              style="
-                background: rgba(255, 255, 255, 0.02);
-                border: 1px solid var(--color-border-soft);
-                color: var(--color-fg-tertiary);
-                padding: 6px 12px;
-                border-radius: 999px;
-                font-size: 11px;
-              "
-              aria-label="Zurücksetzen"
-            >
-              <X size={11} strokeWidth={1.5} />
-              {$t('import.dropzone.clear')}
-            </button>
-          {/if}
+            {$t('import.spotify_history.eyebrow')}
+          </div>
+          <div
+            class="mt-1.5 font-medium"
+            style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.01em; color: var(--color-fg-primary);"
+          >
+            {$t('import.spotify_history.title')}
+          </div>
         </div>
       </div>
+      <p class="text-[13px] mb-3" style="color: var(--color-fg-secondary); max-width: 600px;">
+        {$t('import.spotify_history.body')}
+      </p>
 
-      <textarea
-        bind:value={csvText}
-        rows="10"
-        spellcheck="false"
-        placeholder={'Künstler;Titel\nDaft Punk;Get Lucky\nQueen;Bohemian Rhapsody\n\noder eine Zeile pro Track als Freitext'}
-        class="w-full px-4 py-3 outline-none resize-y"
+      <!-- Filter-Inputs -->
+      <div class="flex flex-wrap gap-3 mb-3 text-[12px]">
+        <label class="flex items-center gap-2" style="color: var(--color-fg-secondary);">
+          <span class="uppercase tabular-nums" style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);">
+            {$t('import.spotify_history.min_plays')}
+          </span>
+          <input
+            type="number"
+            min="1"
+            max="9999"
+            bind:value={spotifyMinPlays}
+            class="outline-none tabular-nums"
+            style="background: rgba(0,0,0,0.3); border: 1px solid var(--color-border-soft); border-radius: 10px; padding: 6px 10px; width: 72px; color: var(--color-fg-primary); font-size: 13px;"
+          />
+        </label>
+        <label class="flex items-center gap-2" style="color: var(--color-fg-secondary);">
+          <span class="uppercase tabular-nums" style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);">
+            {$t('import.spotify_history.min_seconds')}
+          </span>
+          <input
+            type="number"
+            min="0"
+            max="3600"
+            step="5"
+            bind:value={spotifyMinSeconds}
+            class="outline-none tabular-nums"
+            style="background: rgba(0,0,0,0.3); border: 1px solid var(--color-border-soft); border-radius: 10px; padding: 6px 10px; width: 72px; color: var(--color-fg-primary); font-size: 13px;"
+          />
+        </label>
+        <label class="flex items-center gap-2" style="color: var(--color-fg-secondary);">
+          <span class="uppercase" style="font-size: 10px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);">
+            {$t('import.spotify_history.playlist_prefix')}
+          </span>
+          <input
+            type="text"
+            maxlength="64"
+            bind:value={spotifyPlaylistPrefix}
+            class="outline-none"
+            style="background: rgba(0,0,0,0.3); border: 1px solid var(--color-border-soft); border-radius: 10px; padding: 6px 10px; width: 200px; color: var(--color-fg-primary); font-size: 13px;"
+          />
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer" style="color: var(--color-fg-secondary);">
+          <input type="checkbox" bind:checked={spotifyAutoPlaylistYear} />
+          <span style="font-size: 12px;">{$t('import.spotify_history.toggle_year')}</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer" style="color: var(--color-fg-secondary);">
+          <input type="checkbox" bind:checked={spotifyAutoPlaylistMonth} />
+          <span style="font-size: 12px;">{$t('import.spotify_history.toggle_month')}</span>
+        </label>
+      </div>
+
+      <!-- File-Drop-Zone -->
+      <label
+        class="flex items-center justify-center gap-2 cursor-pointer text-[13px]"
         style="
-          background: rgba(0, 0, 0, 0.25);
-          border: 1px solid var(--color-border-soft);
+          background: rgba(0,0,0,0.25);
+          border: 1.5px dashed {spotifyDragOver ? accent : 'var(--color-border-soft)'};
           border-radius: 14px;
-          color: var(--color-fg-primary);
-          font-family: var(--font-mono);
-          font-size: 12.5px;
-          line-height: 1.55;
+          padding: 18px;
+          color: var(--color-fg-secondary);
+          transition: border-color 0.18s ease;
         "
-      ></textarea>
+      >
+        <Upload size={16} strokeWidth={1.4} />
+        <span>{$t('import.spotify_history.drop_hint')}</span>
+        <input
+          type="file"
+          accept=".json,application/json"
+          multiple
+          onchange={onSpotifyFileInput}
+          style="display: none;"
+        />
+      </label>
 
-      <!-- Footer row: action -->
-      <div class="flex items-center justify-between flex-wrap gap-3 mt-4">
-        <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
-          {#if lineCount > 0}
-            <span style="color: {accent}; font-weight: 500;">{lineCount.toLocaleString('de-DE')}</span>
-            <span> Zeile{lineCount === 1 ? '' : 'n'} bereit</span>
-          {:else}
-            {$t('import.dropzone.format_hint')} <code style="font-family: var(--font-mono); color: var(--color-fg-secondary);">Künstler;Titel</code>
-          {/if}
+      <!-- File-Liste -->
+      {#if spotifyFiles.length > 0}
+        <div class="mt-3 flex flex-wrap gap-1.5">
+          {#each spotifyFiles as f, i}
+            <span
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] tabular-nums"
+              style="background: rgba(255,255,255,0.06); border: 1px solid var(--color-border-soft); border-radius: 999px; color: var(--color-fg-secondary);"
+            >
+              {f.name} <span style="color: var(--color-fg-tertiary);">{(f.size / 1024 / 1024).toFixed(1)} MB</span>
+              <button
+                type="button"
+                onclick={() => removeSpotifyFile(i)}
+                aria-label="Remove"
+                style="background: transparent; color: var(--color-fg-tertiary); padding: 0 0 0 4px; border: 0; cursor: pointer;"
+              >×</button>
+            </span>
+          {/each}
         </div>
+      {/if}
+
+      {#if spotifyError}
+        <p class="mt-3 text-[12px]" style="color: #f87171;">{spotifyError}</p>
+      {/if}
+
+      <div class="mt-4 flex items-center gap-3">
         <button
-          onclick={startCsv}
-          disabled={csvBusy || !csvText.trim()}
-          class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+          type="button"
+          onclick={submitSpotifyHistory}
+          disabled={spotifyBusy || spotifyFiles.length === 0}
+          class="inline-flex items-center gap-1.5 transition-opacity"
           style="
             background: {accent};
             color: #1a1410;
@@ -798,25 +1173,249 @@
             letter-spacing: 0.04em;
             text-transform: uppercase;
             box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+            opacity: {spotifyBusy || spotifyFiles.length === 0 ? 0.5 : 1};
+            cursor: {spotifyBusy || spotifyFiles.length === 0 ? 'not-allowed' : 'pointer'};
           "
         >
-          {#if csvBusy}
-            <Loader2 size={13} class="animate-spin" />
-            {$t('common.loading')}
-          {:else}
-            <FileText size={13} strokeWidth={2} />
-            Import starten
-          {/if}
+          {spotifyBusy
+            ? $t('import.spotify_history.submitting')
+            : $t('import.spotify_history.submit')}
         </button>
+        <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
+          {$t('import.spotify_history.hint')}
+        </span>
       </div>
-      {#if csvError}
-        <div
-          class="mt-3 text-[12px]"
-          style="color: var(--color-status-error);"
-        >
-          {csvError}
+    </div>
+
+    <!-- ─── Playlist-Sync — Library-Match + Reconcile only (2026-05-10) ─── -->
+    <!-- CSV mit Playlist-Spalte → Tracks die bereits in Library liegen werden    -->
+    <!-- direkt zu Subsonic-Playlists hinzugefügt. KEIN Provider-Lookup, KEIN     -->
+    <!-- Download. Use case: User hat Bulk-Import schon laufen lassen, will jetzt -->
+    <!-- nur die Playlist-Memberships nachziehen.                                 -->
+    <div
+      role="region"
+      aria-label="Playlist-Sync"
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.4);
+        backdrop-filter: blur(28px) saturate(1.15);
+        -webkit-backdrop-filter: blur(28px) saturate(1.15);
+        border: 1px solid {playlistSyncDragOver ? accent : 'var(--color-border-soft)'};
+        border-radius: 18px;
+        padding: clamp(16px, 3vw, 22px);
+        margin-bottom: 18px;
+        transition: border-color 0.18s ease;
+      "
+      ondragenter={onPlaylistSyncDragEnter}
+      ondragover={onPlaylistSyncDragOver}
+      ondragleave={onPlaylistSyncDragLeave}
+      ondrop={onPlaylistSyncDrop}
+    >
+      <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 10px; letter-spacing: 0.22em; color: {accent};"
+          >
+            {$t('import.playlist_sync.eyebrow')}
+          </div>
+          <div
+            class="mt-1.5 font-medium"
+            style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.01em; color: var(--color-fg-primary);"
+          >
+            {$t('import.playlist_sync.title')}
+          </div>
+        </div>
+      </div>
+      <p class="text-[13px] mb-3" style="color: var(--color-fg-secondary); max-width: 600px;">
+        {$t('import.playlist_sync.body')}
+      </p>
+
+      <!-- File-Drop-Zone (eigene state — playlistSyncText, nicht csvText) -->
+      <label
+        class="flex items-center justify-center gap-2 cursor-pointer text-[13px]"
+        style="
+          background: rgba(0,0,0,0.25);
+          border: 1.5px dashed {playlistSyncDragOver ? accent : 'var(--color-border-soft)'};
+          border-radius: 14px;
+          padding: 18px;
+          color: var(--color-fg-secondary);
+          transition: border-color 0.18s ease;
+        "
+      >
+        <Upload size={16} strokeWidth={1.4} />
+        <span>{$t('import.playlist_sync.drop_hint')}</span>
+        <input
+          type="file"
+          accept=".csv,.tsv,.txt,text/*"
+          onchange={onPlaylistSyncFile}
+          style="display: none;"
+        />
+      </label>
+
+      {#if playlistSyncText && playlistSyncFilename}
+        <div class="mt-3 flex flex-wrap gap-1.5">
+          <span
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] tabular-nums"
+            style="background: rgba(255,255,255,0.06); border: 1px solid var(--color-border-soft); border-radius: 999px; color: var(--color-fg-secondary);"
+          >
+            {playlistSyncFilename}
+            <button
+              type="button"
+              onclick={() => { playlistSyncText = ''; playlistSyncFilename = null; }}
+              aria-label="Remove"
+              style="background: transparent; color: var(--color-fg-tertiary); padding: 0 0 0 4px; border: 0; cursor: pointer;"
+            >×</button>
+          </span>
         </div>
       {/if}
+
+      {#if csvError}
+        <p class="mt-3 text-[12px]" style="color: #f87171;">{csvError}</p>
+      {/if}
+
+      <div class="mt-4 flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          onclick={submitPlaylistSync}
+          disabled={playlistSyncBusy || !playlistSyncText.trim()}
+          class="inline-flex items-center gap-1.5 transition-opacity"
+          style="
+            background: {accent};
+            color: #1a1410;
+            padding: 10px 22px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+            opacity: {playlistSyncBusy || !playlistSyncText.trim() ? 0.5 : 1};
+            cursor: {playlistSyncBusy || !playlistSyncText.trim() ? 'not-allowed' : 'pointer'};
+          "
+        >
+          {playlistSyncBusy
+            ? $t('import.playlist_sync.submitting')
+            : $t('import.playlist_sync.submit')}
+        </button>
+        <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
+          {$t('import.playlist_sync.hint')}
+        </span>
+      </div>
+    </div>
+
+    <!-- ─── CSV / TuneMyMusic Import — kompakt, file-only (analog zur Spotify-History-Card) ─── -->
+    <div
+      role="region"
+      aria-label="CSV-Eingabe"
+      class="relative overflow-hidden tonus-fadein"
+      style="
+        background: rgba(20, 20, 24, 0.4);
+        backdrop-filter: blur(28px) saturate(1.15);
+        -webkit-backdrop-filter: blur(28px) saturate(1.15);
+        border: 1px solid {dragOver ? accent : 'var(--color-border-soft)'};
+        border-radius: 18px;
+        padding: clamp(16px, 3vw, 22px);
+        transition: border-color 0.18s ease;
+      "
+      ondragenter={onDragEnter}
+      ondragover={onDragOver}
+      ondragleave={onDragLeave}
+      ondrop={onDrop}
+    >
+      <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div>
+          <div
+            class="font-semibold uppercase"
+            style="font-size: 10px; letter-spacing: 0.22em; color: {accent};"
+          >
+            {$t('import.dropzone.eyebrow')}
+          </div>
+          <div
+            class="mt-1.5 font-medium"
+            style="font-family: var(--font-display); font-size: 18px; letter-spacing: -0.01em; color: var(--color-fg-primary);"
+          >
+            {$t('import.dropzone.title')}
+          </div>
+        </div>
+      </div>
+      <p class="text-[13px] mb-3" style="color: var(--color-fg-secondary); max-width: 600px;">
+        {$t('import.dropzone.body')}
+      </p>
+
+      <!-- File-Drop-Zone (kein Textarea — file-only Import) -->
+      <label
+        class="flex items-center justify-center gap-2 cursor-pointer text-[13px]"
+        style="
+          background: rgba(0,0,0,0.25);
+          border: 1.5px dashed {dragOver ? accent : 'var(--color-border-soft)'};
+          border-radius: 14px;
+          padding: 18px;
+          color: var(--color-fg-secondary);
+          transition: border-color 0.18s ease;
+        "
+      >
+        <Upload size={16} strokeWidth={1.4} />
+        <span>{$t('import.dropzone.drop_hint')}</span>
+        <input
+          type="file"
+          accept=".csv,.tsv,.txt,text/*"
+          onchange={onCsvFile}
+          style="display: none;"
+        />
+      </label>
+
+      <!-- File-Pill wenn ein File geladen ist -->
+      {#if csvText && csvFilename}
+        <div class="mt-3 flex flex-wrap gap-1.5">
+          <span
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] tabular-nums"
+            style="background: rgba(255,255,255,0.06); border: 1px solid var(--color-border-soft); border-radius: 999px; color: var(--color-fg-secondary);"
+          >
+            {csvFilename}
+            <span style="color: var(--color-fg-tertiary);">{lineCount.toLocaleString('de-DE')} Zeilen</span>
+            <button
+              type="button"
+              onclick={() => { csvText = ''; csvFilename = null; }}
+              aria-label="Remove"
+              style="background: transparent; color: var(--color-fg-tertiary); padding: 0 0 0 4px; border: 0; cursor: pointer;"
+            >×</button>
+          </span>
+        </div>
+      {/if}
+
+      {#if csvError}
+        <p class="mt-3 text-[12px]" style="color: #f87171;">{csvError}</p>
+      {/if}
+
+      <div class="mt-4 flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          onclick={startCsv}
+          disabled={csvBusy || !csvText.trim()}
+          class="inline-flex items-center gap-1.5 transition-opacity"
+          style="
+            background: {accent};
+            color: #1a1410;
+            padding: 10px 22px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+            opacity: {csvBusy || !csvText.trim() ? 0.5 : 1};
+            cursor: {csvBusy || !csvText.trim() ? 'not-allowed' : 'pointer'};
+          "
+        >
+          {csvBusy
+            ? $t('import.spotify_history.submitting')
+            : $t('import.spotify_history.submit')}
+        </button>
+        <span class="text-[11px]" style="color: var(--color-fg-tertiary);">
+          {$t('import.dropzone.format_hint')} <code style="font-family: var(--font-mono); color: var(--color-fg-secondary);">Künstler;Titel</code>
+        </span>
+      </div>
     </div>
   {:else if csvStatus && csvStatus.status !== 'completed'}
     <!-- ─── Live-Card during import ─────────────────────────── -->
@@ -845,7 +1444,11 @@
             color: {accent};
           "
         >
-          {$t('import.live.eyebrow', { provider: provider || 'provider' })}
+          {#if csvStatus?.source === 'playlist_sync'}
+            {$t('import.live.eyebrow.playlist_sync')}
+          {:else}
+            {$t('import.live.eyebrow', { provider: provider || 'provider' })}
+          {/if}
         </div>
       </div>
 
@@ -884,13 +1487,30 @@
         glow
       />
 
-      <div class="flex items-center gap-6 mt-4 text-[12px] tabular-nums">
+      <div class="flex items-center gap-6 mt-4 text-[12px] tabular-nums flex-wrap">
         <div>
           <span style="color: var(--color-fg-tertiary);">{$t('import.live.matched')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-done);"
             >{Math.round($tweenFound).toLocaleString('de-DE')}</span
           >
         </div>
+        {#if (csvStatus.library_match_count ?? 0) > 0}
+          <div>
+            <span style="color: var(--color-fg-tertiary);">{$t('import.live.library_match')}</span>
+            <span class="ml-1.5 font-medium" style="color: var(--color-fg-secondary);"
+              >{(csvStatus.library_match_count ?? 0).toLocaleString('de-DE')}</span
+            >
+          </div>
+        {/if}
+        {#if (csvStatus.recovery_total ?? 0) > 0}
+          <div>
+            <span style="color: var(--color-fg-tertiary);">{$t('import.live.rechecked')}</span>
+            <span class="ml-1.5 font-medium" style="color: var(--color-fg-secondary);"
+              >{(csvStatus.recovery_recovered ?? 0).toLocaleString('de-DE')}</span
+            ><span style="color: var(--color-fg-tertiary);">
+              / {(csvStatus.recovery_total ?? 0).toLocaleString('de-DE')}</span>
+          </div>
+        {/if}
         <div>
           <span style="color: var(--color-fg-tertiary);">{$t('import.live.not_found')}</span>
           <span class="ml-1.5 font-medium" style="color: var(--color-status-error);"
@@ -901,6 +1521,59 @@
           <div class="ml-auto text-[11px]" style="color: var(--color-fg-tertiary);">
             {csvStatus.message}
           </div>
+        {/if}
+      </div>
+
+      <!-- Cancel-Button: ermöglicht Abbruch während Import läuft. Bei
+           bereits cancelled wird er durch einen "Neuer Import"-Button
+           ersetzt, der die Live-Card resettet und zurück zur Drop-Zone
+           führt — sonst bliebe der User in einem Dead-End. -->
+      <div class="mt-4 flex items-center gap-2">
+        {#if csvStatus.status === 'cancelled' || csvStatus.status === 'error'}
+          <button
+            type="button"
+            onclick={resetCsv}
+            class="inline-flex items-center gap-1.5 transition-opacity"
+            style="
+              background: rgba(255, 255, 255, 0.06);
+              border: 1px solid {accentSoft};
+              color: {accent};
+              padding: 7px 14px;
+              border-radius: 999px;
+              font-size: 11px;
+              font-weight: 500;
+              letter-spacing: 0.04em;
+              text-transform: uppercase;
+              cursor: pointer;
+            "
+          >
+            {$t('import.cancel.new_import')}
+          </button>
+        {:else}
+          <button
+            type="button"
+            onclick={cancelImport}
+            disabled={csvCancelBusy}
+            class="inline-flex items-center gap-1.5 transition-opacity"
+            style="
+              background: rgba(248, 113, 113, 0.12);
+              border: 1px solid rgba(248, 113, 113, 0.32);
+              color: #fca5a5;
+              padding: 7px 14px;
+              border-radius: 999px;
+              font-size: 11px;
+              font-weight: 500;
+              letter-spacing: 0.04em;
+              text-transform: uppercase;
+              opacity: {csvCancelBusy ? 0.5 : 1};
+              cursor: {csvCancelBusy ? 'not-allowed' : 'pointer'};
+            "
+          >
+            <X size={11} strokeWidth={1.8} />
+            {csvCancelBusy
+              ? $t('import.cancel.canceling')
+              : $t('import.cancel.button')}
+          </button>
         {/if}
       </div>
     </div>
@@ -943,19 +1616,65 @@
               color: var(--color-fg-primary);
             "
           >
-            <span class="tabular-nums">{csvResult.found.toLocaleString('de-DE')}</span>
-            <span style="font-size: clamp(16px, 3.6vw, 22px); color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
-              matched
-            </span>
+            {#if csvStatus?.source === 'playlist_sync'}
+              <!-- Playlist-Sync-Hero: zeigt die Anzahl der Playlists +
+                   Tracks-Added als Hauptzahl, weil "matched" bei
+                   playlist_sync bedeutungslos ist (kein Provider-Match). -->
+              <span class="tabular-nums">{(csvStatus.playlist_tracks_added ?? 0).toLocaleString('de-DE')}</span>
+              <span style="font-size: clamp(16px, 3.6vw, 22px); color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
+                tracks → {(csvStatus.playlists_synced ?? 0).toLocaleString('de-DE')} Playlists
+              </span>
+            {:else}
+              <span class="tabular-nums">{csvResult.found.toLocaleString('de-DE')}</span>
+              <span style="font-size: clamp(16px, 3.6vw, 22px); color: var(--color-fg-tertiary); font-weight: 300; letter-spacing: 0;">
+                matched
+              </span>
+            {/if}
           </div>
           <div class="mt-3 text-[14px]" style="color: var(--color-fg-secondary);">
-            {#if csvResult.not_found > 0}
-              <span style="color: var(--color-status-error); font-weight: 500;"
-                >{csvResult.not_found.toLocaleString('de-DE')}</span
+            {#if csvStatus?.source === 'playlist_sync'}
+              {#if (csvStatus.playlists_total ?? 0) > 0}
+                <span style="color: var(--color-fg-tertiary);">CSV enthielt</span>
+                <span style="color: var(--color-fg-secondary); font-weight: 500;">
+                  {(csvStatus.playlists_total ?? 0).toLocaleString('de-DE')}
+                </span>
+                <span style="color: var(--color-fg-tertiary);">unique Playlists</span>
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+              {/if}
+              <span style="color: var(--color-fg-secondary); font-weight: 500;"
+                >{(csvResult.library_match_count ?? 0).toLocaleString('de-DE')}</span
               >
-              <span style="color: var(--color-fg-tertiary);"> nicht gefunden</span>
+              <span style="color: var(--color-fg-tertiary);"> {$t('import.result.library_match_suffix')}</span>
+              {#if (csvStatus.playlist_queue_tagged ?? 0) > 0}
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+                <span style="color: var(--color-fg-secondary); font-weight: 500;"
+                  >{(csvStatus.playlist_queue_tagged ?? 0).toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> in Queue (mit Playlist-Marker)</span>
+              {/if}
+              {#if csvResult.not_found > 0}
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+                <span style="color: var(--color-status-error); font-weight: 500;"
+                  >{csvResult.not_found.toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> nicht in Library/Queue</span>
+              {/if}
             {:else}
-              Alles gefunden — saubere Liste
+              {#if csvResult.not_found > 0}
+                <span style="color: var(--color-status-error); font-weight: 500;"
+                  >{csvResult.not_found.toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> {$t('import.result.not_found_suffix')}</span>
+              {:else}
+                {$t('import.result.all_found')}
+              {/if}
+              {#if (csvResult.library_match_count ?? 0) > 0}
+                <span style="color: var(--color-fg-tertiary);">{$t('import.result.divider')}</span>
+                <span style="color: var(--color-fg-secondary); font-weight: 500;"
+                  >{(csvResult.library_match_count ?? 0).toLocaleString('de-DE')}</span
+                >
+                <span style="color: var(--color-fg-tertiary);"> {$t('import.result.library_match_suffix')}</span>
+              {/if}
             {/if}
           </div>
         </div>
@@ -974,30 +1693,35 @@
           >
             {$t('import.result.new_import')}
           </button>
-          <button
-            onclick={(e) => queueAllMatched(e)}
-            disabled={csvQueueAllBusy || csvResult.found === 0}
-            class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
-            style="
-              background: {accent};
-              color: #1a1410;
-              padding: 10px 22px;
-              border-radius: 999px;
-              font-size: 12px;
-              font-weight: 600;
-              letter-spacing: 0.04em;
-              text-transform: uppercase;
-              box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
-            "
-          >
-            {#if csvQueueAllBusy}
-              <Loader2 size={13} class="animate-spin" />
-              Queue …
-            {:else}
-              <Download size={13} strokeWidth={2} />
-              {csvResult.found.toLocaleString('de-DE')} queuen
-            {/if}
-          </button>
+          {#if csvStatus?.source !== 'playlist_sync'}
+            <!-- Queue-All-Button nur für CSV-Bulk + Spotify-History — bei
+                 Playlist-Sync gibt's nichts zu queuen, alle Treffer sind
+                 schon in der Library. -->
+            <button
+              onclick={(e) => queueAllMatched(e)}
+              disabled={csvQueueAllBusy || csvResult.found === 0}
+              class="inline-flex items-center gap-2 transition-opacity disabled:opacity-40"
+              style="
+                background: {accent};
+                color: #1a1410;
+                padding: 10px 22px;
+                border-radius: 999px;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                box-shadow: 0 8px 20px rgba(200, 169, 106, 0.25);
+              "
+            >
+              {#if csvQueueAllBusy}
+                <Loader2 size={13} class="animate-spin" />
+                Queue …
+              {:else}
+                <Download size={13} strokeWidth={2} />
+                {csvResult.found.toLocaleString('de-DE')} queuen
+              {/if}
+            </button>
+          {/if}
         </div>
       </div>
       {#if csvQueueAllResult}

@@ -540,11 +540,37 @@ export interface CsvImportStartResponse {
 }
 
 export interface CsvImportStatus {
-  status: 'queued' | 'processing' | 'completed' | 'error';
+  status: 'queued' | 'processing' | 'completed' | 'error' | 'cancelled';
   total: number;
   processed: number;
   found: number;
   not_found: number;
+  /** Phase H: wieviele Tracks wurden bereits in Navidromes Library gefunden
+   *  und dadurch komplett vom Provider-Lookup ausgeschlossen. */
+  library_match_count?: number;
+  /** Phase 2.5 Recovery-Counter — gesamt zu rechecken, davon recovered. */
+  recovery_total?: number;
+  recovery_recovered?: number;
+  /** Phase 0 Library-Scan-Progress (0–100). Wird live geschrieben während
+   *  des Filesystem-Scans, damit die ProgressLine sich auch in Phase 0
+   *  bewegt — der Counter (processed/total) bleibt bei 0 weil noch keine
+   *  Tracks tatsächlich gematcht sind. */
+  phase0_progress?: number;
+  /** Playlist-Sync-Stats. playlists_total = unique Playlist-Namen in der
+   *  CSV (vom Endpoint beim Submit gezählt), playlists_synced = Playlists
+   *  die der Reconcile in Navidrome touched hat, playlist_tracks_added =
+   *  Tracks die zu Subsonic-Playlists hinzugefügt wurden. */
+  playlists_total?: number;
+  playlists_synced?: number;
+  playlist_tracks_added?: number;
+  /** Anzahl Tracks die nicht in der Library waren, aber in der Download-
+   *  Queue gefunden wurden — bekamen Playlist-Memberships als Marker im
+   *  Download-Job-Payload, landen nach Download in den Subsonic-Playlists. */
+  playlist_queue_tagged?: number;
+  /** Source-Marker: "csv" für klassischen Bulk-Import, "spotify_history" für
+   *  Streaming-History-JSON, "playlist_sync" für Library-Match + Reconcile-
+   *  only-Pfad. Frontend nutzt das fürs Tab-Label. */
+  source?: 'csv' | 'spotify_history' | 'playlist_sync';
   message?: string;
   /** Original-Filename (CSV-Upload), oder null bei Text-Paste. */
   filename?: string | null;
@@ -574,8 +600,15 @@ export interface CsvImportResult {
   total: number;
   found: number;
   not_found: number;
+  /** Phase H: wieviele Tracks wurden direkt als Library-Match identifiziert
+   *  und dadurch ohne Provider-Lookup als 'bereits vorhanden' markiert. */
+  library_match_count?: number;
   matched: CsvMatched[];
   unmatched: CsvUnmatched[];
+  /** Phase H: Liste der Tracks die schon in Navidrome lagen — kein Track-
+   *  Detail aus Provider verfügbar (track-Field ist daher absent), nur
+   *  das Original-Triple. Wird im Frontend in eigenem Bucket angezeigt. */
+  library_match?: CsvUnmatched[];
 }
 
 export const importApi = {
@@ -586,20 +619,71 @@ export const importApi = {
       limit,
       filename
     }),
-  status: (jobId: string) => api.get<CsvImportStatus>(`/api/import/csv/status/${jobId}`),
+  /**
+   * Playlist-Sync — Library-Match + Reconcile-only Pfad. Skip Provider/
+   * Download komplett. Use case: Tracks sind bereits via Bulk-Import in
+   * der Navidrome-Library, User will nur die Playlist-Memberships aus
+   * einer CSV (z.B. Spotify-Export, TuneMyMusic) als Subsonic-Playlists
+   * anlegen.
+   */
+  startPlaylistSync: (csvText: string, filename?: string) =>
+    api.post<CsvImportStartResponse>('/api/import/csv', {
+      csv_text: csvText,
+      filename,
+      mode: 'playlist_sync'
+    }),
+  status: (jobId: string) => api.get<CsvImportStatus>(`/api/import/jobs/${jobId}/status`),
   result: (jobId: string, offset = 0, limit = 200) =>
     api.get<CsvImportResult>(
-      `/api/import/csv/result/${jobId}?offset=${offset}&limit=${limit}`
+      `/api/import/jobs/${jobId}/result?offset=${offset}&limit=${limit}`
     ),
-  cancel: (jobId: string) => api.post<{ ok: boolean }>(`/api/import/csv/${jobId}/cancel`),
+  cancel: (jobId: string) => api.post<{ ok: boolean }>(`/api/import/jobs/${jobId}/cancel`),
   queueAll: (
     jobId: string,
     opts: { location?: 'local' | 'navidrome'; provider?: string } = {}
   ) =>
     api.post<{ queued?: number; skipped?: number; message?: string }>(
-      `/api/import/csv/queue-all/${jobId}`,
+      `/api/import/jobs/${jobId}/queue-all`,
       { location: opts.location ?? 'navidrome', provider: opts.provider }
-    )
+    ),
+  /**
+   * Phase I.2 — Spotify Extended Streaming History Import.
+   * Frontend hat die JSON-Files schon geparsed (FileReader + JSON.parse) und
+   * sendet die Top-Level-Arrays als `files`. Backend aggregiert pro Track
+   * und legt einen import_job an, der durch dieselbe Pipeline läuft wie
+   * ein normaler CSV-Import (Library-Match → Provider → Queue → Reconcile).
+   */
+  startSpotifyHistory: (
+    files: Array<Array<Record<string, unknown>>>,
+    opts: {
+      provider?: string;
+      limit?: number;
+      min_ms_played?: number;
+      min_play_count?: number;
+      date_from?: string;
+      date_to?: string;
+      auto_playlist_year?: boolean;
+      auto_playlist_month?: boolean;
+      playlist_prefix?: string;
+      filename?: string;
+    } = {}
+  ) =>
+    api.post<{
+      status: 'queued' | 'empty';
+      job_id?: string;
+      total?: number;
+      filename?: string;
+      message?: string;
+      stats: {
+        total_events: number;
+        filtered_short: number;
+        filtered_non_music: number;
+        filtered_out_of_range: number;
+        unique_tracks_before_count_filter: number;
+        unique_tracks_after_count_filter: number;
+        skipped_play_count_below_threshold: number;
+      };
+    }>('/api/import/spotify-history', { files, ...opts })
 };
 
 export const urlApi = {

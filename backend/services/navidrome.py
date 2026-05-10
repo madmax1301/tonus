@@ -1,7 +1,10 @@
 import os
+import re
 import shutil
+import threading
+import time
 import requests
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set, Tuple
 from pathlib import Path
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -10,6 +13,71 @@ import config
 # Konstanten für die Subsonic-API
 SUBSONIC_API_VERSION = "1.16.1"
 SUBSONIC_CLIENT = "tonus"
+
+# Phase H — Library-Match-First Cache.
+#
+# Der CSV-Import ruft `library_signatures()` einmal pro Job, um festzustellen,
+# welche Tracks bereits in Navidromes Library liegen — DANN erst gehen die
+# Reste an Deezer/Spotify zur Provider-Suche. Das spart bei wachsender Library
+# 80%+ Provider-Calls.
+#
+# Cache-Strategie: einmaliger Filesystem-Scan pro TTL-Fenster (Default 30 min).
+# Build dauert bei 50k Tracks ~30-60s, alle Folge-Aufrufe innerhalb des Fensters
+# sind instant. Der Scan blockiert den ersten CSV-Job des Fensters merklich;
+# das ist akzeptabel weil es danach für stündliche/tägliche Imports nichts
+# kostet.
+#
+# Module-level Cache statt Instance-Cache, damit alle Worker-Lanes dieselbe
+# Snapshot teilen. Lock gegen Race wenn zwei Imports gleichzeitig starten.
+#
+# Cache-Layout (seit Phase 0 incremental scan, 2026-05-10):
+#   _LIBRARY_SIG_CACHE = (
+#       last_full_scan_ts,            # float — wann der letzte VOLLE Scan war
+#       sigs,                          # Set[Tuple[str,str]] — abgeleitet aus path_map
+#       path_map,                      # Dict[str, (mtime, sig_pair_or_none)]
+#       last_file_count,               # int — Hint für Phase-0-Progress-Bar
+#   )
+#
+# `_LIBRARY_SIG_CACHE_TTL_S` (default 300s) = wie lange Folge-Calls direkt aus
+# `sigs` ohne Re-Scan zurückkommen. Bei TTL-Miss wird inkrementell gescannt
+# (stat-mtime-Diff, ~5-10s bei 50k Files), nicht voll. Voller Re-Scan nur:
+#   - cold cache (erster Call nach Restart)
+#   - last_full_scan_ts älter als `_LIBRARY_SIG_FULLSCAN_S` (default 6h) →
+#     drops files die outside-mtime-changed wurden (z.B. Tag-Edit ohne mtime-Touch)
+#   - force_refresh=True
+_LIBRARY_SIG_TTL_S = int(os.getenv("LIBRARY_SIG_CACHE_TTL_S", "300"))
+_LIBRARY_SIG_FULLSCAN_S = int(os.getenv("LIBRARY_SIG_FULLSCAN_HOURS", "6")) * 3600
+_LIBRARY_SIG_CACHE: Optional[
+    Tuple[
+        float,
+        Set[Tuple[str, str]],
+        Dict[str, Tuple[float, Optional[Tuple[str, str]]]],
+        int,
+    ]
+] = None
+_LIBRARY_SIG_LOCK = threading.Lock()
+
+
+def library_sig_last_file_count() -> Optional[int]:
+    """Hint für Phase-0-Progress-Bar: file_count vom letzten Scan, oder None
+    wenn noch nie gescannt wurde. Worker nutzt das um die Progress-Ratio
+    zu berechnen (file_count / expected) während ein neuer Scan läuft."""
+    if _LIBRARY_SIG_CACHE is None:
+        return None
+    return _LIBRARY_SIG_CACHE[3]
+
+
+def _normalize_sig(s: str) -> str:
+    """Aggressive Normalisierung für Library-Signature-Match.
+
+    Lowercase + alle Nicht-Alphanumerics raus. Damit matchen "The Beatles"
+    und "the-beatles!" auf denselben Bucket. Gleiches Schema wie der
+    existierende `_norm()` in `navidrome_library_sync.py`, hier zur
+    Wiederverwendung im Service.
+    """
+    if not s:
+        return ""
+    return re.sub(r"[^a-z0-9]+", "", s.lower())
 
 
 class NavidromeService:
@@ -188,6 +256,167 @@ class NavidromeService:
             if (a_lo in s_artist or s_artist in a_lo) and (t_lo in s_title or s_title in t_lo):
                 return True
         return False
+
+    def library_signatures(
+        self,
+        force_refresh: bool = False,
+        on_progress: Optional[Any] = None,
+    ) -> Set[Tuple[str, str]]:
+        """Returns ein Set aus (artist_norm, title_norm) für alle Tracks in
+        Navidromes Music-Pfaden. Aggressiv normalisiert via `_normalize_sig`
+        (lowercase + non-alphanumerics raus), damit Schreibvarianten matchen.
+
+        Verwendet Filesystem-Scan + Tag-Read aus `navidrome_library_sync.py`,
+        nicht Subsonic-API — bei 50k Tracks wären das sonst 50k API-Calls.
+
+        Cache-Strategie (Phase 0 incremental, 2026-05-10):
+          - cold cache → full scan (~30-60s @ 50k Tracks)
+          - cache hit innerhalb TTL (300s) → instant return
+          - TTL miss aber path_map vorhanden → INKREMENTELLER scan (stat-mtime
+            pro Pfad, ~5-10s @ 50k Tracks). Tag-Read NUR für neue/changed Files.
+          - last_full_scan älter als FULLSCAN_S (6h) → erneut full scan
+            (drops Files die outside-mtime modifiziert wurden, z.B. tag-edit
+            ohne Datei-mtime-Touch)
+          - force_refresh=True → full scan immer
+
+        Lock-protected gegen parallele Builds (zwei CSV-Imports gleichzeitig).
+
+        on_progress: optionaler Callable(file_count, sigs_count) der alle ~500
+        Files aufgerufen wird damit Caller live-Status-Updates schreiben kann
+        (Worker → upsert_import_job message). Cache-Hits triggern den Callback
+        nicht — der wäre da auch sinnlos (instant return).
+        """
+        global _LIBRARY_SIG_CACHE
+        now = time.time()
+        if not force_refresh and _LIBRARY_SIG_CACHE is not None:
+            ts, sigs, _path_map, _fc = _LIBRARY_SIG_CACHE
+            if now - ts < _LIBRARY_SIG_TTL_S:
+                return sigs
+
+        with _LIBRARY_SIG_LOCK:
+            # Re-check nach Lock — zwei Threads könnten denselben miss sehen
+            if not force_refresh and _LIBRARY_SIG_CACHE is not None:
+                ts, sigs, _path_map, _fc = _LIBRARY_SIG_CACHE
+                if now - ts < _LIBRARY_SIG_TTL_S:
+                    return sigs
+
+            # Decide scan mode: full vs incremental.
+            #   - Cold cache: full
+            #   - Cache age > FULLSCAN_S: full (drops outside-mtime tag-edits)
+            #   - force_refresh: full
+            #   - Else: incremental (mtime-based skip of unchanged files)
+            do_full_scan = True
+            prev_path_map: Dict[str, Tuple[float, Optional[Tuple[str, str]]]] = {}
+            if not force_refresh and _LIBRARY_SIG_CACHE is not None:
+                prev_ts, _prev_sigs, prev_path_map, _prev_fc = _LIBRARY_SIG_CACHE
+                if now - prev_ts < _LIBRARY_SIG_FULLSCAN_S:
+                    do_full_scan = False
+
+            # Lazy-import — der Sync-Module hat schwere Dependencies (mutagen)
+            # die wir nicht beim Import von navidrome.py laden wollen.
+            from utils.navidrome_library_sync import iter_audio_files, read_artist_title
+
+            new_path_map: Dict[str, Tuple[float, Optional[Tuple[str, str]]]] = {}
+            scan_start = time.time()
+            file_count = 0
+            tag_reads = 0  # Diagnostik: wie viele Tag-Reads incremental gespart
+            # Progress-Tick alle 500 Files — bei 50k Tracks = 100 Updates,
+            # bei 1k Tracks = 2 Updates. Genug für gefühlten Live-Progress
+            # ohne DB-Spam.
+            PROGRESS_EVERY = 500
+            for music_root in config.NAVIDROME_MUSIC_PATHS_LIST:
+                root = Path(music_root)
+                if not root.is_dir():
+                    print(f"[library_signatures] skip non-dir: {root}")
+                    continue
+                for path in iter_audio_files(root):
+                    file_count += 1
+                    path_str = str(path)
+                    try:
+                        mtime = path.stat().st_mtime
+                    except OSError:
+                        # File während Scan verschwunden — skippen
+                        continue
+
+                    # Incremental-Path: wenn mtime unverändert, alten sig-pair
+                    # wiederverwenden (kein Tag-Read). Bei full_scan immer
+                    # neu lesen.
+                    cached = prev_path_map.get(path_str) if not do_full_scan else None
+                    if cached is not None and cached[0] >= mtime:
+                        # mtime unchanged — reuse cached sig pair (incl. None)
+                        new_path_map[path_str] = cached
+                    else:
+                        # New file or mtime increased → re-read tags
+                        pair = read_artist_title(path)
+                        tag_reads += 1
+                        if pair:
+                            artist, title = pair
+                            sig_pair = (_normalize_sig(artist), _normalize_sig(title))
+                            if not (sig_pair[0] or sig_pair[1]):
+                                sig_pair = None
+                        else:
+                            sig_pair = None
+                        new_path_map[path_str] = (mtime, sig_pair)
+
+                    if on_progress and (file_count % PROGRESS_EVERY == 0):
+                        # sigs_count ist hier ein Live-Approximator: zähle sigs
+                        # in new_path_map (cheap weil dict-iteration). Nicht
+                        # exakt = final sigs (deduped Set), aber gut genug
+                        # für Progress-Anzeige.
+                        try:
+                            approx_sigs = sum(1 for _, p in new_path_map.values() if p is not None)
+                            on_progress(file_count, approx_sigs)
+                        except Exception:
+                            pass
+
+            # sigs aus path_map aggregieren — gelöschte Files fehlen automatisch
+            # in new_path_map und fallen damit aus den Signatures raus.
+            sigs: Set[Tuple[str, str]] = set()
+            for _mtime, sig_pair in new_path_map.values():
+                if sig_pair is not None:
+                    sigs.add(sig_pair)
+
+            elapsed = time.time() - scan_start
+            mode = "full" if do_full_scan else "incremental"
+            print(
+                f"[library_signatures] {mode} scan: {file_count} files, "
+                f"{tag_reads} tag-reads, {len(sigs)} unique signatures, "
+                f"{elapsed:.1f}s"
+            )
+            if on_progress:
+                try:
+                    on_progress(file_count, len(sigs))
+                except Exception:
+                    pass
+
+            # Bei incremental scan bleibt last_full_scan_ts vom vorherigen Cache
+            # — sonst würden wir den 6h-Trigger nie erreichen weil incremental
+            # ihn ständig zurücksetzt.
+            if do_full_scan:
+                last_full_ts = now
+            else:
+                last_full_ts = _LIBRARY_SIG_CACHE[0] if _LIBRARY_SIG_CACHE else now
+            _LIBRARY_SIG_CACHE = (last_full_ts, sigs, new_path_map, file_count)
+            return sigs
+
+    def library_match(
+        self, artist: str, title: str, signatures: Optional[Set[Tuple[str, str]]] = None
+    ) -> bool:
+        """Bulk-fähiger Counterpart zu `library_has_track()`.
+
+        Statt einem Subsonic-Call pro Track (was bei 30k-Imports nicht
+        skaliert) prüft diese Methode gegen ein vorab geladenes Set aus
+        `library_signatures()`. Caller, die viele Tracks prüfen, sollten
+        das Set einmal holen und durchreichen — sonst wird's per call
+        gebaut (oder aus Cache gezogen, was OK ist aber ein Lock-Acquire
+        kostet).
+        """
+        if not artist or not title:
+            return False
+        if signatures is None:
+            signatures = self.library_signatures()
+        sig = (_normalize_sig(artist), _normalize_sig(title))
+        return sig in signatures
 
     def find_track_id_by_artist_title(self, artist: str, title: str) -> Optional[str]:
         """Wie library_has_track, gibt aber die Subsonic-Track-ID zurück (für Playlist-Manipulation)."""
