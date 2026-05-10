@@ -2183,6 +2183,29 @@ async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)
                 "playlist_names": playlist_names,
             })
 
+    # Diagnose-Log + Empty-Guard: wenn der Parser nichts findet, sofort
+    # 400 zurück statt einen Stub-Job in DB anzulegen. Dann sieht User die
+    # Fehler im Submit-Response statt einem kryptischen Worker-State
+    # ("No pending items found"). Container-Log zeigt zusätzlich body-size
+    # + row-count damit man bei Encoding/Truncation-Verdacht die Werte hat.
+    print(
+        f"[import_csv] received csv_text len={len(request.csv_text)} "
+        f"raw_rows={len(rows)} parsed={len(parsed)} "
+        f"col_artist={col_artist} col_title={col_title} col_playlist={col_playlist} "
+        f"mode={request.mode!r} filename={request.filename!r}",
+        flush=True,
+    )
+    if not parsed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "CSV-Inhalt konnte nicht erkannt werden — bitte prüfe dass die Datei "
+                "Spalten 'Artist' + 'Track Name' enthält (optional 'Playlist Name'). "
+                f"Empfangen: {len(request.csv_text)} Bytes, {len(rows)} Roh-Zeilen, "
+                f"0 valide Tracks geparsed."
+            ),
+        )
+
     # Eindeutige job_id auf Basis der Wall-Clock-Zeit (import_jobs hat keine numeric id-Spalte)
     import time as _time
     from utils.job_store import _db as _csv_db

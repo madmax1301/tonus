@@ -1270,6 +1270,10 @@
         </div>
       {/if}
 
+      {#if csvError}
+        <p class="mt-3 text-[12px]" style="color: #f87171;">{csvError}</p>
+      {/if}
+
       <div class="mt-4 flex items-center gap-3 flex-wrap">
         <button
           type="button"
@@ -1525,7 +1529,7 @@
            ersetzt, der die Live-Card resettet und zurück zur Drop-Zone
            führt — sonst bliebe der User in einem Dead-End. -->
       <div class="mt-4 flex items-center gap-2">
-        {#if csvStatus.status === 'cancelled'}
+        {#if csvStatus.status === 'cancelled' || csvStatus.status === 'error'}
           <button
             type="button"
             onclick={resetCsv}
