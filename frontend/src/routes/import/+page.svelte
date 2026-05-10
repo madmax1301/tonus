@@ -1305,36 +1305,57 @@
         {/if}
       </div>
 
-      <!-- Cancel-Button: ermöglicht Abbruch von CSV/JSON-Import während er
-           läuft. Worker checkt zwischen Phase-Schritten ob status='cancelled'
-           wurde und bricht sauber ab. Confirm-Dialog vermeidet Versehen. -->
+      <!-- Cancel-Button: ermöglicht Abbruch während Import läuft. Bei
+           bereits cancelled wird er durch einen "Neuer Import"-Button
+           ersetzt, der die Live-Card resettet und zurück zur Drop-Zone
+           führt — sonst bliebe der User in einem Dead-End. -->
       <div class="mt-4 flex items-center gap-2">
-        <button
-          type="button"
-          onclick={cancelImport}
-          disabled={csvCancelBusy || csvStatus.status === 'cancelled'}
-          class="inline-flex items-center gap-1.5 transition-opacity"
-          style="
-            background: rgba(248, 113, 113, 0.12);
-            border: 1px solid rgba(248, 113, 113, 0.32);
-            color: #fca5a5;
-            padding: 7px 14px;
-            border-radius: 999px;
-            font-size: 11px;
-            font-weight: 500;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            opacity: {csvCancelBusy || csvStatus.status === 'cancelled' ? 0.5 : 1};
-            cursor: {csvCancelBusy || csvStatus.status === 'cancelled' ? 'not-allowed' : 'pointer'};
-          "
-        >
-          <X size={11} strokeWidth={1.8} />
-          {csvCancelBusy
-            ? $t('import.cancel.canceling')
-            : csvStatus.status === 'cancelled'
-              ? $t('import.cancel.cancelled')
+        {#if csvStatus.status === 'cancelled'}
+          <button
+            type="button"
+            onclick={resetCsv}
+            class="inline-flex items-center gap-1.5 transition-opacity"
+            style="
+              background: rgba(255, 255, 255, 0.06);
+              border: 1px solid {accentSoft};
+              color: {accent};
+              padding: 7px 14px;
+              border-radius: 999px;
+              font-size: 11px;
+              font-weight: 500;
+              letter-spacing: 0.04em;
+              text-transform: uppercase;
+              cursor: pointer;
+            "
+          >
+            {$t('import.cancel.new_import')}
+          </button>
+        {:else}
+          <button
+            type="button"
+            onclick={cancelImport}
+            disabled={csvCancelBusy}
+            class="inline-flex items-center gap-1.5 transition-opacity"
+            style="
+              background: rgba(248, 113, 113, 0.12);
+              border: 1px solid rgba(248, 113, 113, 0.32);
+              color: #fca5a5;
+              padding: 7px 14px;
+              border-radius: 999px;
+              font-size: 11px;
+              font-weight: 500;
+              letter-spacing: 0.04em;
+              text-transform: uppercase;
+              opacity: {csvCancelBusy ? 0.5 : 1};
+              cursor: {csvCancelBusy ? 'not-allowed' : 'pointer'};
+            "
+          >
+            <X size={11} strokeWidth={1.8} />
+            {csvCancelBusy
+              ? $t('import.cancel.canceling')
               : $t('import.cancel.button')}
-        </button>
+          </button>
+        {/if}
       </div>
     </div>
   {:else if csvResult}
