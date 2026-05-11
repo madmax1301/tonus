@@ -141,6 +141,14 @@ MULTI_SOURCE_MIN_SCORE = float(os.getenv("MULTI_SOURCE_MIN_SCORE", "0.65"))
 # Wie viele Kandidaten pro Source vor dem Ranking gezogen werden. Mehr =
 # bessere Auswahl aber langsamer Pre-Search. 3 hat in Tests gut balanciert.
 MULTI_SOURCE_CANDIDATES_PER_SOURCE = int(os.getenv("MULTI_SOURCE_CANDIDATES_PER_SOURCE", "3"))
+# Maximum-Track-Duration in Sekunden. Kandidaten oberhalb werden verworfen
+# weil sie typisch Festival-Sets, DJ-Mixe oder ganze Alben statt einzelner
+# Tracks sind. Greift nur im Resolver / Auto-Track-Pfad — URL-Downloads
+# und Direct-Video-ID umgehen den Filter komplett. 900s = 15min ist eine
+# komfortable Obergrenze für legitime Extended Mixes (5-12min typ.) ohne
+# 30-60-90min Sets durchzulassen. Aus dem 2026-05-10 Burn-in: alle
+# Falschmatches waren >15min.
+MAX_TRACK_DURATION_S = int(os.getenv("MAX_TRACK_DURATION_S", "900"))
 
 # ─── Logging ──────────────────────────────────────────────────────
 # DEBUG / INFO / WARNING / ERROR / CRITICAL — kontrolliert tonus' eigene

@@ -752,18 +752,26 @@ def download_and_process(
             )
             return
 
-        # Multi-Source-Resolver hat used_source/used_url/match_score in
-        # download_result eingehängt — in payload mergen damit das Frontend
+        # Multi-Source-Resolver hat used_source/used_url/match_score/yt_actual_title
+        # in download_result eingehängt — in payload mergen damit das Frontend
         # die genutzte Source in der Origin-Pill anzeigen kann.
+        #
+        # yt_actual_title wird unabhängig vom used_source-Pfad gemerged (auch
+        # der Legacy-Fallback setzt ihn), damit Rename-Tools nach einem
+        # Falschmatch den echten YT/SC-Titel haben.
         used_source = download_result.get("used_source")
-        if used_source:
+        yt_actual_title = download_result.get("yt_actual_title")
+        if used_source or yt_actual_title:
             existing_job = get_job(track_id) or {}
             merged_payload = dict(existing_job.get("payload") or {})
-            merged_payload["used_source"] = used_source
+            if used_source:
+                merged_payload["used_source"] = used_source
             if download_result.get("used_url"):
                 merged_payload["used_url"] = download_result["used_url"]
             if download_result.get("match_score") is not None:
                 merged_payload["match_score"] = download_result["match_score"]
+            if yt_actual_title:
+                merged_payload["yt_actual_title"] = yt_actual_title
             upsert_job(
                 track_id,
                 status="processing",

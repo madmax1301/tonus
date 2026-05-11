@@ -150,9 +150,9 @@ class MultiSourceResolver:
         return filtered
 
     def _passes_duration_filter(self, candidate: Dict, track_info: Optional[Dict]) -> bool:
-        """Reject preview-snippets and clearly-too-short tracks.
+        """Reject preview-snippets, clearly-too-short tracks, and over-long sets.
 
-        Two checks in cascade:
+        Three checks in cascade:
           1. Hard floor at 45s — anything shorter than 45s is preview-snippet,
              intro-jingle, sound-effect, or sample. Real music tracks aren't
              that short, even punk/grindcore songs are typically 60s+.
@@ -160,6 +160,10 @@ class MultiSourceResolver:
              candidate must be at least 50% of that. Catches the case where
              the reference-track is e.g. 3:00 but a Bandcamp preview is 1:00
              (above the 45s floor but still clearly truncated).
+          3. Hard ceiling at MAX_TRACK_DURATION_S (default 900s = 15min) —
+             catches Defqon.1-Sets, DJ-Mixes und Live-Recordings die für
+             single-track-resolves nicht gemeint sind. Burn-in 2026-05-10:
+             alle Falschmatches im Auto-Resolve waren >15min.
 
         meta.duration field gesetzt von beiden Search-Helpers. Wenn unbekannt
         (== 0) → durchwinken; lieber falsch-positiv als ein gutes Match
@@ -171,6 +175,10 @@ class MultiSourceResolver:
 
         # Hard floor for music tracks
         if src_duration < 45:
+            return False
+
+        # Hard ceiling: filter out sets / mixes / full albums
+        if src_duration > config.MAX_TRACK_DURATION_S:
             return False
 
         # Reference-based: must be at least 50% of the reference track length

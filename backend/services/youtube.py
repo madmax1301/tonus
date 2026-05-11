@@ -791,6 +791,10 @@ class YouTubeService:
                     result["used_source"] = src
                     result["used_url"] = url
                     result["match_score"] = c.get("score", 0.0)
+                    # Aktuellen YT/SC-Title persistieren — wenn er vom
+                    # requested track_name abweicht, sieht der User später
+                    # was tatsächlich downloadet wurde (Rename-Tooling).
+                    result["yt_actual_title"] = c.get("title")
                     print(f"Download succeeded via {src} (score={c.get('score'):.3f})")
                     return result
 
@@ -931,12 +935,39 @@ class YouTubeService:
                     exp = f"{base_path}.m4a" if wants_m4a_passthrough else f"{base_path}.{output_format}"
                     raise FileNotFoundError(f"Downloaded file not found. Expected: {exp}")
 
+                # Duration-Ceiling auch im Legacy-Fallback: ytsearch1 zieht
+                # bei populären Hardstyle-Artists oft Defqon.1-Sets statt
+                # Tracks (Burn-in 2026-05-10). Resolver hatte den Cap schon,
+                # aber dieser Pfad greift wenn alle Resolver-Kandidaten unter
+                # min_score liegen. File ist hier bereits auf Platte —
+                # nachträglich löschen + Error zurückgeben, damit der Track
+                # als "not found" markiert wird statt als Falschmatch.
+                actual_duration = float(meta.get("duration") or download_info.get("duration") or 0)
+                if actual_duration > config.MAX_TRACK_DURATION_S:
+                    try:
+                        os.remove(actual_path)
+                    except OSError:
+                        pass
+                    print(
+                        f"WARN: legacy fallback rejected — duration {actual_duration:.0f}s "
+                        f"> max {config.MAX_TRACK_DURATION_S}s (likely set/mix/album, not a track)"
+                    )
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Result-Track ist {int(actual_duration)}s lang "
+                            f"(> {config.MAX_TRACK_DURATION_S}s) — wahrscheinlich Festival-Set / Mix / Album. "
+                            "Verwerfen statt Library zu verschmutzen."
+                        ),
+                    }
+
                 return {
                     'success': True,
                     'file_path': actual_path,
                     'title': meta.get('title', track_name),
                     'duration': meta.get('duration', 0),
                     'url': meta.get('webpage_url', ''),
+                    'yt_actual_title': meta.get('title'),
                 }
         
         except Exception as e:
