@@ -13,45 +13,47 @@ Hintergrund (siehe v0.3.1 Release-Notes / Burn-in 2026-05-10):
     (mit den falschen Tags via mutagen) und sind dadurch unter dem falschen
     Namen "versteckt".
 
-Was dieses Script tut:
+Zwei Betriebsmodi:
 
-  1. Parsed ein Tonus-Container-Logfile (oder stdin) auf die Pattern
-     ``YouTube result: 'X' by 'Y'`` + ``Looking for: 'T' by 'A' -
-     Match: title=False, artist=*`` und sammelt die Falsch-Matches
-     (= alle Cases wo title=False, der Track also faktisch nicht gefunden
-     wurde aber trotzdem gespeichert wurde).
-  2. Walked die Navidrome-Library und liest mutagen-Tags. Files deren
-     ARTIST+TITLE-Tags einem geloggten Falsch-Match entsprechen UND deren
-     Audio-Duration > MAX_TRACK_DURATION_S (default 900s = 15min) sind,
-     werden umbenannt und retagged.
-  3. Im --dry-run-Modus (default) wird nur ausgegeben was passieren würde,
-     ohne irgendwas anzufassen. Mit --apply werden Tags + Filename geändert.
-  4. Nach erfolgreichem --apply kann optional ein Navidrome-Library-Scan
-     getriggered werden, damit die Subsonic-DB die neuen Titel sieht.
+  **--logfile <path>**  (rename-Mode, von v0.3.1)
+      Parsed ein Tonus-Container-Logfile auf ``YouTube result: 'X' by 'Y'`` +
+      ``Looking for: 'T' by 'A' - Match: title=False`` und renamed die in
+      der Library liegenden Falsch-Match-Files auf den echten YT-Titel.
+      Funktioniert nur wenn die Container-Logs noch da sind.
 
-Was es NICHT tut:
+  **--quarantine**  (quarantine-Mode, neu in v0.3.3)
+      Walked die Library, findet Audio-Files > min-duration und verschiebt
+      sie in einen Quarantäne-Ordner unter ``<library>/_falsch-matched/``.
+      Funktioniert auch wenn die Logs verloren sind (z.B. nach
+      ``docker compose pull && up -d`` Container-Recreate). User entscheidet
+      später manuell pro File ob er es behalten oder löschen will.
 
-  - Löscht keine Files. User behält die Sets in der Library, nur mit dem
-    richtigen Namen.
+Im --dry-run-Modus (default) wird nur ausgegeben was passieren würde, ohne
+irgendwas anzufassen. Mit --apply werden Tags + Filename / Move geändert.
+
+Was es in BEIDEN Modi NICHT tut:
+
+  - Löscht keine Files (Quarantäne != Löschung, Rename != Löschung).
   - Triggert kein Re-Download. Die requested Tracks (z.B. "Sefa - 1527")
     bleiben gemissed; sie können später via /import erneut versucht werden.
-  - Berührt keine Files unter der min-duration-Schwelle — das wäre zu
-    riskant ohne weiteren Sanity-Check.
+  - Berührt keine Files unter der min-duration-Schwelle.
 
 Usage::
 
-    # Auf dem NAS:
+    # Modus 1 — log-basiert (wenn die Logs noch da sind):
     docker logs tonus 2>&1 > /tmp/tonus.log
     python3 cleanup_set_mismatches.py \\
         --logfile /tmp/tonus.log \\
         --library /volume1/music \\
         --dry-run
+    # … review, dann --apply
 
-    # Wenn die dry-run-Ausgabe gut aussieht:
+    # Modus 2 — Quarantäne (wenn die Logs weg sind):
     python3 cleanup_set_mismatches.py \\
-        --logfile /tmp/tonus.log \\
+        --quarantine \\
         --library /volume1/music \\
-        --apply
+        --dry-run
+    # … review, dann --apply
 
 Abhängigkeit: ``mutagen`` (im tonus-Container schon installiert; auf dem
 Host außerhalb ggf. `pip install mutagen`).
@@ -182,19 +184,142 @@ def sanitize_filename_segment(s: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Quarantine-Mode (v0.3.3) — log-loser Pfad
+# ──────────────────────────────────────────────────────────────────────
+
+
+# Name des Quarantäne-Subfolders unter dem Library-Root. Wird beim Scan
+# automatisch übersprungen, damit Re-Runs idempotent sind.
+QUARANTINE_DIRNAME = "_falsch-matched"
+
+
+def build_quarantine_target(audio_path: Path, library_root: Path) -> Path:
+    """Zielpfad in der Quarantäne. Flach (kein Subfolder pro Artist) damit
+    der User auf einen Blick die Quarantäne-Liste sieht. Doppel-Underscore-
+    Separator behält die Original-Pfad-Info: ``<Artist>__<Album>__<File>``.
+    """
+    quarantine_root = library_root / QUARANTINE_DIRNAME
+    try:
+        rel = audio_path.relative_to(library_root)
+    except ValueError:
+        # Sollte nicht passieren, aber als safety fallback nimm nur den Filename
+        rel = Path(audio_path.name)
+    parent_chain = "__".join(rel.parts[:-1]) if len(rel.parts) > 1 else ""
+    fname = rel.parts[-1]
+    target_name = f"{parent_chain}__{fname}" if parent_chain else fname
+    return quarantine_root / target_name
+
+
+def run_quarantine_mode(args: argparse.Namespace, dry_run: bool) -> int:
+    """Walked die Library, findet Files > min-duration, plant Quarantäne-Move."""
+    quarantine_root = args.library / QUARANTINE_DIRNAME
+
+    print(f"Scanning {args.library} for files > {args.min_duration}s …")
+    plan: List[Tuple[Path, Path, float]] = []  # (src, dst, duration)
+    scanned = 0
+    for audio_path in iter_library_audio(args.library):
+        # Skip Files die bereits in der Quarantäne liegen
+        try:
+            rel = audio_path.relative_to(args.library)
+            if rel.parts and rel.parts[0] == QUARANTINE_DIRNAME:
+                continue
+        except ValueError:
+            continue
+        scanned += 1
+        tags = read_tags(audio_path)
+        if tags is None:
+            continue
+        duration = float(tags["duration"])
+        if duration <= args.min_duration:
+            continue
+        target = build_quarantine_target(audio_path, args.library)
+        plan.append((audio_path, target, duration))
+
+    print(f"  Scanned {scanned} files")
+    print(f"  Quarantine candidates: {len(plan)}")
+    if not plan:
+        print("Nothing to do.")
+        return 0
+
+    print()
+    if dry_run:
+        print("=== DRY RUN — no changes will be made ===")
+    else:
+        print("=== APPLYING QUARANTINE MOVES ===")
+    print()
+
+    if not dry_run:
+        quarantine_root.mkdir(parents=True, exist_ok=True)
+
+    moved_ok = 0
+    failed = 0
+    for src, dst, duration in plan:
+        rel_src = src.relative_to(args.library)
+        size_mb = src.stat().st_size / (1024 * 1024) if src.exists() else 0
+
+        print(f"  {rel_src}  ({size_mb:.1f} MB, {duration:.0f}s)")
+        print(f"  → {QUARANTINE_DIRNAME}/{dst.name}")
+
+        if not dry_run:
+            if dst.exists():
+                print(f"    ❌ target exists, skipping: {dst.name}")
+                failed += 1
+                print()
+                continue
+            try:
+                src.rename(dst)
+                print("    ✓ moved")
+                moved_ok += 1
+            except OSError as e:
+                print(f"    ❌ move failed: {e}")
+                failed += 1
+        print()
+
+    if dry_run:
+        print(f"\n{len(plan)} files would be moved. Re-run with --apply to commit.")
+    else:
+        print(f"\n✓ {moved_ok} moved to {QUARANTINE_DIRNAME}/")
+        if failed:
+            print(f"❌ {failed} failed")
+        print(
+            "\nNext steps:\n"
+            "  1. find /music -type d -empty -not -path '*/" + QUARANTINE_DIRNAME + "/*' -delete  "
+            "(empty album/artist folders aufräumen, ggf. 2x)\n"
+            "  2. Navidrome-Library-Scan triggern damit Subsonic-DB die "
+            "neuen Files vergisst\n"
+            "  3. " + QUARANTINE_DIRNAME + "/ manuell durchgehen — Files behalten, "
+            "umbenennen oder löschen pro Case"
+        )
+
+    return 0 if failed == 0 else 2
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Rename falsch-matched Festival-Sets to their actual titles."
+        description="Clean up falsch-matched Festival-Sets either by renaming "
+                    "(--logfile) or by quarantining them (--quarantine)."
     )
-    parser.add_argument(
+    # Modi sind mutually exclusive — entweder log-basiertes Rename ODER
+    # log-loser Quarantine-Move, nicht beides.
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument(
         "--logfile",
         type=Path,
-        required=True,
-        help="Path to docker logs output (e.g., /tmp/tonus.log)",
+        help="Modus 1 (Rename): Pfad zu docker logs output (z.B. /tmp/tonus.log "
+             "oder /dev/stdin via pipe). Files werden auf den echten YT-Title "
+             "umbenannt + retagged.",
+    )
+    mode_group.add_argument(
+        "--quarantine",
+        action="store_true",
+        help="Modus 2 (Quarantine): walked Library, verschiebt Files > "
+             "min-duration nach <library>/_falsch-matched/. Funktioniert "
+             "ohne Logs.",
     )
     parser.add_argument(
         "--library",
@@ -217,18 +342,25 @@ def main() -> int:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Actually rename + retag files (overrides --dry-run)",
+        help="Actually rename + retag files / move to quarantine "
+             "(overrides --dry-run)",
     )
     args = parser.parse_args()
 
-    if not args.logfile.exists():
-        print(f"ERROR: logfile not found: {args.logfile}", file=sys.stderr)
-        return 1
     if not args.library.exists() or not args.library.is_dir():
         print(f"ERROR: library directory not found: {args.library}", file=sys.stderr)
         return 1
 
     dry_run = not args.apply
+
+    # ── Quarantäne-Mode: log-loser Pfad ──
+    if args.quarantine:
+        return run_quarantine_mode(args, dry_run)
+
+    # ── Log-Mode: existing rename flow ──
+    if not args.logfile.exists():
+        print(f"ERROR: logfile not found: {args.logfile}", file=sys.stderr)
+        return 1
 
     # ── Step 1: Parse log → falsch-match-Liste ──
     print(f"Parsing {args.logfile} …")
