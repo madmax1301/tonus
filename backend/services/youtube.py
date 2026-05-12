@@ -603,112 +603,6 @@ class YouTubeService:
             result['warning'] = 'YouTube blocked some requests (403). Consider configuring YouTube cookies for better reliability.'
         return result
     
-    def download_by_url(self, url: str, output_path: str, output_format: str = None, audio_quality: str = None, source_lane: Optional[str] = None) -> Dict:
-        """Download from any yt-dlp-supported URL — YouTube, SoundCloud, Bandcamp, etc.
-
-        Generischer Download-Path. download_by_video_id() ist ein Wrapper der
-        die YouTube-URL aus einer video_id baut und hier aufruft. Multi-
-        Source-Resolver-Pfad kommt direkt mit URL.
-
-        source_lane∈{a,b,None} → Source-IP-Bind (Dual-VPN).
-        """
-        output_format = (output_format or self.output_format or "mp3").strip().lower()
-        audio_quality = audio_quality or self.audio_quality
-
-        output_path = os.path.abspath(output_path)
-        base_path = self._output_base_path(output_path, output_format)
-
-        # If the user wants m4a and YouTube provides it as itag 140 (m4a/aac),
-        # keep the original container by skipping FFmpegExtractAudio.
-        wants_m4a_passthrough = (output_format or "").lower() == "m4a"
-
-        ydl_opts = {
-            # Avoid HLS (m3u8) formats that get blocked - prefer direct audio formats
-            # Format priority: m4a direct > opus/webm direct > bestaudio (non-HLS) > fallback
-            # Generischer Pattern — funktioniert auch für SoundCloud (mp3/m4a) und
-            # Bandcamp (mp3-direct mit oft DRM-frei) ohne Anpassung.
-            'format': 'bestaudio[ext=m4a][protocol!=m3u8]/bestaudio[ext=webm][protocol!=m3u8]/bestaudio[ext=opus][protocol!=m3u8]/bestaudio[protocol!=m3u8]/best[ext=m4a][protocol!=m3u8]/best[ext=webm][protocol!=m3u8]/best[height<=720][protocol!=m3u8]/best',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            # YouTube-spezifische extractor-args; yt-dlp ignoriert die für andere
-            # Sources, also schadet es nicht hier zu setzen.
-            'extractor_args': {
-                'youtube': {
-                    'player_client': config.YOUTUBE_PLAYER_CLIENTS,
-                }
-            },
-            'retries': 10,
-            'fragment_retries': 10,
-            'file_access_retries': 3,
-            'outtmpl': self._yt_dlp_outtmpl(base_path),
-            'fixup': 'never',
-            'quiet': config.YT_DLP_QUIET,
-            'no_warnings': config.YT_DLP_QUIET,
-            'noplaylist': True,
-        }
-
-        if wants_m4a_passthrough:
-            ydl_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'm4a',
-                'nopostoverwrites': False,
-            }]
-            ydl_opts['postprocessor_args'] = {
-                'ffmpeg': [
-                    '-ac', '2',
-                    '-c:a', 'copy',
-                    '-q:a', '0',
-                ]
-            }
-        else:
-            pq = self._preferred_quality_for_extract(output_format, audio_quality)
-            preferredcodec = self._ffmpeg_extract_preferredcodec(output_format)
-            ydl_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': preferredcodec,
-                'preferredquality': pq,
-                'nopostoverwrites': False,
-            }]
-            if output_format not in ('flac', 'wav', 'alac'):
-                ydl_opts['postprocessor_args'] = {
-                    'ffmpeg': [
-                        '-af', 'aresample=44100',
-                        '-ac', '2',
-                    ]
-                }
-
-        ydl_opts = self._add_cookies_to_opts(ydl_opts)
-        ydl_opts = _apply_source_lane(ydl_opts, source_lane)
-        ydl_opts = _apply_anti_detection_opts(ydl_opts)
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-
-                actual_path = self._resolve_downloaded_audio(
-                    base_path, output_format, wants_m4a_passthrough, info, ydl
-                )
-                if not actual_path:
-                    exp = f"{base_path}.m4a" if wants_m4a_passthrough else f"{base_path}.{output_format}"
-                    raise FileNotFoundError(f"Downloaded file not found. Expected: {exp}")
-
-                return {
-                    'success': True,
-                    'file_path': actual_path,
-                    'title': info.get('title', ''),
-                    'duration': info.get('duration', 0),
-                    'url': info.get('webpage_url', url),
-                    'extractor': info.get('extractor', '') or info.get('extractor_key', ''),
-                }
-
-        except Exception as e:
-            error_msg = str(e)
-            if '403' in error_msg or 'Forbidden' in error_msg:
-                error_msg = f"Source blocked the request (HTTP 403). Try again in a few minutes. URL: {url}"
-            return {
-                'success': False,
-                'error': error_msg,
-            }
-
     def download_by_video_id(self, video_id: str, output_path: str, output_format: str = None, audio_quality: str = None, source_lane: Optional[str] = None) -> Dict:
         """Backward-compat: download a specific YouTube video by ID.
 
@@ -841,7 +735,7 @@ class YouTubeService:
             # Try different YouTube clients as fallback (helps with 403 errors)
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['tv_embedded'],  # Try multiple clients
+                    'player_client': config.YOUTUBE_PLAYER_CLIENTS,
                 }
             },
             # Retry configuration for network issues and 403 errors
@@ -1072,7 +966,7 @@ class YouTubeService:
             'format': 'bestaudio[ext=m4a][protocol!=m3u8]/bestaudio[ext=webm][protocol!=m3u8]/bestaudio[ext=opus][protocol!=m3u8]/bestaudio[protocol!=m3u8]/best[ext=m4a][protocol!=m3u8]/best[ext=webm][protocol!=m3u8]/best[height<=720][protocol!=m3u8]/best',
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'extractor_args': {
-                'youtube': {'player_client': ['tv_embedded']},
+                'youtube': {'player_client': config.YOUTUBE_PLAYER_CLIENTS},
             },
             'retries': 10,
             'fragment_retries': 10,

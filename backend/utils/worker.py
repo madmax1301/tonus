@@ -1269,9 +1269,9 @@ class JobWorker(threading.Thread):
         # Recovery-Aggregat — zeigt wie viel der Burst-Soft-Throttle gekostet
         # hat. Hohe recovery_recovered-Zahl = Burst-Limit war ein echtes
         # Problem im initial-Pass; bei 0 = Initial-Pass war sauber.
-        if recovery_keys:
+        if initial_recovery_keys:
             recovery_summary = (
-                f" · Recovery: {recovery_recovered}/{len(recovery_keys)} "
+                f" · Recovery: {recovery_recovered}/{len(initial_recovery_keys)} "
                 f"Initial-Misses gerettet"
             )
         else:
