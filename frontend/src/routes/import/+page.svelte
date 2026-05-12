@@ -9,8 +9,8 @@
     searchApi,
     downloadApi,
     ApiError,
-    type CsvImportStatus,
-    type CsvImportResult,
+    type ImportStatus,
+    type ImportResult,
     type MetadataProvidersResponse,
     type Track
   } from '$lib/api';
@@ -53,8 +53,8 @@
   // Original-Filename, wenn der User eine Datei gedroppt hat. Bei Text-Paste
   // bleibt's null und wir fallen zurück auf "Job · csv-1234" als Tab-Label.
   let csvFilename = $state<string | null>(null);
-  let csvStatus = $state<CsvImportStatus | null>(null);
-  let csvResult = $state<CsvImportResult | null>(null);
+  let csvStatus = $state<ImportStatus | null>(null);
+  let csvResult = $state<ImportResult | null>(null);
   let csvBusy = $state(false);
   let csvError = $state<string | null>(null);
   let csvQueueAllBusy = $state(false);
