@@ -34,6 +34,7 @@ It's a single-tenant tool you self-host on a NAS (or any Docker host). All crede
 
 - Core acquisition: Deezer/Spotify search → YouTube/SoundCloud download → Navidrome scan trigger → file delivered, tagged, and visible in your library
 - Bulk import: drop a CSV (or a Spotify Extended Streaming History export) and Tonus matches every track against your existing Navidrome library first, queues only the missing ones, and reconciles playlist memberships into Subsonic playlists
+- Sane-result guarantee: candidates longer than 15 min are rejected automatically so a Defqon.1-set never lands in your library under a single-track name. Override via `MAX_TRACK_DURATION_S` env var if you want longer mixes through
 - Auth: multi-user with TOTP-2FA, Personal Access Tokens, brute-force lifetime ban
 - Encrypted-at-rest provider credentials and TOTP secrets (Fernet)
 - Persistent app data on a separate volume (auth + queue + settings survive image swaps)
@@ -43,6 +44,8 @@ It's a single-tenant tool you self-host on a NAS (or any Docker host). All crede
 
 - YouTube bot-detection occasionally requires a manual cookie export
 - Dual-VPN source-IP-splitting is NAS-mode only and silently disables itself if the bind addresses are unreachable
+
+**One-shot Library cleanup** (useful if you upgrade from pre-v0.3.1 and the library has Festival-Sets misnamed as single tracks): `docker exec tonus python3 /app/backend/scripts/cleanup_set_mismatches.py --quarantine --library /music --dry-run` → review → `--apply`. Moves long-duration files to `<library>/_falsch-matched/` for manual review without deleting anything.
 
 **Out of scope right now:** Subsonic-direct (without Navidrome), Ansible/Helm/non-Docker deployment.
 
