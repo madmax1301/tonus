@@ -39,6 +39,18 @@ ENV PYTHONUNBUFFERED=1 \
     API_HOST=0.0.0.0 \
     API_PORT=8088
 
+# H-1 Audit 2026-05-12: Non-root Runtime-User (UID/GID 1000:1000).
+# Existing Bind-Mounts auf dem Host müssen auf UID 1000 chown'd sein,
+# sonst kann Tonus nicht in /app/data oder /app/downloads schreiben:
+#   sudo chown -R 1000:1000 <host-path-für-docker_data/tonus>
+# Auch der Navidrome-Music-Path braucht r/w für UID 1000.
+# Login-shell ist /usr/sbin/nologin (defense-in-depth gegen exec-Pfade),
+# Home-Dir wird NICHT angelegt (-M, kleinere Surface).
+RUN groupadd -g 1000 tonus \
+ && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin tonus \
+ && chown -R 1000:1000 /app
+USER 1000:1000
+
 EXPOSE 8088
 WORKDIR /app/backend
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8088"]
