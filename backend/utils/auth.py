@@ -160,6 +160,38 @@ def require_token(
     request.state.user = user
 
 
+def optional_token(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+) -> bool:
+    """Wie ``require_token``, aber wirft kein 401 — returnt True bei
+    erfolgreicher Auth, sonst False. Für Endpoints die je nach Auth-State
+    unterschiedliche Felder zurückgeben (z.B. /api/health: Public-Status
+    für Monitoring-Tools ohne Token, Full-Info inkl. FS-Pfade nur für
+    authenticated Clients — Audit-Finding M-6 vom 2026-05-12).
+    """
+    try:
+        assert_ip_not_banned(request)
+    except HTTPException:
+        return False
+
+    if auth_users.setup_required():
+        request.state.user = {"id": 0, "username": "_setup", "is_admin": True,
+                              "auth_method": "setup"}
+        return True
+
+    token = _extract_bearer(authorization)
+    if not token:
+        return False
+
+    user = _try_jwt(token) or _try_pat(token) or _try_legacy(token)
+    if not user:
+        return False
+
+    request.state.user = user
+    return True
+
+
 def require_admin(request: Request) -> None:
     """Zusätzlich zu require_token: nur is_admin Users durchlassen.
     Für /api/auth/users-Mgmt-Endpoints. Voraussetzung: require_token wurde

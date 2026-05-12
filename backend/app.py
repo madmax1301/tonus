@@ -58,7 +58,7 @@ from utils.job_store import (
     get_import_library_matches_with_playlists,
 )
 from utils.worker import JobWorker
-from utils.auth import require_token, require_admin, auth_required
+from utils.auth import require_token, require_admin, auth_required, optional_token
 
 ALLOWED_METADATA_PROVIDERS = frozenset({"deezer", "spotify"})
 
@@ -989,7 +989,7 @@ async def get_track(track_id: str, provider: Optional[str] = Query(None)):
 
 
 @app.get("/api/queue/lanes")
-async def queue_lanes():
+async def queue_lanes(_: None = Depends(require_token)):
     """Lane-Cooldown-Status für die Live-Queue-UI.
 
     Liefert pro Lane (`a`/`b` mit VPN-Split, sonst `default`) den Timestamp
@@ -1005,6 +1005,7 @@ async def list_queue(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=500, ge=1, le=10000),
     status: Optional[str] = Query(default=None),
+    _: None = Depends(require_token),
 ):
     """Return queued/active/recent jobs (paginiert).
 
@@ -1163,7 +1164,7 @@ async def list_queue(
 
 
 @app.get("/api/queue/stats")
-async def queue_stats():
+async def queue_stats(_: None = Depends(require_token)):
     """Aggregat-Statistik für Dashboards/Health-Checks.
 
     Liefert:
@@ -2058,16 +2059,25 @@ async def get_available_formats():
     }
 
 @app.get("/api/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "default_metadata_provider": config.DEFAULT_METADATA_PROVIDER,
-        "spotify_configured": spotify_service is not None,
-        "navidrome_path": config.NAVIDROME_MUSIC_PATH,
-        "navidrome_libraries": config.navidrome_libraries_public(),
-        "navidrome_api_url": config.NAVIDROME_API_URL,
-    }
+async def health_check(authed: bool = Depends(optional_token)):
+    """Health check endpoint.
+
+    Liefert immer ``status: healthy`` für unauthenticated Monitoring-Tools
+    (Uptime-Kuma, Docker healthcheck etc.). Erweiterte Felder mit FS-Pfaden
+    und Service-URLs nur für authenticated Clients zurück — verhindert
+    Disclosure-Leaks an non-authenticated Probes (Audit-Finding M-6,
+    2026-05-12).
+    """
+    base = {"status": "healthy"}
+    if authed:
+        base.update({
+            "default_metadata_provider": config.DEFAULT_METADATA_PROVIDER,
+            "spotify_configured": spotify_service is not None,
+            "navidrome_path": config.NAVIDROME_MUSIC_PATH,
+            "navidrome_libraries": config.navidrome_libraries_public(),
+            "navidrome_api_url": config.NAVIDROME_API_URL,
+        })
+    return base
 
 @app.post("/api/recommendations")
 def get_recommendations(request: RecommendationRequest):
