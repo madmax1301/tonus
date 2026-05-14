@@ -533,13 +533,13 @@ export const cooldownApi = {
 
 // ─── Import / URL / Reverse ────────────────────────────────
 
-export interface CsvImportStartResponse {
+export interface ImportStartResponse {
   job_id: string;
   total: number;
   message?: string;
 }
 
-export interface CsvImportStatus {
+export interface ImportStatus {
   status: 'queued' | 'processing' | 'completed' | 'error' | 'cancelled';
   total: number;
   processed: number;
@@ -576,7 +576,7 @@ export interface CsvImportStatus {
   filename?: string | null;
 }
 
-export interface CsvMatched {
+export interface ImportMatched {
   /** Roh-Zeile aus dem CSV-Input. */
   original: string;
   /** Geparster Artist aus der Zeile (best-effort). */
@@ -587,7 +587,7 @@ export interface CsvMatched {
   track: Track | null;
 }
 
-export interface CsvUnmatched {
+export interface ImportUnmatched {
   /** Roh-Zeile aus dem CSV-Input. */
   original: string;
   /** Geparster Artist aus der Zeile (best-effort). */
@@ -596,24 +596,24 @@ export interface CsvUnmatched {
   requested_title?: string;
 }
 
-export interface CsvImportResult {
+export interface ImportResult {
   total: number;
   found: number;
   not_found: number;
   /** Phase H: wieviele Tracks wurden direkt als Library-Match identifiziert
    *  und dadurch ohne Provider-Lookup als 'bereits vorhanden' markiert. */
   library_match_count?: number;
-  matched: CsvMatched[];
-  unmatched: CsvUnmatched[];
+  matched: ImportMatched[];
+  unmatched: ImportUnmatched[];
   /** Phase H: Liste der Tracks die schon in Navidrome lagen — kein Track-
    *  Detail aus Provider verfügbar (track-Field ist daher absent), nur
    *  das Original-Triple. Wird im Frontend in eigenem Bucket angezeigt. */
-  library_match?: CsvUnmatched[];
+  library_match?: ImportUnmatched[];
 }
 
 export const importApi = {
   startCsv: (csvText: string, provider?: string, limit?: number, filename?: string) =>
-    api.post<CsvImportStartResponse>('/api/import/csv', {
+    api.post<ImportStartResponse>('/api/import/csv', {
       csv_text: csvText,
       provider,
       limit,
@@ -627,14 +627,14 @@ export const importApi = {
    * anlegen.
    */
   startPlaylistSync: (csvText: string, filename?: string) =>
-    api.post<CsvImportStartResponse>('/api/import/csv', {
+    api.post<ImportStartResponse>('/api/import/csv', {
       csv_text: csvText,
       filename,
       mode: 'playlist_sync'
     }),
-  status: (jobId: string) => api.get<CsvImportStatus>(`/api/import/jobs/${jobId}/status`),
+  status: (jobId: string) => api.get<ImportStatus>(`/api/import/jobs/${jobId}/status`),
   result: (jobId: string, offset = 0, limit = 200) =>
-    api.get<CsvImportResult>(
+    api.get<ImportResult>(
       `/api/import/jobs/${jobId}/result?offset=${offset}&limit=${limit}`
     ),
   cancel: (jobId: string) => api.post<{ ok: boolean }>(`/api/import/jobs/${jobId}/cancel`),

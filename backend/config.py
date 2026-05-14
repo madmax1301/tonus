@@ -150,6 +150,57 @@ MULTI_SOURCE_CANDIDATES_PER_SOURCE = int(os.getenv("MULTI_SOURCE_CANDIDATES_PER_
 # Falschmatches waren >15min.
 MAX_TRACK_DURATION_S = int(os.getenv("MAX_TRACK_DURATION_S", "900"))
 
+# ─── Security: Album-Art-URL-Allowlist (Audit C-1, 2026-05-12) ────
+# SSRF-Schutz für services.metadata._download_album_art. Ohne diese
+# Allowlist konnte ein User-controlled album_art Wert (aus Spotify/
+# Deezer-Provider-Response, Track-Hint oder Reverse-Lookup) jede HTTP-
+# URL erreichen — inkl. Cloud-Metadata-Endpoints (169.254.169.254),
+# Internal-Hosts in Docker-Netz oder LAN-Range.
+#
+# Default deckt die Cover-Art-CDNs aller unterstützten Metadata-Provider
+# und Download-Sources ab. Override via ENV `ALBUM_ART_ALLOWED_HOSTS`
+# als CSV von Hostnamen (Subdomain-Match aktiv: `sndcdn.com` matched
+# auch `i1.sndcdn.com`). Leerer Override → Default. IP-Literals werden
+# IMMER abgelehnt (kein bare-IP-Bypass).
+_default_album_art_hosts = [
+    # Spotify cover-art
+    "scdn.co", "spotifycdn.com",
+    # Deezer cover-art
+    "dzcdn.net", "deezer.com",
+    # YouTube thumbnails (Multi-Source-Resolver-Tracks)
+    "ytimg.com", "ggpht.com", "googleusercontent.com",
+    # SoundCloud cover-art
+    "sndcdn.com",
+    # MusicBrainz / Cover-Art-Archive
+    "coverartarchive.org", "archive.org",
+]
+_raw_aa_hosts = (os.getenv("ALBUM_ART_ALLOWED_HOSTS", "") or "").strip()
+if _raw_aa_hosts:
+    ALBUM_ART_ALLOWED_HOSTS = tuple(h.strip().lower().lstrip(".") for h in _raw_aa_hosts.split(",") if h.strip())
+else:
+    ALBUM_ART_ALLOWED_HOSTS = tuple(_default_album_art_hosts)
+
+# ─── Security: Trusted-Proxy-CIDRs (Audit H-7, 2026-05-12) ─────────
+# utils.auth.client_ip vertraut X-Forwarded-For nur dann, wenn der
+# direkte HTTP-Peer (request.client.host) in einem dieser CIDRs liegt.
+# Ohne den Check konnte jeder Caller seine eigene Source-IP via XFF-
+# Header fälschen und den Brute-Force-Ban auf eine fremde IP umlenken.
+#
+# Default deckt typische Container-/LAN-Setups ab (Tonus läuft hinter
+# Traefik im Docker-Netz). Bei direct-Internet-Expose ohne Reverse-Proxy
+# muss `TRUSTED_PROXIES=""` (leer) gesetzt werden — dann wird XFF
+# komplett ignoriert und nur der direkte Peer als Source-IP genutzt.
+_default_trusted_proxies = [
+    "127.0.0.1/32", "::1/128",
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+]
+_raw_proxies_env = os.getenv("TRUSTED_PROXIES")
+if _raw_proxies_env is None:
+    TRUSTED_PROXIES = tuple(_default_trusted_proxies)
+else:
+    # Auch leerer String "" ist eine gültige Wahl: "vertraue keinem Proxy".
+    TRUSTED_PROXIES = tuple(p.strip() for p in _raw_proxies_env.split(",") if p.strip())
+
 # ─── Logging ──────────────────────────────────────────────────────
 # DEBUG / INFO / WARNING / ERROR / CRITICAL — kontrolliert tonus' eigene
 # logger (resolver, worker, app). yt-dlp's verbosity ist davon getrennt

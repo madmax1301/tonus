@@ -1,4 +1,7 @@
+import ipaddress
 import os
+from urllib.parse import urlparse
+
 import requests
 from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, APIC, TDRC, TRCK, TCON
 from mutagen.mp3 import MP3
@@ -6,6 +9,43 @@ from mutagen.flac import FLAC, Picture
 from mutagen.mp4 import MP4, MP4Cover
 from typing import Dict, List
 from pathlib import Path
+
+import config
+
+
+def _is_allowed_album_art_url(url: str) -> bool:
+    """SSRF-Schutz für album_art-Downloads (Audit C-1, 2026-05-12).
+
+    Validiert in dieser Reihenfolge:
+      1. URL parsebar, scheme ∈ {http, https}
+      2. Host vorhanden und KEIN bare IP-Literal — verhindert direct-IP
+         Bypass auf Cloud-Metadata (169.254.169.254) und Docker-bridge-
+         Hosts. Wer einen legitimen IP-only-CDN nutzt, kann ihn via DNS-
+         Eintrag in der Allowlist whitelisten.
+      3. Host matched eines Suffixes aus config.ALBUM_ART_ALLOWED_HOSTS
+         (Subdomain-Match aktiv: `sndcdn.com` → auch `i1.sndcdn.com`).
+    """
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower().strip()
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    for allowed in config.ALBUM_ART_ALLOWED_HOSTS:
+        if host == allowed or host.endswith("." + allowed):
+            return True
+    return False
+
 
 class MetadataService:
     def __init__(self):
@@ -68,10 +108,22 @@ class MetadataService:
     def _download_album_art(self, url: str) -> bytes | None:
         if not url:
             return None
+        if not _is_allowed_album_art_url(url):
+            print(f"Album art URL rejected by allowlist (Audit C-1): {url[:80]}")
+            return None
         try:
-            response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+            response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=False)
             if response.status_code == 200:
                 return response.content
+            if response.status_code in (301, 302, 303, 307, 308):
+                # Folge nur Redirects deren Ziel wieder in der Allowlist liegt.
+                # Sonst könnte ein erlaubter Host auf einen internen Host
+                # weiterleiten und die Allowlist umgehen.
+                redirect_target = response.headers.get('Location', '')
+                if redirect_target and _is_allowed_album_art_url(redirect_target):
+                    response = requests.get(redirect_target, timeout=10, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=False)
+                    if response.status_code == 200:
+                        return response.content
         except Exception as e:
             print(f"Error downloading album art: {e}")
         return None

@@ -28,6 +28,7 @@ zugänglich beim ersten Start.
 """
 from __future__ import annotations
 
+import ipaddress
 import secrets
 from typing import Any, Dict, Optional
 
@@ -91,17 +92,46 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
     return None
 
 
+def _is_trusted_proxy(addr: Optional[str]) -> bool:
+    """True wenn ``addr`` in einem der ``config.TRUSTED_PROXIES``-CIDRs liegt."""
+    if not addr:
+        return False
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    for cidr_str in config.TRUSTED_PROXIES:
+        try:
+            cidr = ipaddress.ip_network(cidr_str, strict=False)
+        except ValueError:
+            continue
+        if ip in cidr:
+            return True
+    return False
+
+
 def client_ip(request: Request) -> Optional[str]:
-    """Extract client IP from request, respecting Reverse-Proxy-Header. Best-effort.
-    Wird sowohl von require_token (für Pre-Auth-Ban-Check) als auch vom
-    Login-Endpoint genutzt — daher Public-Helper hier statt Duplikat in app.py."""
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    real = request.headers.get("x-real-ip")
-    if real:
-        return real.strip()
-    return request.client.host if request.client else None
+    """Extract client IP from request, respecting Reverse-Proxy-Header.
+
+    Audit H-7 (2026-05-12): X-Forwarded-For (und X-Real-IP) werden NUR
+    dann gehonoured, wenn der direkte HTTP-Peer in ``config.TRUSTED_PROXIES``
+    liegt. Sonst könnte jeder Caller seine eigene IP via XFF-Header fälschen
+    und so den Brute-Force-Ban auf eine fremde IP umlenken (oder die eigene
+    Ban-Tracking-Identität rotieren). Standard-Setup ist Traefik im Docker-
+    Netz → trusted, XFF wird genutzt. Bei direct-Internet-Expose muss
+    TRUSTED_PROXIES="" gesetzt sein, dann zählt nur der direkte Peer.
+
+    Wird sowohl von require_token (Pre-Auth-Ban-Check) als auch vom Login-
+    Endpoint genutzt — daher Public-Helper hier statt Duplikat in app.py."""
+    peer = request.client.host if request.client else None
+    if _is_trusted_proxy(peer):
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            return fwd.split(",")[0].strip()
+        real = request.headers.get("x-real-ip")
+        if real:
+            return real.strip()
+    return peer
 
 
 def assert_ip_not_banned(request: Request) -> None:
@@ -158,6 +188,38 @@ def require_token(
         )
 
     request.state.user = user
+
+
+def optional_token(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+) -> bool:
+    """Wie ``require_token``, aber wirft kein 401 — returnt True bei
+    erfolgreicher Auth, sonst False. Für Endpoints die je nach Auth-State
+    unterschiedliche Felder zurückgeben (z.B. /api/health: Public-Status
+    für Monitoring-Tools ohne Token, Full-Info inkl. FS-Pfade nur für
+    authenticated Clients — Audit-Finding M-6 vom 2026-05-12).
+    """
+    try:
+        assert_ip_not_banned(request)
+    except HTTPException:
+        return False
+
+    if auth_users.setup_required():
+        request.state.user = {"id": 0, "username": "_setup", "is_admin": True,
+                              "auth_method": "setup"}
+        return True
+
+    token = _extract_bearer(authorization)
+    if not token:
+        return False
+
+    user = _try_jwt(token) or _try_pat(token) or _try_legacy(token)
+    if not user:
+        return False
+
+    request.state.user = user
+    return True
 
 
 def require_admin(request: Request) -> None:
