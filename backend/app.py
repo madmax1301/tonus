@@ -59,8 +59,18 @@ from utils.job_store import (
 )
 from utils.worker import JobWorker
 from utils.auth import require_token, require_admin, auth_required, optional_token
+from utils.rate_limit import make_rate_limiter
 
 ALLOWED_METADATA_PROVIDERS = frozenset({"deezer", "spotify"})
+
+# Rate-Limiter (Audit M-1, 2026-05-12). Module-level damit alle Requests
+# denselben State teilen — Fresh-Per-Request würde den Counter resetten.
+# Werte konservativ-großzügig gewählt: legitime Bulk-User stoßen nicht an,
+# automatisierte Bursts werden gebremst.
+_rl_csv_import = make_rate_limiter(20, 3600)        # 20 CSV-Imports/h
+_rl_spotify_history = make_rate_limiter(10, 3600)   # 10 Spotify-History/h
+_rl_url_download = make_rate_limiter(60, 3600)      # 60 URL-Downloads/h
+_rl_track_download = make_rate_limiter(120, 3600)   # 120 Track-Downloads/h
 
 # Extra download attempts after the first failure (each failure waits before retrying).
 MAX_DOWNLOAD_RETRIES_CAP = 5
@@ -876,6 +886,30 @@ async def add_root_path(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Standard-Security-Header für jede Response (Audit M-2, 2026-05-12).
+
+    Vier No-Brainer-Header die nicht die UI brechen können:
+      - X-Content-Type-Options: nosniff — blockt MIME-Type-Sniffing-Attacks
+      - X-Frame-Options: DENY — blockt Clickjacking via iframe-Embedding
+      - Referrer-Policy: strict-origin-when-cross-origin — limitiert Referer-Leak
+      - Permissions-Policy — disabled Browser-APIs die Tonus nicht braucht
+    CSP bleibt bewusst weg — würde SvelteKit-inline-styles brechen und braucht
+    eigenes Tuning (eigenes Backlog-Item). HSTS macht Sinn nur HINTER TLS-Proxy
+    (Traefik) und wird vom Proxy selbst gesetzt — hier kein zweites Set.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+    )
+    return response
+
+
 @app.get("/api/metadata/providers")
 async def metadata_providers():
     """Available metadata sources and server default."""
@@ -1294,7 +1328,7 @@ async def move_queue_item(req: QueueMoveRequest, _: None = Depends(require_token
 
 
 @app.post("/api/download")
-async def download_track(request: DownloadRequest, background_tasks: BackgroundTasks, _: None = Depends(require_token)):
+async def download_track(request: DownloadRequest, background_tasks: BackgroundTasks, _: None = Depends(require_token), __: None = Depends(_rl_track_download)):
     """Start downloading a track"""
     if request.location not in ["local", "navidrome"]:
         request.location = "local"
@@ -2116,7 +2150,7 @@ def get_recommendations(request: RecommendationRequest):
 
 
 @app.post("/api/import/csv")
-async def import_csv(request: CsvImportRequest, _: None = Depends(require_token)):
+async def import_csv(request: CsvImportRequest, _: None = Depends(require_token), __: None = Depends(_rl_csv_import)):
     """
     CSV-Import (persistent): speichert Job in SQLite, Worker holt ihn ab.
     Gibt sofort eine job_id zurück — Status unter /api/import/jobs/{job_id}/status pollbar.
@@ -2316,7 +2350,7 @@ class SpotifyHistoryImportRequest(BaseModel):
 
 
 @app.post("/api/import/spotify-history")
-async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Depends(require_token)):
+async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Depends(require_token), __: None = Depends(_rl_spotify_history)):
     """Importiert eine oder mehrere Spotify-Extended-Streaming-History-JSONs.
 
     Pipeline-Integration:
@@ -2879,7 +2913,7 @@ def url_download_and_process(
 
 
 @app.post("/api/url/download")
-async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTasks, _: None = Depends(require_token)):
+async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTasks, _: None = Depends(require_token), __: None = Depends(_rl_url_download)):
     """Phase 1: Direkter Download via URL ohne Spotify/Deezer-Match.
 
     Funktioniert für YouTube, SoundCloud, Bandcamp, Vimeo … alles was yt-dlp kennt.
