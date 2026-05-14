@@ -470,6 +470,22 @@ class NavidromeService:
         
         # Create directory: <root>/Artist/Album/
         target_dir = self._library_root(library_root) / artist_name / album_name
+
+        # H-5 defense-in-depth: containment-check VOR mkdir. Die sanitize-
+        # Steps oben sollten Traversal eigentlich verhindern — der check
+        # fängt zukünftige Sanitize-Lücken oder Caller die _sanitize_path
+        # umgehen ab. relative_to raised ValueError wenn target_dir nicht
+        # innerhalb library_root liegt.
+        root_resolved = self._library_root(library_root).resolve()
+        target_resolved = target_dir.resolve()
+        try:
+            target_resolved.relative_to(root_resolved)
+        except ValueError:
+            raise ValueError(
+                f"Path-traversal blocked (Audit H-5): target {target_resolved} "
+                f"outside library root {root_resolved}"
+            )
+
         target_dir.mkdir(parents=True, exist_ok=True)
         
         # Build filename
@@ -577,22 +593,29 @@ class NavidromeService:
             return False
     
     def _sanitize_path(self, path: str) -> str:
-        """Remove invalid characters from path"""
+        """Remove invalid characters from path; block path-traversal (Audit H-5).
+
+        Strippt erst dotdot-Sequenzen und führende Dots, dann die Standard-
+        Zeichen-Blacklist. Ohne den dotdot-Fix konnte ein Track mit
+        ``album="../../etc"`` per ``root/artist/<traversed>`` außerhalb der
+        Library landen — die Blacklist entfernte zwar den Slash, aber die
+        zwei Punkte blieben, und mkdir hat sie als parent-traversal akzeptiert.
+        """
         import re
-        # Remove invalid characters
+        path = path.replace("..", "_")
+        path = path.lstrip(".")
         path = re.sub(r'[<>:"/\\|?*]', '', path)
-        # Replace multiple spaces with single space
         path = re.sub(r'\s+', ' ', path)
-        # Trim
-        return path.strip()
-    
+        result = path.strip()
+        return result or "_"
+
     def _sanitize_filename(self, filename: str) -> str:
-        """Remove invalid characters from filename"""
+        """Remove invalid characters from filename; block path-traversal (Audit H-5)."""
         import re
-        # Remove invalid characters
+        filename = filename.replace("..", "_")
+        filename = filename.lstrip(".")
         filename = re.sub(r'[<>:"/\\|?*]', '', filename)
-        # Replace multiple spaces with single space
         filename = re.sub(r'\s+', ' ', filename)
-        # Trim
-        return filename.strip()
+        result = filename.strip()
+        return result or "_"
 

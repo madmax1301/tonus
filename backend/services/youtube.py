@@ -246,12 +246,40 @@ class YouTubeService:
         return None
 
     def _add_cookies_to_opts(self, ydl_opts: Dict) -> Dict:
-        """Add cookies to yt-dlp options if configured."""
-        if self.cookies_path and os.path.exists(self.cookies_path):
-            ydl_opts['cookiefile'] = self.cookies_path
-            print(f"Using YouTube cookies from: {self.cookies_path}")
-        elif self.cookies_path:
+        """Add cookies to yt-dlp options if configured AND path-validated (Audit H-2).
+
+        Vier Validation-Stufen vor dem ``cookiefile``-Inject:
+          1. Pfad existiert
+          2. Pfad ist eine reguläre Datei (kein Symlink — sonst könnte ein
+             Symlink-in-Cookies-Dir auf ``/etc/passwd`` zeigen)
+          3. Extension ∈ {.txt, .netscape, .cookies} — yt-dlp erwartet
+             Netscape-Format, andere Files werden silently rejected
+          4. Resolved-Path liegt innerhalb von ``config.YOUTUBE_COOKIES_DIR``
+             — verhindert arbitrary-file-read über UI-konfigurierbaren Pfad
+        Bei Failure: Warning-Print + Skip (kein Throw, damit Resolver weiter
+        läuft auch wenn Cookie-File misconfiguriert ist).
+        """
+        if not self.cookies_path:
+            return ydl_opts
+        cp = Path(self.cookies_path)
+        if not cp.exists():
             print(f"Warning: Cookie file specified but not found: {self.cookies_path}")
+            return ydl_opts
+        if cp.is_symlink() or not cp.is_file():
+            print(f"Warning: Cookie path is symlink or not a regular file (H-2 reject): {self.cookies_path}")
+            return ydl_opts
+        if cp.suffix.lower() not in (".txt", ".netscape", ".cookies"):
+            print(f"Warning: Cookie file extension not in whitelist (H-2 reject): {self.cookies_path}")
+            return ydl_opts
+        try:
+            root_resolved = Path(config.YOUTUBE_COOKIES_DIR).resolve()
+            cookies_resolved = cp.resolve()
+            cookies_resolved.relative_to(root_resolved)
+        except (ValueError, OSError):
+            print(f"Warning: Cookie path outside YOUTUBE_COOKIES_DIR={config.YOUTUBE_COOKIES_DIR} (H-2 reject): {self.cookies_path}")
+            return ydl_opts
+        ydl_opts['cookiefile'] = str(cookies_resolved)
+        print(f"Using YouTube cookies from: {self.cookies_path}")
         return ydl_opts
     
     def calculate_similarity(self, str1: str, str2: str) -> float:

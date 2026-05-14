@@ -86,6 +86,16 @@ TEMP_FILE_CLEANUP_DELAY_SEC = int(os.getenv("TEMP_FILE_CLEANUP_DELAY_SEC", "60")
 # YouTube Configuration
 YOUTUBE_COOKIES_PATH = os.getenv("YOUTUBE_COOKIES_PATH", "")  # Path to YouTube cookies file (Netscape format) for yt-dlp
 
+# H-2 Audit 2026-05-12: Allowed-Root für YOUTUBE_COOKIES_PATH.
+# yt-dlp liest die Cookies-Datei direkt von Disk. Ohne Restriction konnte
+# der Operator via Settings → Verbindungen einen beliebigen Pfad eintragen
+# (z.B. /etc/passwd oder /app/data/jobs.db) — yt-dlp würde versuchen die
+# Datei als Cookies-Netscape-Format zu parsen. Kombiniert mit H-1 (Container
+# als root) wäre das ein arbitrary-file-read; H-1 ist gefixt, dies hier ist
+# defense-in-depth. Bind-Mount-Konvention: Operator legt die Cookies-Datei
+# in das App-Daten-Volume, das standardmäßig auf /app/data gemountet wird.
+YOUTUBE_COOKIES_DIR = os.getenv("YOUTUBE_COOKIES_DIR", "/app/data")
+
 # yt-dlp Anti-Detection / Rate-Limiting
 # ratelimit: Bytes/sec für jeden einzelnen Download. 1.5 MB/s ist fast nie
 #   für die User wahrnehmbar (3-min Track in 12 s) und reduziert das Profil

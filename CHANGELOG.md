@@ -10,6 +10,48 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.1] — 2026-05-12
+
+Security-Patch — closes 4 of 5 items from the **Bald-Cluster** of the
+2026-05-12 audit. **H-3** (Subsonic plaintext password) is deferred
+because it needs a live Navidrome test environment.
+
+### Security
+
+- **H-2 (High)** — yt-dlp `cookies_path` arbitrary-file-read blocked.
+  Cookie paths must now live inside `config.YOUTUBE_COOKIES_DIR`
+  (env-overridable, default `/app/data`), be regular files (no symlinks
+  followed), and have a `.txt` / `.netscape` / `.cookies` extension.
+  Configurable via *Settings → Verbindungen* but with hard guard-rails.
+- **H-5 (High)** — Path-traversal in MP3 target paths fixed.
+  `_sanitize_path` and `_sanitize_filename` now replace `..` sequences
+  and strip leading dots BEFORE the char-blacklist. Plus defense-in-depth
+  containment check via `Path.resolve().relative_to(library_root)` in
+  `get_target_path` before `mkdir`.
+- **M-1 (Medium)** — Bulk-Endpoint rate limits added: CSV-Import 20/h,
+  Spotify-History 10/h, URL-Download 60/h, Track-Download 120/h. Sliding-
+  window counter per `(client_ip, route)`, uses the H-7 trusted-proxy-aware
+  `client_ip` helper (no Reverse-Proxy collapsing onto the proxy IP).
+- **M-2 (Medium)** — Security headers middleware: `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy:
+  strict-origin-when-cross-origin`, `Permissions-Policy`. CSP intentionally
+  deferred — would break SvelteKit inline-styles without a tuning pass.
+
+### Pending
+
+- **H-3 (High)** — Subsonic plaintext password. Refactor to Subsonic
+  Token-Auth (`?u=user&s=salt&t=md5(password+salt)`) requires a live
+  Navidrome instance for verification. Tracked in the SecondBrain audit
+  doc.
+
+### New env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `YOUTUBE_COOKIES_DIR` | `/app/data` | H-2: allowed root for `YOUTUBE_COOKIES_PATH` |
+
+---
+
 ## [0.4.0] — 2026-05-12
 
 Security-Hardening-Release. Closes the entire **Sofort-Fix-Cluster** from the
