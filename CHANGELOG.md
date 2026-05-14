@@ -10,6 +10,85 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.0] — 2026-05-12
+
+Security-Hardening-Release. Closes the entire **Sofort-Fix-Cluster** from the
+2026-05-12 internal security audit (1 Critical, 2 High, 1 Medium) plus two
+latent runtime bugs that surfaced during the same review.
+
+### Security
+
+- **C-1 (Critical)** — SSRF via user-controlled `album_art` URLs blocked.
+  `services/metadata._download_album_art` now validates URLs against a
+  configurable allowlist (`config.ALBUM_ART_ALLOWED_HOSTS`, env-overridable
+  via `ALBUM_ART_ALLOWED_HOSTS`) and rejects bare IP literals plus
+  redirects to non-allowlisted hosts. Defaults cover all metadata-provider
+  CDNs (Spotify scdn.co, Deezer dzcdn.net, YouTube ytimg/ggpht, SoundCloud
+  sndcdn.com, MusicBrainz coverartarchive.org).
+- **H-1 (High)** — Container no longer runs as root. New non-login user
+  `tonus` with UID/GID 1000:1000 owns `/app`. **Operator action required
+  before upgrade**: `sudo chown -R 1000:1000 <host-path-für-docker_data/tonus>`
+  plus the Navidrome music path. See migration notes in the GitHub release.
+- **H-7 (High)** — `X-Forwarded-For` / `X-Real-IP` now only honored when
+  the direct HTTP peer is inside `config.TRUSTED_PROXIES` (env-overridable
+  via `TRUSTED_PROXIES`, default: loopback + RFC1918 private ranges). Closes
+  the IP-ban-bypass where any caller could forge their source IP via XFF
+  to escape brute-force bans or rotate ban tracking.
+- **M-6 (Medium)** — `/api/queue`, `/api/queue/lanes`, `/api/queue/stats`
+  now require authentication (`require_token`). `/api/health` keeps a
+  monitoring-friendly public surface (`{status: "healthy"}`) but only
+  exposes filesystem paths and service URLs to authenticated clients
+  via the new `optional_token` dependency.
+
+### Fixed
+
+- **`utils/worker.py`** — `NameError` on `recovery_keys` at the end of CSV
+  imports when the Recovery-Wave processed any keys. Variable was renamed
+  to `initial_recovery_keys` in Phase J (v0.3.0) but the log-aggregate
+  branch kept the old name and would crash post-completion.
+- **`services/youtube.py`** — duplicate `download_by_url` method
+  definition. Python overrode the new Phase-G (v0.2.0) multi-client
+  version with the legacy `tv_embedded`-only one (yt-dlp 2026 deprecated
+  that client). Dead Phase-G definition removed, `tv_embedded` replaced
+  by `config.YOUTUBE_PLAYER_CLIENTS` in both remaining call sites
+  (`download_by_url` + `search_and_download`).
+
+### Changed
+
+- Frontend TypeScript interfaces `CsvImport*` renamed to `Import*` to match
+  the `csv_import_*` → `import_*` schema rename from v0.3.0. Pure cosmetic
+  refactor, no runtime effect. Renamed: `CsvImportStartResponse`,
+  `CsvImportStatus`, `CsvImportResult`, `CsvMatched`, `CsvUnmatched`.
+
+### Migration notes
+
+This release contains three breaking operational changes:
+
+1. **Host bind-mounts must be chown'd to UID 1000**. If you mount a host
+   directory into `/app/data` or `/app/downloads` (typical Docker Compose
+   setup), the container can no longer write to it as root. Pre-upgrade:
+   `sudo chown -R 1000:1000 <host-path-für-docker_data/tonus>` plus the
+   Navidrome music path. Tonus will fail to start otherwise.
+2. **`/api/queue` and its sub-endpoints now require a bearer token**. If
+   external tools or monitoring scripts polled the queue API directly,
+   they need an authentication token (PAT recommended). `/api/health`
+   remains pollable without auth and still returns `200 OK`.
+3. **Reverse-proxy IPs must be in `TRUSTED_PROXIES`**. If your reverse
+   proxy sits outside the Docker bridge default (172.16.0.0/12) and your
+   LAN range (192.168.0.0/16), set `TRUSTED_PROXIES` env var to the
+   correct CIDR. Without it, all client IPs collapse onto the proxy IP
+   (brute-force bans would lock out the proxy).
+
+### Audit cross-reference
+
+Full audit tracking lives at
+`~/SecondBrain/10-Projects/Tonus/security-audit-2026-05-12.md`. Remaining
+items (Bald-Cluster: H-2 cookies_path / H-5 path-traversal / H-3 Subsonic
+auth / M-1 rate-limit / M-2 security-header) are scheduled for the next
+hardening release.
+
+---
+
 ## [Unreleased]
 
 ### Added
