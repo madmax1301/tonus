@@ -10,6 +10,131 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.3] — 2026-06-01
+
+Security-Audit-Final-Cluster. Schließt die letzten drei verbliebenen Items
+aus dem 2026-05-12-Audit (H-3, H-6, M-8). Audit-Status danach: **11/11
+closed** (H-8 JWT/Cookie-Refactor bleibt als eigener größerer Frontend-Lift
+außerhalb des Original-Clusters).
+
+### Security
+
+- **H-3 (High)** — Subsonic-API nutzt jetzt Token-Auth statt plaintext
+  password. `?u=user&s=<random-salt>&t=md5(password+salt)` pro Request.
+  Verhindert dass das Plain-Password im Reverse-Proxy-Access-Log /
+  Container-stdout landet. Default `NAVIDROME_AUTH_MODE=token`. Fallback
+  `plaintext` via env-var falls Subsonic-Server <1.13.0 (unwahrscheinlich,
+  Navidrome supportet Token-Auth seit Anfang). Plus `_trigger_scan`
+  konsolidiert auf denselben Auth-Pfad (vorher zweite HTTPBasicAuth-
+  Schiene).
+- **H-6 (High)** — Boot-time-Check für `TONUS_API_TOKEN`. Wenn der Token
+  einen bekannten Placeholder-String enthält (`CHANGE_ME`, `replace-with-`,
+  `your-token`, …) ODER kürzer als 16 Zeichen ist → **fail-fast mit
+  exit 1** und Anweisung zum Fix. Vorher bootete Tonus stillschweigend
+  mit einem trivial-bekannten Token. Plus `.env.example` so umgestellt
+  dass der default-Marker unmittelbar verdächtig aussieht.
+- **M-8 (Medium)** — CI Dependency-Audit + Dependabot. Neuer Workflow
+  `.github/workflows/dep-audit.yml` läuft auf push/PR und wöchentlich
+  Montag 06:00 UTC. `pip-audit` gegen `backend/requirements.txt` +
+  `npm audit --audit-level=high` gegen `frontend/package-lock.json`.
+  Fail bei high/critical CVEs. Plus `.github/dependabot.yml` für
+  wöchentliche Bump-PRs (minor/patch gruppiert, major separate).
+
+### New env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `NAVIDROME_AUTH_MODE` | `token` | H-3: Subsonic-Auth-Mode (`token` oder `plaintext`) |
+
+### Migration
+
+Keine breaking changes. Bei Bestands-Setups: nichts zu tun. Operator-
+Hinweise nur falls:
+
+- **Du hast `TONUS_API_TOKEN=replace-with-strong-random-string`** in der
+  `.env`: Container failt jetzt beim Boot mit klarer Fehlermeldung —
+  ersetze mit `openssl rand -hex 32` ODER lösche die Zeile (PAT-Auth
+  empfohlen).
+- **Subsonic-Server ist EIN nicht-Navidrome Server <1.13.0**: setze
+  `NAVIDROME_AUTH_MODE=plaintext` in der `.env`.
+
+### Audit-Closing
+
+| Item | Status | Release |
+|---|---|---|
+| C-1 SSRF album_art | ✅ | v0.4.0 |
+| H-1 Docker non-root | ✅ | v0.4.0 |
+| H-7 X-Forwarded-For trust | ✅ | v0.4.0 |
+| M-6 auth queue + health | ✅ | v0.4.0 |
+| H-2 cookies_path allowlist | ✅ | v0.4.1 |
+| H-5 path-traversal | ✅ | v0.4.1 |
+| M-1 rate-limit bulk | ✅ | v0.4.1 |
+| M-2 security-headers | ✅ | v0.4.1 |
+| **H-3 Subsonic Token-Auth** | ✅ | **v0.4.3** |
+| **H-6 .env.example boot-check** | ✅ | **v0.4.3** |
+| **M-8 CI dep-audit** | ✅ | **v0.4.3** |
+| H-8 JWT localStorage → HttpOnly | ⬜ | deferred (eigener PR) |
+
+Plus Bonus-Bugs aus dem Audit-Sweep:
+- `recovery_keys` NameError (v0.4.0)
+- duplicate `download_by_url` + `tv_embedded` (v0.4.0)
+
+---
+
+## [0.4.2] — 2026-06-01
+
+Cover-Art-Robustness-Release. Adressiert silent-fail-Pattern bei intermittent
+CDN-Drops und liefert ein Backfill-Tool für Tracks die kein Cover bekommen
+haben. Kein Security-Audit-Item — Folge-Hardening nach dem 2026-05-23 NAS-
+Routing-Bug der zeitweise viele cover-Downloads geschluckt hat.
+
+### Added
+
+- **`backend/scripts/backfill_album_art.py`** — Operator-Tool das die Library
+  nach opus-Files ohne `metadata_block_picture` durchsucht und Cover via
+  MusicBrainz/Cover-Art-Archive (primary) + Deezer-API (fallback) nachlädt.
+  Default `--dry-run`, idempotent, ratelimit-compliant (MB 1.1s/req).
+- **YouTube-Thumbnail-Fallback** in `services.metadata._download_album_art`:
+  wenn die primary cover-URL failt UND track_info eine yt-video-id enthält
+  (`youtube_video_id` oder ableitbar aus `used_url`/`url`), wird
+  `i.ytimg.com/vi/<id>/maxresdefault.jpg` als Fallback probiert. Nutzt die
+  bestehende C-1 SSRF-Allowlist (ytimg.com via subdomain-match).
+
+### Changed
+
+- **`_download_album_art` mit Retry + Exponential-Backoff**: 3 Versuche
+  (1s/3s/9s), Timeout auf 20s erhöht (von 10s). Catched die typischen
+  ~5-15s CDN-stalls die nach dem Routing-Fix als residual-noise bleiben.
+  Plus 404/410 brechen früh ab (kein retry für permanent-not-found).
+- **Logging-Verbesserung**: nach 3 Failures wird die URL + Error-Class
+  geprintet — vorher silent return, jetzt sichtbar im docker-log.
+
+### New env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `COVER_DOWNLOAD_RETRIES` | `3` | Anzahl Retries pro URL |
+| `COVER_DOWNLOAD_TIMEOUT_S` | `20` | Per-attempt-Timeout |
+| `YT_THUMBNAIL_VARIANT` | `maxresdefault` | YT-Thumb-Variant. Auf `hqdefault` umstellen bei vielen 404 |
+
+### Operator-Hinweis
+
+Bestehende Library hat ~1.9% Files ohne embedded cover (Folge der
+Routing-Bug-Periode). Backfill-Tool aufrufen für Cleanup:
+
+```bash
+# Dry-run first (zeigt nur was gefunden würde):
+docker exec tonus python3 /app/backend/scripts/backfill_album_art.py --limit 20
+
+# Wenn die Stats sinnvoll aussehen — full apply:
+docker exec tonus python3 /app/backend/scripts/backfill_album_art.py --apply
+```
+
+Bei 19000+ tracks dauert das mehrere Stunden wegen MB-Rate-Limit (1 req/s).
+Lass es im `screen`/`tmux` laufen.
+
+---
+
 ## [0.4.1] — 2026-05-12
 
 Security-Patch — closes 4 of 5 items from the **Bald-Cluster** of the

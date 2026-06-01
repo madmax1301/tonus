@@ -1,5 +1,7 @@
 import ipaddress
 import os
+import re
+import time
 from urllib.parse import urlparse
 
 import requests
@@ -7,10 +9,21 @@ from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, APIC, TDRC, TRCK, TCON
 from mutagen.mp3 import MP3
 from mutagen.flac import FLAC, Picture
 from mutagen.mp4 import MP4, MP4Cover
-from typing import Dict, List
+from typing import Dict, List, Optional
 from pathlib import Path
 
 import config
+
+# v0.4.2 (Audit-Follow-up): Cover-Art-Robustness.
+# Retry+Backoff parameters für _fetch_url_bytes. Diese Werte wirken
+# zusammen mit yt-dlp's Anti-Detection-Rate-Limit (Phase G) — zu
+# aggressive retries würden CDN-Limits triggern. Werte env-overridable.
+_COVER_RETRIES = int(os.getenv("COVER_DOWNLOAD_RETRIES", "3"))
+_COVER_TIMEOUT_S = int(os.getenv("COVER_DOWNLOAD_TIMEOUT_S", "20"))
+# YouTube-Thumbnail-Fallback (v0.4.2): hqdefault (480p, immer verfügbar)
+# vs maxresdefault (1280×720, fehlt bei älteren Videos). Default ist
+# maxresdefault — bei hoher 404-Rate auf 'hq' umstellen.
+_YT_THUMB_VARIANT = os.getenv("YT_THUMBNAIL_VARIANT", "maxresdefault").strip()
 
 
 def _is_allowed_album_art_url(url: str) -> bool:
@@ -105,27 +118,118 @@ class MetadataService:
             print(f"Error applying metadata: {e}")
             return False
 
-    def _download_album_art(self, url: str) -> bytes | None:
-        if not url:
+    def _fetch_url_bytes(self, url: str, max_retries: int = None, timeout: int = None) -> Optional[bytes]:
+        """Single-URL HTTP-Fetcher mit Retry+Backoff (v0.4.2, Audit-Follow-up).
+
+        Bei intermittierenden CDN-Drops (z.B. cdn-images.dzcdn.net Read-Timeouts
+        nach Routing-Bug) gehen ohne Retry alle Cover-Embeds für einen Track
+        verloren — silent fail. Mit 3 Retries + Exponential-Backoff (1s/3s/9s)
+        und Timeout=20s deckt das die ~5-15s window des typischen CDN-Stalls
+        zuverlässig ab.
+
+        Allowlist-Check (Audit C-1) wird bei jedem Retry NEU durchgeführt
+        damit ein potenzieller Redirect-Pfad nicht durch den Cache rutscht.
+        """
+        if not url or not _is_allowed_album_art_url(url):
+            if url:
+                print(f"Album art URL rejected by allowlist (Audit C-1): {url[:80]}")
             return None
-        if not _is_allowed_album_art_url(url):
-            print(f"Album art URL rejected by allowlist (Audit C-1): {url[:80]}")
+        retries = max_retries if max_retries is not None else _COVER_RETRIES
+        timeout_s = timeout if timeout is not None else _COVER_TIMEOUT_S
+        last_error = None
+        for attempt in range(retries):
+            if attempt > 0:
+                # Exponential backoff: 1s, 3s, 9s
+                time.sleep(3 ** (attempt - 1))
+            try:
+                response = requests.get(
+                    url, timeout=timeout_s,
+                    headers={'User-Agent': 'Mozilla/5.0'},
+                    allow_redirects=False,
+                )
+                if response.status_code == 200:
+                    return response.content
+                if response.status_code in (301, 302, 303, 307, 308):
+                    redirect_target = response.headers.get('Location', '')
+                    if redirect_target and _is_allowed_album_art_url(redirect_target):
+                        response = requests.get(
+                            redirect_target, timeout=timeout_s,
+                            headers={'User-Agent': 'Mozilla/5.0'},
+                            allow_redirects=False,
+                        )
+                        if response.status_code == 200:
+                            return response.content
+                # 404/410 sind permanent — retry sinnlos, früh raus.
+                if response.status_code in (404, 410):
+                    last_error = f"HTTP {response.status_code} (permanent)"
+                    break
+                last_error = f"HTTP {response.status_code}"
+            except Exception as e:
+                last_error = type(e).__name__
+        if last_error:
+            print(f"Album art fetch failed after {retries} attempts ({last_error}): {url[:80]}")
+        return None
+
+    def _youtube_thumbnail_url(self, track_info: Dict) -> Optional[str]:
+        """Baut YouTube-Thumbnail-URL aus track_info wenn möglich (v0.4.2).
+
+        Sucht nach yt-video-id in dieser Reihenfolge:
+          1. track_info['youtube_video_id']  (direkt vom Worker gesetzt)
+          2. track_info['used_url']           (Multi-Source-Resolver Outcome)
+          3. track_info['url']                (Generic URL-Download)
+
+        Returns None wenn kein video-id extrahierbar — der Caller behandelt
+        das als "kein fallback verfügbar" und akzeptiert no-cover.
+
+        i.ytimg.com ist in config.ALBUM_ART_ALLOWED_HOSTS (via subdomain-
+        match auf ytimg.com) — der Fallback-URL durchläuft denselben C-1
+        SSRF-Check wie primary URLs.
+        """
+        if not isinstance(track_info, dict):
             return None
-        try:
-            response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=False)
-            if response.status_code == 200:
-                return response.content
-            if response.status_code in (301, 302, 303, 307, 308):
-                # Folge nur Redirects deren Ziel wieder in der Allowlist liegt.
-                # Sonst könnte ein erlaubter Host auf einen internen Host
-                # weiterleiten und die Allowlist umgehen.
-                redirect_target = response.headers.get('Location', '')
-                if redirect_target and _is_allowed_album_art_url(redirect_target):
-                    response = requests.get(redirect_target, timeout=10, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=False)
-                    if response.status_code == 200:
-                        return response.content
-        except Exception as e:
-            print(f"Error downloading album art: {e}")
+        video_id = (track_info.get('youtube_video_id') or '').strip()
+        if not video_id:
+            for url_field in ('used_url', 'url'):
+                candidate = track_info.get(url_field) or ''
+                if not candidate or not isinstance(candidate, str):
+                    continue
+                match = re.search(
+                    r'(?:watch\?v=|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})',
+                    candidate,
+                )
+                if match:
+                    video_id = match.group(1)
+                    break
+        if not video_id:
+            return None
+        return f'https://i.ytimg.com/vi/{video_id}/{_YT_THUMB_VARIANT}.jpg'
+
+    def _download_album_art(self, url: str, track_info: Optional[Dict] = None) -> Optional[bytes]:
+        """Download album-art bytes mit primary-URL + YouTube-Thumb-Fallback (v0.4.2).
+
+        Reihenfolge:
+          1. Primary URL (Spotify/Deezer/MusicBrainz Cover-CDN) mit
+             retry+backoff via _fetch_url_bytes
+          2. Falls primary fail UND track_info hat yt-video-id: YouTube-
+             Thumbnail-Fallback (i.ytimg.com — in C-1 allowlist)
+          3. None — Caller embeded kein cover, file bleibt cover-less
+
+        Der track_info-Parameter ist optional damit existierende Caller die
+        nur eine URL haben (z.B. legacy reverse-download-Pfade) ohne
+        Refactor weiter funktionieren.
+        """
+        if url:
+            result = self._fetch_url_bytes(url)
+            if result is not None:
+                return result
+        if track_info:
+            yt_url = self._youtube_thumbnail_url(track_info)
+            if yt_url:
+                result = self._fetch_url_bytes(yt_url)
+                if result is not None:
+                    track_name = track_info.get('name', '?')
+                    print(f"✓ Cover fallback via YouTube-Thumbnail: {track_name}")
+                    return result
         return None
 
     def _apply_mp3_metadata(self, file_path: str, track_info: Dict) -> bool:
@@ -165,7 +269,7 @@ class MetadataService:
 
             # Add album art
             if track_info.get('album_art'):
-                art_bytes = self._download_album_art(track_info.get('album_art'))
+                art_bytes = self._download_album_art(track_info.get('album_art'), track_info)
                 if art_bytes:
                     try:
                         audio.tags.add(APIC(
@@ -203,7 +307,7 @@ class MetadataService:
                 audio['DATE'] = str(track_info['release_date'])[:4]
 
             if track_info.get('album_art'):
-                art_bytes = self._download_album_art(track_info.get('album_art'))
+                art_bytes = self._download_album_art(track_info.get('album_art'), track_info)
                 if art_bytes:
                     try:
                         picture = Picture()
@@ -260,10 +364,10 @@ class MetadataService:
                 year = str(track_info['release_date'])[:4]
                 audio['\xa9day'] = [year]
 
-            # Album art
+            # Album art (mit YouTube-Thumbnail-Fallback via track_info, v0.4.2)
             art_url = track_info.get('album_art')
-            if art_url:
-                art_bytes = self._download_album_art(art_url)
+            if art_url or track_info:
+                art_bytes = self._download_album_art(art_url, track_info)
                 if art_bytes:
                     # Mutagen uses MP4Cover with imageformat
                     cover = MP4Cover(art_bytes, imageformat=MP4Cover.FORMAT_JPEG)
@@ -306,7 +410,7 @@ class MetadataService:
 
             # Cover Art einbetten (wie FLAC: Picture-Blob)
             if track_info.get('album_art'):
-                art_bytes = self._download_album_art(track_info.get('album_art'))
+                art_bytes = self._download_album_art(track_info.get('album_art'), track_info)
                 if art_bytes:
                     try:
                         pic = Picture()

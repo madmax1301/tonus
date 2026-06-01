@@ -1,0 +1,133 @@
+# Audit-Item M-8 (2026-05-12): Dependency-Audit in CI.
+#
+# Vor v0.4.3 lief der Audit nur ad-hoc per Trivy-Scan. Jetzt automatisiert:
+# pip-audit gegen backend/requirements.txt + npm audit gegen
+# frontend/package-lock.json. Triggert auf push/PR auf dev+main und
+# woechentlich, damit upstream-CVEs die zwischen Releases entdeckt werden
+# nicht stillschweigend untergehen.
+#
+# Pinning-Strategie aus requirements.txt bleibt unveraendert - der Audit
+# meldet nur, fixt nicht. Bei kritischen Funden oeffnet Dependabot
+# automatisch einen Bump-PR (siehe .github/dependabot.yml).
+#
+# Sicherheits-Hinweis: dieser Workflow nutzt KEINE github.event.*
+# untrusted-inputs in run:-Commands - alle Logik laeuft gegen
+# checked-out repo-files und installed tools.
+name: Dependency Audit
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'backend/requirements.txt'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - '.github/workflows/dep-audit.yml'
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'backend/requirements.txt'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+  schedule:
+    # Woechentlich Montag 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: Python deps (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+      - name: Run pip-audit
+        id: audit
+        run: |
+          set +e
+          pip-audit -r backend/requirements.txt -f json -o pip-audit.json
+          AUDIT_EXIT=$?
+          set -e
+          echo "audit_exit=$AUDIT_EXIT" >> "$GITHUB_OUTPUT"
+          if [ -f pip-audit.json ]; then
+            echo "=== pip-audit findings ==="
+            cat pip-audit.json
+          fi
+      # Report-only mode (initial baseline): vulnerabilities werden geloggt
+      # und als Artifact hochgeladen, aber das CI bleibt grün. Dependabot
+      # öffnet automatisch Bump-PRs für die fixbaren Findings.
+      # Auf strict-mode (PR-Block bei high/critical) umstellen sobald die
+      # Baseline clean ist — siehe Audit-Doku.
+      - name: Report findings (non-blocking)
+        if: steps.audit.outputs.audit_exit != '0'
+        continue-on-error: true
+        run: |
+          if [ -s pip-audit.json ] && grep -q '"vulns":' pip-audit.json; then
+            VULN_COUNT=$(python3 -c "import json; d=json.load(open('pip-audit.json')); print(sum(len(p.get('vulns',[])) for p in d.get('dependencies',[])))")
+            echo "⚠ pip-audit found $VULN_COUNT vulnerability(ies) — see pip-audit-report artifact."
+            echo "  (non-blocking until baseline is clean; Dependabot opens bump PRs weekly.)"
+          else
+            echo "OK: no exploitable vulns in pip-audit"
+          fi
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  npm-audit:
+    name: Frontend deps (npm audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm ci (no scripts)
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: npm audit (high+critical only)
+        run: npm audit --audit-level=high --json > npm-audit.json || true
+      # Report-only mode (siehe pip-audit-Step für Begründung).
+      - name: Report high/critical (non-blocking)
+        continue-on-error: true
+        run: |
+          if [ ! -f npm-audit.json ]; then
+            echo "OK: no npm-audit.json produced"
+            exit 0
+          fi
+          HIGH=$(python3 -c "import json; d=json.load(open('npm-audit.json')); v=d.get('metadata',{}).get('vulnerabilities',{}); print(v.get('high',0)+v.get('critical',0))")
+          if [ "$HIGH" -gt 0 ]; then
+            echo "⚠ npm audit found $HIGH high/critical vuln(s) — see npm-audit-report artifact."
+            python3 -c "import json; d=json.load(open('npm-audit.json')); print(json.dumps(d.get('metadata',{}).get('vulnerabilities',{}), indent=2))"
+            echo "  (non-blocking until baseline is clean; Dependabot opens bump PRs weekly.)"
+          else
+            echo "OK: no high/critical vulns in npm audit"
+          fi
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: frontend/npm-audit.json
+          if-no-files-found: ignore
+          retention-days: 30

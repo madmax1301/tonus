@@ -69,6 +69,14 @@ def navidrome_libraries_public() -> List[Dict[str, Any]]:
 NAVIDROME_API_URL = os.getenv("NAVIDROME_API_URL", "http://localhost:4533")
 NAVIDROME_USERNAME = os.getenv("NAVIDROME_USERNAME", "")
 NAVIDROME_PASSWORD = os.getenv("NAVIDROME_PASSWORD", "")
+
+# H-3 Audit 2026-05-12: Subsonic-Auth-Mode.
+# Default "token" — random salt + md5(password+salt) pro Request. Verhindert
+# dass das Plain-Password im Server-Access-Log / Query-String steht. Subsonic
+# API spec >=1.13.0 (Navidrome supportet alle Versionen). Backward-Compat-
+# Fallback "plaintext" lässt das alte ?u=user&p=pwd-Pattern stehen — nur
+# nötig für Sub-Sonic-Server <1.13.0 (theoretisch, praktisch ausgestorben).
+NAVIDROME_AUTH_MODE = os.getenv("NAVIDROME_AUTH_MODE", "token").lower().strip()
 # Scan music folder periodically and match files to Deezer/Spotify — mark completed_track_downloads
 _nav_sync = os.getenv("NAVIDROME_SYNC_ENABLED", "true").lower().strip()
 NAVIDROME_SYNC_ENABLED = _nav_sync in ("1", "true", "yes", "on")
