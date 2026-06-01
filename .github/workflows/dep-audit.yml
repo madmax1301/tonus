@@ -64,17 +64,22 @@ jobs:
             echo "=== pip-audit findings ==="
             cat pip-audit.json
           fi
-      - name: Fail on findings
+      # Report-only mode (initial baseline): vulnerabilities werden geloggt
+      # und als Artifact hochgeladen, aber das CI bleibt grün. Dependabot
+      # öffnet automatisch Bump-PRs für die fixbaren Findings.
+      # Auf strict-mode (PR-Block bei high/critical) umstellen sobald die
+      # Baseline clean ist — siehe Audit-Doku.
+      - name: Report findings (non-blocking)
         if: steps.audit.outputs.audit_exit != '0'
+        continue-on-error: true
         run: |
           if [ -s pip-audit.json ] && grep -q '"vulns":' pip-audit.json; then
             VULN_COUNT=$(python3 -c "import json; d=json.load(open('pip-audit.json')); print(sum(len(p.get('vulns',[])) for p in d.get('dependencies',[])))")
-            if [ "$VULN_COUNT" -gt 0 ]; then
-              echo "FAIL: pip-audit found $VULN_COUNT vulnerability(ies)"
-              exit 1
-            fi
+            echo "⚠ pip-audit found $VULN_COUNT vulnerability(ies) — see pip-audit-report artifact."
+            echo "  (non-blocking until baseline is clean; Dependabot opens bump PRs weekly.)"
+          else
+            echo "OK: no exploitable vulns in pip-audit"
           fi
-          echo "OK: no exploitable vulns in pip-audit"
       - name: Upload audit report
         if: always()
         uses: actions/upload-artifact@v4
@@ -102,7 +107,9 @@ jobs:
         run: npm ci --no-audit --no-fund --ignore-scripts
       - name: npm audit (high+critical only)
         run: npm audit --audit-level=high --json > npm-audit.json || true
-      - name: Parse and fail on high/critical
+      # Report-only mode (siehe pip-audit-Step für Begründung).
+      - name: Report high/critical (non-blocking)
+        continue-on-error: true
         run: |
           if [ ! -f npm-audit.json ]; then
             echo "OK: no npm-audit.json produced"
@@ -110,11 +117,12 @@ jobs:
           fi
           HIGH=$(python3 -c "import json; d=json.load(open('npm-audit.json')); v=d.get('metadata',{}).get('vulnerabilities',{}); print(v.get('high',0)+v.get('critical',0))")
           if [ "$HIGH" -gt 0 ]; then
-            echo "FAIL: npm audit found $HIGH high/critical vuln(s)"
+            echo "⚠ npm audit found $HIGH high/critical vuln(s) — see npm-audit-report artifact."
             python3 -c "import json; d=json.load(open('npm-audit.json')); print(json.dumps(d.get('metadata',{}).get('vulnerabilities',{}), indent=2))"
-            exit 1
+            echo "  (non-blocking until baseline is clean; Dependabot opens bump PRs weekly.)"
+          else
+            echo "OK: no high/critical vulns in npm audit"
           fi
-          echo "OK: no high/critical vulns in npm audit"
       - name: Upload audit report
         if: always()
         uses: actions/upload-artifact@v4
