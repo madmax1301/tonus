@@ -10,6 +10,60 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.2] — 2026-06-01
+
+Cover-Art-Robustness-Release. Adressiert silent-fail-Pattern bei intermittent
+CDN-Drops und liefert ein Backfill-Tool für Tracks die kein Cover bekommen
+haben. Kein Security-Audit-Item — Folge-Hardening nach dem 2026-05-23 NAS-
+Routing-Bug der zeitweise viele cover-Downloads geschluckt hat.
+
+### Added
+
+- **`backend/scripts/backfill_album_art.py`** — Operator-Tool das die Library
+  nach opus-Files ohne `metadata_block_picture` durchsucht und Cover via
+  MusicBrainz/Cover-Art-Archive (primary) + Deezer-API (fallback) nachlädt.
+  Default `--dry-run`, idempotent, ratelimit-compliant (MB 1.1s/req).
+- **YouTube-Thumbnail-Fallback** in `services.metadata._download_album_art`:
+  wenn die primary cover-URL failt UND track_info eine yt-video-id enthält
+  (`youtube_video_id` oder ableitbar aus `used_url`/`url`), wird
+  `i.ytimg.com/vi/<id>/maxresdefault.jpg` als Fallback probiert. Nutzt die
+  bestehende C-1 SSRF-Allowlist (ytimg.com via subdomain-match).
+
+### Changed
+
+- **`_download_album_art` mit Retry + Exponential-Backoff**: 3 Versuche
+  (1s/3s/9s), Timeout auf 20s erhöht (von 10s). Catched die typischen
+  ~5-15s CDN-stalls die nach dem Routing-Fix als residual-noise bleiben.
+  Plus 404/410 brechen früh ab (kein retry für permanent-not-found).
+- **Logging-Verbesserung**: nach 3 Failures wird die URL + Error-Class
+  geprintet — vorher silent return, jetzt sichtbar im docker-log.
+
+### New env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `COVER_DOWNLOAD_RETRIES` | `3` | Anzahl Retries pro URL |
+| `COVER_DOWNLOAD_TIMEOUT_S` | `20` | Per-attempt-Timeout |
+| `YT_THUMBNAIL_VARIANT` | `maxresdefault` | YT-Thumb-Variant. Auf `hqdefault` umstellen bei vielen 404 |
+
+### Operator-Hinweis
+
+Bestehende Library hat ~1.9% Files ohne embedded cover (Folge der
+Routing-Bug-Periode). Backfill-Tool aufrufen für Cleanup:
+
+```bash
+# Dry-run first (zeigt nur was gefunden würde):
+docker exec tonus python3 /app/backend/scripts/backfill_album_art.py --limit 20
+
+# Wenn die Stats sinnvoll aussehen — full apply:
+docker exec tonus python3 /app/backend/scripts/backfill_album_art.py --apply
+```
+
+Bei 19000+ tracks dauert das mehrere Stunden wegen MB-Rate-Limit (1 req/s).
+Lass es im `screen`/`tmux` laufen.
+
+---
+
 ## [0.4.1] — 2026-05-12
 
 Security-Patch — closes 4 of 5 items from the **Bald-Cluster** of the
