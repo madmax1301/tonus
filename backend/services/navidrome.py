@@ -1,5 +1,7 @@
+import hashlib
 import os
 import re
+import secrets
 import shutil
 import threading
 import time
@@ -91,15 +93,37 @@ class NavidromeService:
     # Subsonic-API-Helfer (Phase B Vorbereitung)
     # ---------------------------------------------------------------
 
+    def _subsonic_auth_params(self) -> Dict[str, str]:
+        """Subsonic-Auth-Query-Params (Audit H-3, 2026-05-12 / impl v0.4.3).
+
+        Default mode 'token' (Subsonic API spec >=1.13.0): random salt + token
+        = md5(password + salt) statt Password-im-Query. Verhindert Plain-
+        Password-Leak in Reverse-Proxy-Access-Logs und Container-stdout.
+
+        MD5 wird hier NICHT für Security-Strength benutzt — das ist die
+        Subsonic-API-Konvention. Schutz vor Replay liegt im Random-Salt
+        pro Request (16 hex chars = 64 bits entropy).
+
+        Fallback mode 'plaintext' setzt zurück auf das alte ?u=user&p=pwd-
+        Pattern. Nur nötig für Subsonic-Server <1.13.0; Navidrome supportet
+        Token-Auth von Anfang an. Per env NAVIDROME_AUTH_MODE konfigurierbar.
+        """
+        if config.NAVIDROME_AUTH_MODE == "plaintext":
+            return {"u": self.username, "p": self.password}
+        salt = secrets.token_hex(8)
+        token = hashlib.md5(
+            (self.password + salt).encode("utf-8")
+        ).hexdigest()
+        return {"u": self.username, "s": salt, "t": token}
+
     def _subsonic_params(self, **extra: Any) -> Dict[str, Any]:
         """Baut die Pflicht-Query-Parameter für jeden Subsonic-Endpoint."""
-        base = {
-            "u": self.username,
-            "p": self.password,
+        base: Dict[str, Any] = dict(self._subsonic_auth_params())
+        base.update({
             "v": SUBSONIC_API_VERSION,
             "c": SUBSONIC_CLIENT,
             "f": "json",
-        }
+        })
         base.update({k: v for k, v in extra.items() if v is not None})
         return base
 
@@ -565,29 +589,18 @@ class NavidromeService:
             }
     
     def _trigger_scan(self) -> bool:
-        """Trigger Navidrome library scan via Subsonic API"""
+        """Trigger Navidrome library scan via Subsonic API.
+
+        Nutzt seit v0.4.3 ``_subsonic_params()`` mit Token-Auth (Audit H-3)
+        statt der zweiten HTTPBasicAuth-Schiene. Ein Auth-Pfad reicht.
+        """
         if not self.api_url or not self.username or not self.password:
             print("Navidrome API credentials not configured, skipping scan trigger")
             return False
-        
         try:
-            # Subsonic API endpoint for starting scan
-            # Note: This requires admin credentials
-            import requests.auth
-            
-            auth = requests.auth.HTTPBasicAuth(self.username, self.password)
             url = f"{self.api_url}/rest/startScan.view"
-            params = {
-                'u': self.username,
-                'p': self.password,
-                'v': '1.16.1',
-                'c': SUBSONIC_CLIENT,
-                'f': 'json'
-            }
-            
-            response = requests.get(url, params=params, auth=auth, timeout=10)
+            response = requests.get(url, params=self._subsonic_params(), timeout=10)
             return response.status_code == 200
-        
         except Exception as e:
             print(f"Error triggering Navidrome scan: {e}")
             return False

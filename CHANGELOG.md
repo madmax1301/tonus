@@ -10,6 +10,77 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.3] — 2026-06-01
+
+Security-Audit-Final-Cluster. Schließt die letzten drei verbliebenen Items
+aus dem 2026-05-12-Audit (H-3, H-6, M-8). Audit-Status danach: **11/11
+closed** (H-8 JWT/Cookie-Refactor bleibt als eigener größerer Frontend-Lift
+außerhalb des Original-Clusters).
+
+### Security
+
+- **H-3 (High)** — Subsonic-API nutzt jetzt Token-Auth statt plaintext
+  password. `?u=user&s=<random-salt>&t=md5(password+salt)` pro Request.
+  Verhindert dass das Plain-Password im Reverse-Proxy-Access-Log /
+  Container-stdout landet. Default `NAVIDROME_AUTH_MODE=token`. Fallback
+  `plaintext` via env-var falls Subsonic-Server <1.13.0 (unwahrscheinlich,
+  Navidrome supportet Token-Auth seit Anfang). Plus `_trigger_scan`
+  konsolidiert auf denselben Auth-Pfad (vorher zweite HTTPBasicAuth-
+  Schiene).
+- **H-6 (High)** — Boot-time-Check für `TONUS_API_TOKEN`. Wenn der Token
+  einen bekannten Placeholder-String enthält (`CHANGE_ME`, `replace-with-`,
+  `your-token`, …) ODER kürzer als 16 Zeichen ist → **fail-fast mit
+  exit 1** und Anweisung zum Fix. Vorher bootete Tonus stillschweigend
+  mit einem trivial-bekannten Token. Plus `.env.example` so umgestellt
+  dass der default-Marker unmittelbar verdächtig aussieht.
+- **M-8 (Medium)** — CI Dependency-Audit + Dependabot. Neuer Workflow
+  `.github/workflows/dep-audit.yml` läuft auf push/PR und wöchentlich
+  Montag 06:00 UTC. `pip-audit` gegen `backend/requirements.txt` +
+  `npm audit --audit-level=high` gegen `frontend/package-lock.json`.
+  Fail bei high/critical CVEs. Plus `.github/dependabot.yml` für
+  wöchentliche Bump-PRs (minor/patch gruppiert, major separate).
+
+### New env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `NAVIDROME_AUTH_MODE` | `token` | H-3: Subsonic-Auth-Mode (`token` oder `plaintext`) |
+
+### Migration
+
+Keine breaking changes. Bei Bestands-Setups: nichts zu tun. Operator-
+Hinweise nur falls:
+
+- **Du hast `TONUS_API_TOKEN=replace-with-strong-random-string`** in der
+  `.env`: Container failt jetzt beim Boot mit klarer Fehlermeldung —
+  ersetze mit `openssl rand -hex 32` ODER lösche die Zeile (PAT-Auth
+  empfohlen).
+- **Subsonic-Server ist EIN nicht-Navidrome Server <1.13.0**: setze
+  `NAVIDROME_AUTH_MODE=plaintext` in der `.env`.
+
+### Audit-Closing
+
+| Item | Status | Release |
+|---|---|---|
+| C-1 SSRF album_art | ✅ | v0.4.0 |
+| H-1 Docker non-root | ✅ | v0.4.0 |
+| H-7 X-Forwarded-For trust | ✅ | v0.4.0 |
+| M-6 auth queue + health | ✅ | v0.4.0 |
+| H-2 cookies_path allowlist | ✅ | v0.4.1 |
+| H-5 path-traversal | ✅ | v0.4.1 |
+| M-1 rate-limit bulk | ✅ | v0.4.1 |
+| M-2 security-headers | ✅ | v0.4.1 |
+| **H-3 Subsonic Token-Auth** | ✅ | **v0.4.3** |
+| **H-6 .env.example boot-check** | ✅ | **v0.4.3** |
+| **M-8 CI dep-audit** | ✅ | **v0.4.3** |
+| H-8 JWT localStorage → HttpOnly | ⬜ | deferred (eigener PR) |
+
+Plus Bonus-Bugs aus dem Audit-Sweep:
+- `recovery_keys` NameError (v0.4.0)
+- duplicate `download_by_url` + `tv_embedded` (v0.4.0)
+
+---
+
 ## [0.4.2] — 2026-06-01
 
 Cover-Art-Robustness-Release. Adressiert silent-fail-Pattern bei intermittent

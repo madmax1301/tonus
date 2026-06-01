@@ -255,17 +255,73 @@ if _csv_stale.get("jobs_reset") or _csv_stale.get("rows_purged"):
 
 # ───────────────────────────────────────────────────────────────────
 # F.5: Legacy-Token-Migration — Deprecation-Warning beim Boot
+# H-6 Audit (2026-05-12): Default-/Placeholder-Token-Check beim Boot
 # ───────────────────────────────────────────────────────────────────
+# Known placeholder strings die der Operator vergessen haben könnte
+# umzustellen. Wenn TONUS_API_TOKEN einen davon enthält oder zu kurz
+# ist, refuse-to-boot (statt silent als legitimer auth-Mode laufen).
+_TOKEN_PLACEHOLDER_MARKERS = (
+    "change_me",
+    "changeme",
+    "replace-with",
+    "replace_with",
+    "please_set",
+    "your-token",
+    "your_token",
+    "default-token",
+    "default_token",
+    "xxxxxxxx",
+    "todo",
+    "fixme",
+)
+# H-6: Plus minimum entropy requirement. 16 Zeichen ist eine niedrige
+# Schwelle die ein zufälliges Hex-32 sauber überschreitet aber typische
+# Tippfehler-Werte ("admin", "test123") abfängt.
+_TOKEN_MIN_LEN = 16
+
+
 def _legacy_token_deprecation_notice() -> None:
-    """Erinnert den Operator beim Container-Boot, dass TONUS_API_TOKEN
-    deprecated ist und nach Plugin-Migration auf PATs entfernt werden soll.
+    """Boot-time-Check für TONUS_API_TOKEN: deprecation + placeholder-guard.
+
+    Drei separate Conditions:
+      1. Token leer/nicht gesetzt → nichts zu tun, return.
+      2. Token sieht aus wie ein Placeholder ("CHANGE_ME", "replace-with-…")
+         ODER ist kürzer als ``_TOKEN_MIN_LEN`` → **refuse-to-boot** mit
+         klarer Fehlermeldung (Audit H-6, 2026-05-12). Operator muss
+         entweder einen starken random-Wert eintragen ODER die Zeile aus
+         der ``.env`` entfernen.
+      3. Token ist OK aber gesetzt → Deprecation-Warning damit der
+         Operator zur PAT-Migration angestoßen wird (Phase F.5).
 
     KEIN Auto-User-Create mehr — der erste Admin wird über das Onboarding
-    in der UI angelegt (existing /api/auth/setup-Wizard). Das auth.py-
-    Setup-Gate öffnet auch wenn Legacy-Token gesetzt ist, solange noch
-    kein User in der DB existiert."""
-    if not config.TONUS_API_TOKEN:
+    in der UI angelegt (``/api/auth/setup``-Wizard). Das auth.py-Setup-Gate
+    öffnet auch wenn Legacy-Token gesetzt ist, solange noch kein User in
+    der DB existiert.
+    """
+    token = config.TONUS_API_TOKEN
+    if not token:
         return
+
+    token_lower = token.lower()
+    looks_placeholder = any(m in token_lower for m in _TOKEN_PLACEHOLDER_MARKERS)
+    too_short = len(token) < _TOKEN_MIN_LEN
+
+    if looks_placeholder or too_short:
+        print("=" * 64, flush=True)
+        print("✗  TONUS_API_TOKEN FAILED HEALTH-CHECK (Audit H-6)", flush=True)
+        if looks_placeholder:
+            print(f"   Token looks like an un-substituted placeholder:", flush=True)
+            print(f"     {token[:32]}{'…' if len(token) > 32 else ''}", flush=True)
+        if too_short:
+            print(f"   Token is too short ({len(token)} chars, min {_TOKEN_MIN_LEN}).", flush=True)
+        print("", flush=True)
+        print("   Fix one of:", flush=True)
+        print("     • Generate a real random value:  openssl rand -hex 32", flush=True)
+        print("     • Or remove the TONUS_API_TOKEN line from .env entirely.", flush=True)
+        print("=" * 64, flush=True)
+        # Fail-fast statt mit unsicherer Auth-Config booten.
+        raise SystemExit(1)
+
     print("=" * 64, flush=True)
     print("⚠  TONUS_API_TOKEN is DEPRECATED.", flush=True)
     print("   Migrate the Navidrome plugin to a PAT (Settings → API tokens),", flush=True)

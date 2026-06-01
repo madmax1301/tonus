@@ -1,0 +1,60 @@
+# Dependabot config (Audit-Follow-up M-8, 2026-05-12).
+#
+# Komplementaer zu .github/workflows/dep-audit.yml: dep-audit MELDET,
+# Dependabot oeffnet automatisch Bump-PRs. Beide zusammen schliessen
+# den loop: CVE wird gemeldet (audit) + fix-PR materializes (dependabot).
+#
+# Wir gruppieren minor+patch in einer PR pro Ecosystem damit es nicht
+# 30 individuelle PRs pro Woche werden. Major-Bumps bleiben separat
+# weil die meist breaking changes haben.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 5
+    target-branch: dev
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: deps(py)
+    groups:
+      python-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 5
+    target-branch: dev
+    labels:
+      - dependencies
+      - javascript
+    commit-message:
+      prefix: deps(js)
+    groups:
+      js-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    target-branch: dev
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: deps(ci)
