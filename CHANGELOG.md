@@ -10,6 +10,33 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.7] — 2026-06-07
+
+curl-cffi-Pin-Auflösung. Schließt die Diagnose-Kette aus v0.4.6 ab.
+
+### Changed
+
+- **curl-cffi** `>=0.10,<0.15` → `>=0.15,<0.16`. yt-dlp ≥2026.x supportet
+  curl-cffi bis <0.16 und pinnt selbst 0.15.0 — das alte Tonus-Pin <0.15
+  (aus der yt-dlp-2024er-Bridge-Ära) war obsolet. Floor auf 0.15 wegen
+  CVE-2026-33752 (betrifft 0.14.x).
+- Damit lösen sich **drei Workarounds gleichzeitig auf**:
+  1. `--ignore-vuln CVE-2026-33752` aus dep-audit.yml entfernt —
+     pip-audit-Baseline ist jetzt wirklich clean (keine ignores)
+  2. Dependabot-ignore von `>=0.15` auf `>=0.16` verschoben (echte
+     Upstream-Grenze statt Workaround-Grenze)
+  3. requirements-Kommentar dokumentiert jetzt die yt-dlp-Range-Kopplung
+     statt der alten Bridge-Inkompatibilität
+
+### Operator Notes
+
+- Kein .env-Diff. Image-Rebuild zieht curl-cffi 0.15.x automatisch.
+- Nach Deploy: Boot-Log checken — `WARN: Impersonate-Probe` darf NICHT
+  auftauchen (wäre Indiz dass die 0.15-Bridge doch klemmt; dann Issue
+  aufmachen und Pin temporär zurück auf `>=0.10,<0.15` + ignore-vuln).
+
+---
+
 ## [0.4.6] — 2026-06-07
 
 Hotfix für eine Regression aus dem v0.4.4-yt-dlp-Bump, gefunden beim

@@ -28,11 +28,11 @@ updates:
           - minor
           - patch
     ignore:
-      # curl-cffi >=0.15 bricht yt-dlp's Networking-Bridge (internes API
-      # entfernt). Pin auf <0.15 ist absichtlich — siehe requirements.txt.
-      # Wenn yt-dlp die Bridge-Inkompatibilitaet aufloest, manuell loosenen.
+      # curl-cffi >=0.16 liegt ausserhalb von yt-dlp's supported range
+      # (yt_dlp/networking/_curlcffi.py). Floor 0.15 ist in
+      # requirements.txt gesetzt; bei yt-dlp-Bumps range gegenchecken.
       - dependency-name: curl-cffi
-        versions: ['>=0.15']
+        versions: ['>=0.16']
 
   - package-ecosystem: npm
     directory: /frontend
