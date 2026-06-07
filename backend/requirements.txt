@@ -34,4 +34,4 @@ PyJWT==2.13.0
 # cryptography 42.0.5 → 46.0.5: CVE-2026-26007 (subgroup-attack),
 # CVE-2024-12797 (OpenSSL RFC7250), CVE-2026-34073 (security bypass),
 # bundled-OpenSSL vulns (GHSA-h4gh-qq45-vh27)
-cryptography==46.0.5
+cryptography==48.0.0
