@@ -28,11 +28,11 @@ updates:
           - minor
           - patch
     ignore:
-      # curl-cffi >=0.16 liegt ausserhalb von yt-dlp's supported range
-      # (yt_dlp/networking/_curlcffi.py). Floor 0.15 ist in
-      # requirements.txt gesetzt; bei yt-dlp-Bumps range gegenchecken.
+      # curl-cffi >=0.15 liegt ausserhalb von yt-dlp's RELEASE-Range
+      # (2026.03.17 erlaubt nur 0.10.x-0.14.x). master erlaubt schon
+      # <0.16 — bei neuem yt-dlp-Release Grenze auf >=0.16 verschieben.
       - dependency-name: curl-cffi
-        versions: ['>=0.16']
+        versions: ['>=0.15']
 
   - package-ecosystem: npm
     directory: /frontend

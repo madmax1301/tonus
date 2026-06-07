@@ -10,6 +10,42 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.8] — 2026-06-07
+
+Revert von v0.4.7. Deploy-Smoke zeigte: die curl-cffi-0.15-Bridge lädt
+mit dem aktuellen yt-dlp-Release nicht.
+
+### Fixed
+
+- **curl-cffi zurück auf `>=0.10,<0.15`** — der v0.4.7-Bump auf 0.15
+  basierte fälschlich auf yt-dlp-**master**-Stand (`<0.16` erlaubt).
+  Das aktuellste yt-dlp-**Release** 2026.03.17 erlaubt aber nur
+  `0.5.10 + 0.10.x–0.14.x` (`yt_dlp/networking/_curlcffi.py` raised
+  ImportError bei 0.15). Folge auf dem NAS:
+  `Impersonate target "chrome" is not available` → Impersonation wieder
+  silent-disabled.
+- dep-audit `--ignore-vuln CVE-2026-33752` wieder rein (dokumentiert
+  mit Revert-Begründung)
+- Dependabot-ignore zurück auf `>=0.15`
+
+### Lessons
+
+- **master ≠ latest release.** Supported-Ranges immer gegen den
+  installierten/installierbaren Release-Tag checken
+  (`raw.githubusercontent.com/yt-dlp/yt-dlp/<TAG>/...`), nicht gegen
+  master.
+- Der v0.4.6-Fix (ImpersonateTarget-Objekt) bleibt korrekt — die
+  WARN-Message hat sich von `AssertionError` zu `Impersonate target not
+  available` geändert, was die Bridge-Diagnose erst möglich machte.
+
+### Follow-up
+
+- Sobald yt-dlp **>2026.03.17** released ist (master-Range <0.16 landet
+  im Release): v0.4.7-Bump wiederholen. Tracking: Boot-Log-WARN
+  verschwindet dann mit curl-cffi 0.15.
+
+---
+
 ## [0.4.7] — 2026-06-07
 
 curl-cffi-Pin-Auflösung. Schließt die Diagnose-Kette aus v0.4.6 ab.
