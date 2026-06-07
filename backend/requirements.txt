@@ -17,13 +17,14 @@ ytmusicapi==1.12.0
 yt-dlp-get-pot-rustypipe==0.2.0
 # curl-cffi: aktiviert yt-dlp's impersonate-Option (TLS-Handshake-Spoofing
 # via libcurl-impersonate) für robustere Anti-Bot-Detection.
-# Pinning an yt-dlp's supported range koppeln: yt-dlp (≥2026.x) erlaubt
-# "curl-cffi>=0.5.10,!=0.6.*,...,<0.16" und pinnt selbst 0.15.0
-# (pyproject.toml [pin-curl-cffi]). Floor auf 0.15 wegen CVE-2026-33752
-# (betrifft 0.14.x). Bei yt-dlp-Major-Bumps die supported-range in
-# yt_dlp/networking/_curlcffi.py gegenchecken — eine Version außerhalb
-# der Range lädt die Bridge nicht ("Impersonate target ... not available").
-curl-cffi>=0.15,<0.16
+# Pinning an yt-dlp's RELEASE-supported-range koppeln (nicht master!):
+# yt-dlp 2026.03.17 (aktuellstes Release) erlaubt nur 0.5.10 + 0.10.x–0.14.x
+# (yt_dlp/networking/_curlcffi.py: "< (0, 15)"). master erlaubt schon <0.16
+# — sobald das nächste yt-dlp-Release (>2026.03.17) raus ist, auf
+# >=0.15,<0.16 bumpen (löst CVE-2026-33752-ignore auf, siehe v0.4.7/v0.4.8-
+# CHANGELOG für die Lessons). Eine Version außerhalb der Range lädt die
+# Bridge nicht: "Impersonate target ... is not available".
+curl-cffi>=0.10,<0.15
 # ─── Auth (Phase F) ──────────────────────────
 argon2-cffi==25.1.0
 pyotp==2.9.0

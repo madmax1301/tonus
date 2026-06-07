@@ -60,12 +60,16 @@ jobs:
           pip install pip-audit
       - name: Run pip-audit
         id: audit
-        # --ignore-vuln Liste: aktuell leer (CVE-2026-33752 wurde durch den
-        # curl-cffi-Bump auf >=0.15 in v0.4.7 aufgelöst). Bei künftigen
-        # Einträgen: warum nicht bumpbar + Begründung dokumentieren.
+        # --ignore-vuln Liste:
+        #   CVE-2026-33752 - curl-cffi 0.14.x: yt-dlp's RELEASE-Range
+        #     (2026.03.17) erlaubt nur <0.15 — der v0.4.7-Bump auf 0.15
+        #     basierte fälschlich auf master-Stand und wurde in v0.4.8
+        #     revertiert. Sobald yt-dlp >2026.03.17 released: Bump
+        #     wiederholen + diesen Eintrag entfernen.
         run: |
           set +e
-          pip-audit -r backend/requirements.txt -f json -o pip-audit.json
+          pip-audit -r backend/requirements.txt -f json -o pip-audit.json \
+            --ignore-vuln CVE-2026-33752
           AUDIT_EXIT=$?
           set -e
           echo "audit_exit=$AUDIT_EXIT" >> "$GITHUB_OUTPUT"
