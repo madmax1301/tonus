@@ -23,7 +23,7 @@ yt-dlp-get-pot-rustypipe==0.2.0
 # registriert, und yt-dlp meldet "Impersonate target 'chrome' is not
 # available" beim ersten Download. Quelle:
 # yt_dlp/networking/_curlcffi.py:1 ("Only curl_cffi versions ... supported")
-curl-cffi>=0.10,<0.15
+curl-cffi>=0.14.0,<0.15
 # ─── Auth (Phase F) ──────────────────────────
 argon2-cffi==25.1.0
 pyotp==2.9.0
