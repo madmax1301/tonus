@@ -10,6 +10,52 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.5] — 2026-06-07
+
+Resolver- und Worker-Robustheit. Zwei Operator-Pain-Points aus dem v0.4.4-
+Backlog adressiert.
+
+### Fixed
+
+- **Bot-Check Re-Queue (#51)** — yt-dlp's "Sign in to confirm you're not a
+  bot"-Error landete bisher als permanenter `error` in der Queue. Jetzt
+  erkennt der Worker das Pattern und re-queued den Job mit
+  `retry_count++` und langem Lane-Cooldown (10–20 min, IP-Wechsel-
+  Window). Cap bei `BOT_CHECK_MAX_RETRIES` (default 5) — danach
+  permanent mit Operator-Hinweis (Cookies setzen / VPN wechseln).
+  Im dual-lane-Setup landet das re-queued Job typischerweise auf der
+  anderen VPN-IP, was bot-check oft auto-fixt.
+  - Neue Spalte `download_jobs.retry_count` (auto-Migration via
+    `_ensure_column`)
+  - Neue Helper `_looks_like_bot_check()` neben dem bestehenden
+    `_looks_like_429()`
+  - Neue Function `requeue_for_retry()` in `utils/job_store.py`
+- **Search mit Brackets/Sonderzeichen (#52)** — Tracks wie
+  `"Bitches [Mix Cut] (Original Mix)"` lieferten 0 Treffer auf YouTube +
+  SoundCloud weil die Bracket-Tokens als hartes Match-Constraint
+  interpretiert wurden. Neuer Helper `strip_search_decorations()`
+  entfernt `[…]`- und `(…)`-Inhalte für den Search-Fetch. Original-
+  `track_name` bleibt für `calculate_match_score()` unverändert, damit
+  die Score-Diskriminierung gegen Result-Titles weiterhin scharf ist.
+  - Eingesetzt in 3 Query-Build-Sites: YTMusic-Search, yt-dlp-ytsearch-
+    Fallback, MultiSourceResolver-SoundCloud-Pfad
+
+### Operator Notes
+
+- Neue env-vars (optional):
+  - `BOT_CHECK_MAX_RETRIES` (default `5`) — Cap für transient retry
+- Keine .env-Migration nötig, Defaults sind gewählt für die Mehrheit der
+  Setups
+- Schema-Migration läuft beim ersten Boot automatisch (idempotent)
+
+### Deferred → eigene PRs
+
+- **lucide-svelte 1.0 + vite-plugin-svelte 7.x** — siehe v0.4.4 Notes,
+  bleiben für eigenen Frontend-Migration-Sprint
+- **15 file-ACL-Errors auf NAS** — Operator-Task außerhalb des Code-Scope
+
+---
+
 ## [0.4.4] — 2026-06-07
 
 Dependency-Bump-Sweep. Erste planmäßige Cleanup-Welle nach Aktivierung
