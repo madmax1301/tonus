@@ -1,7 +1,14 @@
 # syntax=docker/dockerfile:1.6
 
 # ── Stage 1: Frontend-Build ────────────────────────────────────────
-FROM node:20-alpine AS fe
+# --platform=$BUILDPLATFORM pinnt den FE-Build auf die NATIVE Builder-Arch
+# (amd64 auf GitHub-Runner), egal für welche TARGETPLATFORM gebaut wird.
+# Output (/fe/build) ist statisch (adapter-static, HTML/JS/CSS) und damit
+# arch-unabhängig — wird unten in beide Runtime-Images kopiert.
+# KRITISCH seit vite 8 (v0.4.10): vite nutzt rolldown (Rust-Bundler), dessen
+# natives Binary unter QEMU-arm64-Emulation hängt → multi-arch-Build lief
+# >25min ohne Ende. Mit BUILDPLATFORM läuft der FE-Build nie mehr emuliert.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS fe
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --no-audit --no-fund
