@@ -692,7 +692,7 @@ class YouTubeService:
         # Multi-Source-Resolver-Pfad: pre-search auf allen aktivierten Quellen
         # parallel, ranked candidates, iteriere bis success.
         # Lazy import um circular dependency mit multi_source.py zu vermeiden.
-        from services.multi_source import MultiSourceResolver, normalize_corrupt_track_name, album_suffix_for_query
+        from services.multi_source import MultiSourceResolver, normalize_corrupt_track_name
 
         # Normalisierung VOR allem track_name-Use — sonst läuft der Legacy-
         # ytsearch1-Fallback (unten) noch mit dem Original-"Unknown" und
@@ -761,15 +761,15 @@ class YouTubeService:
         print(f"WARN: resolver found no candidate above min_score={config.MULTI_SOURCE_MIN_SCORE} — fallback to legacy ytsearch1")
 
         # Fallback to original yt-dlp search and download logic if no high-confidence candidate found
-        # Create more specific search query to get better matches
-        # Include album name if available — aber nicht doppelt wenn der
-        # track_name bereits via normalize_corrupt_track_name() === album ist
-        # (Beispiel CIIMERA/HAMBURG BALLERT ANDERS, sonst 0-Item-Result).
-        album_part = album_suffix_for_query(track_name, track_info)
-        if album_part:
-            query = f"{artist} {track_name}{album_part} official"
-        else:
-            query = f"{artist} {track_name} official audio"
+        # KEIN Album-Suffix mehr (v0.4.9): Der Resolver hat in seinen 2 Pässen
+        # YouTube bereits mit UND ohne Album befragt. Wenn wir hier landen,
+        # haben beide nichts über min_score geliefert — die Legacy-Query soll
+        # maximal breit sein. Album-Suffix verursachte 0-Item-Results bei
+        # Compilation-Namen ("JUNIVERZ The Screech HAMBURG BALLERT ANDERS
+        # official" → 0 items, Burn-in 2026-06-07). Brackets ebenfalls
+        # strippen (#52-Pfad).
+        from services.multi_source import strip_search_decorations
+        query = f"{artist} {strip_search_decorations(track_name)} official audio"
         
         # Convert to absolute path to avoid filesystem issues
         output_path = os.path.abspath(output_path)

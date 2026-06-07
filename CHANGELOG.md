@@ -10,6 +10,36 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.9] — 2026-06-07
+
+Resolver-Fix für Compilation-Alben. Konkretes Failing-Beispiel aus
+Production: "The Screech" von JUNIVERZ (Album "HAMBURG BALLERT ANDERS").
+
+### Fixed
+
+- **Album-Suffix killt Suche bei Compilation-Namen** — `album_suffix_for_query()`
+  hängt den Album-Namen an die Such-Query für mehr Spezifität. Bei
+  Compilation-Alben deren Name nichts mit dem Track zu tun hat
+  (`"JUNIVERZ The Screech HAMBURG BALLERT ANDERS official"`) liefert
+  YouTube 0 Treffer — obwohl `"JUNIVERZ The Screech"` den Track als
+  Top-Hit findet.
+  - **Resolver fährt jetzt 2 Pässe**: Pass 1 mit Album-Suffix (Spezifität
+    bei generischen Track-Namen bleibt erhalten), Pass 2 ohne Album wenn
+    Pass 1 leer ausgeht. `duration_ms` etc. bleiben im Retry erhalten
+    (Duration-Filter funktioniert weiter).
+  - **Legacy-ytsearch1-Fallback ohne Album-Suffix** — wenn er erreicht
+    wird, haben beide Resolver-Pässe YouTube schon mit und ohne Album
+    befragt; die Query soll maximal breit sein. Plus Brackets-Strip
+    (#52-Pfad) auch hier.
+
+### Operator Notes
+
+- Kein .env-Diff, keine Schema-Änderung.
+- Log zeigt den Retry explizit:
+  `INFO: no candidates with album-suffix query (album='…') — retrying without album`
+
+---
+
 ## [0.4.8] — 2026-06-07
 
 Revert von v0.4.7. Deploy-Smoke zeigte: die curl-cffi-0.15-Bridge lädt
