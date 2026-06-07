@@ -29,6 +29,12 @@ Dependabot-PRs (#23, #25) plus den damit gekoppelten vite-Major (#36).
   **rolldown** als Bundler statt rollup/esbuild → package-lock ~836
   Zeilen kleiner. SvelteKit 2.61 + svelte 5.56 sind kompatibel, keine
   vite.config-Änderung nötig.
+- **Dockerfile**: Frontend-Build-Stage auf `--platform=$BUILDPLATFORM`
+  gepinnt. rolldowns natives Rust-Binary hängt unter QEMU-arm64-
+  Emulation → der erste multi-arch-Build mit vite 8 lief >25min ohne
+  Ende. Der FE-Build läuft jetzt nativ auf der Builder-Arch; das
+  statische Output wird arch-unabhängig in beide Runtime-Images kopiert.
+  Build danach wieder ~2min.
 
 ### Verifiziert
 
