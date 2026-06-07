@@ -23,6 +23,6 @@
   },
   "dependencies": {
     "bits-ui": "^2.18.1",
-    "lucide-svelte": "^0.453.0"
+    "lucide-svelte": "^1.0.1"
   }
 }
