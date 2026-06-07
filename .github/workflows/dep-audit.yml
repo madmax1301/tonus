@@ -60,9 +60,15 @@ jobs:
           pip install pip-audit
       - name: Run pip-audit
         id: audit
+        # --ignore-vuln Liste:
+        #   CVE-2026-33752 - curl-cffi 0.14.x: yt-dlp's _curlcffi-Bridge
+        #     pinnt uns auf <0.15 (Bridge nutzt internes API das in 0.15+
+        #     entfernt wurde). Bei jedem Eintrag hier: warum nicht bumpbar +
+        #     wer review-pflicht. Wenn yt-dlp die Bridge auflöst, entfernen.
         run: |
           set +e
-          pip-audit -r backend/requirements.txt -f json -o pip-audit.json
+          pip-audit -r backend/requirements.txt -f json -o pip-audit.json \
+            --ignore-vuln CVE-2026-33752
           AUDIT_EXIT=$?
           set -e
           echo "audit_exit=$AUDIT_EXIT" >> "$GITHUB_OUTPUT"
