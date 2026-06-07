@@ -484,8 +484,11 @@ class YouTubeService:
         # Try YTMusic first
         if self.ytmusic:
             try:
-                from services.multi_source import album_suffix_for_query
-                search_query = f"{artist} {track_name}{album_suffix_for_query(track_name, track_info)}"
+                from services.multi_source import album_suffix_for_query, strip_search_decorations
+                # Stripped Title für die Such-Query (Brackets killen Trefferlisten).
+                # Original track_name bleibt für calculate_match_score erhalten.
+                search_track_name = strip_search_decorations(track_name)
+                search_query = f"{artist} {search_track_name}{album_suffix_for_query(search_track_name, track_info)}"
 
                 results = self.ytmusic.search(search_query, filter="songs", limit=num_results)
 
@@ -539,12 +542,14 @@ class YouTubeService:
 
         # Fallback to yt-dlp if no candidates found or YTMusic failed
         if not candidates:
-            from services.multi_source import album_suffix_for_query
-            album_part = album_suffix_for_query(track_name, track_info)
+            from services.multi_source import album_suffix_for_query, strip_search_decorations
+            # Stripped Title fürs Search-Query — siehe YTMusic-Branch oben.
+            search_track_name = strip_search_decorations(track_name)
+            album_part = album_suffix_for_query(search_track_name, track_info)
             if album_part:
-                query = f"{artist} {track_name}{album_part} official"
+                query = f"{artist} {search_track_name}{album_part} official"
             else:
-                query = f"{artist} {track_name} official audio"
+                query = f"{artist} {search_track_name} official audio"
 
             ydl_opts = {
                 'quiet': True,
