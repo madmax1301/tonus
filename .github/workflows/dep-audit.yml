@@ -10,6 +10,12 @@
 # meldet nur, fixt nicht. Bei kritischen Funden oeffnet Dependabot
 # automatisch einen Bump-PR (siehe .github/dependabot.yml).
 #
+# v0.4.4: strict mode - high/critical findings sind PR-Blocker.
+# Baseline ist clean nach Dep-Bump-Sweep (PR #15+#16-28 ausser deferred
+# Frontend-Majors lucide-svelte/vite-plugin-svelte). Wenn neue CVE
+# entdeckt wird: Dependabot oeffnet Bump-PR, der hier failed bis der
+# Bump merged ist.
+#
 # Sicherheits-Hinweis: dieser Workflow nutzt KEINE github.event.*
 # untrusted-inputs in run:-Commands - alle Logik laeuft gegen
 # checked-out repo-files und installed tools.
@@ -44,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
@@ -54,9 +60,15 @@ jobs:
           pip install pip-audit
       - name: Run pip-audit
         id: audit
+        # --ignore-vuln Liste:
+        #   CVE-2026-33752 - curl-cffi 0.14.x: yt-dlp's _curlcffi-Bridge
+        #     pinnt uns auf <0.15 (Bridge nutzt internes API das in 0.15+
+        #     entfernt wurde). Bei jedem Eintrag hier: warum nicht bumpbar +
+        #     wer review-pflicht. Wenn yt-dlp die Bridge auflöst, entfernen.
         run: |
           set +e
-          pip-audit -r backend/requirements.txt -f json -o pip-audit.json
+          pip-audit -r backend/requirements.txt -f json -o pip-audit.json \
+            --ignore-vuln CVE-2026-33752
           AUDIT_EXIT=$?
           set -e
           echo "audit_exit=$AUDIT_EXIT" >> "$GITHUB_OUTPUT"
@@ -64,22 +76,20 @@ jobs:
             echo "=== pip-audit findings ==="
             cat pip-audit.json
           fi
-      # Report-only mode (initial baseline): vulnerabilities werden geloggt
-      # und als Artifact hochgeladen, aber das CI bleibt grün. Dependabot
-      # öffnet automatisch Bump-PRs für die fixbaren Findings.
-      # Auf strict-mode (PR-Block bei high/critical) umstellen sobald die
-      # Baseline clean ist — siehe Audit-Doku.
-      - name: Report findings (non-blocking)
+      # Strict mode (v0.4.4 onwards): vulnerabilities sind PR-Blocker.
+      # Baseline ist clean nach v0.4.4 Dep-Bump-Sweep. Wenn Dependabot
+      # einen Bump-PR aufmacht und der pip-audit-Check failed, ist das
+      # Signal dass der Bump nötig ist (statt nur "FYI").
+      - name: Fail on findings
         if: steps.audit.outputs.audit_exit != '0'
-        continue-on-error: true
         run: |
           if [ -s pip-audit.json ] && grep -q '"vulns":' pip-audit.json; then
             VULN_COUNT=$(python3 -c "import json; d=json.load(open('pip-audit.json')); print(sum(len(p.get('vulns',[])) for p in d.get('dependencies',[])))")
-            echo "⚠ pip-audit found $VULN_COUNT vulnerability(ies) — see pip-audit-report artifact."
-            echo "  (non-blocking until baseline is clean; Dependabot opens bump PRs weekly.)"
-          else
-            echo "OK: no exploitable vulns in pip-audit"
+            echo "::error::pip-audit found $VULN_COUNT vulnerability(ies)"
+            python3 -c "import json; d=json.load(open('pip-audit.json')); [print(f\"  {p['name']}=={p['version']}: {[v['id'] for v in p.get('vulns',[])]}\") for p in d.get('dependencies',[]) if p.get('vulns')]"
+            exit 1
           fi
+          echo "OK: pip-audit-exit != 0 aber keine vulns geparsed — toolchain-issue, nicht blockierend"
       - name: Upload audit report
         if: always()
         uses: actions/upload-artifact@v4
@@ -107,9 +117,8 @@ jobs:
         run: npm ci --no-audit --no-fund --ignore-scripts
       - name: npm audit (high+critical only)
         run: npm audit --audit-level=high --json > npm-audit.json || true
-      # Report-only mode (siehe pip-audit-Step für Begründung).
-      - name: Report high/critical (non-blocking)
-        continue-on-error: true
+      # Strict mode (v0.4.4 onwards): high+critical sind PR-Blocker.
+      - name: Fail on high/critical
         run: |
           if [ ! -f npm-audit.json ]; then
             echo "OK: no npm-audit.json produced"
@@ -117,12 +126,11 @@ jobs:
           fi
           HIGH=$(python3 -c "import json; d=json.load(open('npm-audit.json')); v=d.get('metadata',{}).get('vulnerabilities',{}); print(v.get('high',0)+v.get('critical',0))")
           if [ "$HIGH" -gt 0 ]; then
-            echo "⚠ npm audit found $HIGH high/critical vuln(s) — see npm-audit-report artifact."
+            echo "::error::npm audit found $HIGH high/critical vuln(s)"
             python3 -c "import json; d=json.load(open('npm-audit.json')); print(json.dumps(d.get('metadata',{}).get('vulnerabilities',{}), indent=2))"
-            echo "  (non-blocking until baseline is clean; Dependabot opens bump PRs weekly.)"
-          else
-            echo "OK: no high/critical vulns in npm audit"
+            exit 1
           fi
+          echo "OK: no high/critical vulns in npm audit"
       - name: Upload audit report
         if: always()
         uses: actions/upload-artifact@v4

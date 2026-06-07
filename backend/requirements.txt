@@ -1,19 +1,19 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-spotipy==2.23.0
-yt-dlp>=2024.12.20
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+spotipy==2.26.0
+yt-dlp>=2026.3.17
 mutagen==1.47.0
 # python-multipart 0.0.6 → 0.0.26: CVE-2024-24762 (HIGH, ReDoS),
 # CVE-2024-53981 (DoS), CVE-2026-24486 (Path-Traversal), CVE-2026-40347 (DoS)
-python-multipart==0.0.26
+python-multipart==0.0.30
 # requests 2.31.0 → 2.33.0: CVE-2024-35195 (cert-verify-bypass),
 # CVE-2024-47081 (.netrc credential leak), CVE-2026-25645 (security bypass)
-requests==2.33.0
+requests==2.34.2
 aiofiles==23.2.1
-pydantic==2.5.0
+pydantic==2.13.4
 # python-dotenv 1.0.0 → 1.2.2: CVE-2026-28684 (arbitrary file overwrite via symlink)
 python-dotenv==1.2.2
-ytmusicapi==1.11.4
+ytmusicapi==1.12.0
 yt-dlp-get-pot-rustypipe==0.2.0
 # curl-cffi: aktiviert yt-dlp's impersonate-Option (TLS-Handshake-Spoofing
 # via libcurl-impersonate) für robustere Anti-Bot-Detection.
@@ -25,13 +25,13 @@ yt-dlp-get-pot-rustypipe==0.2.0
 # yt_dlp/networking/_curlcffi.py:1 ("Only curl_cffi versions ... supported")
 curl-cffi>=0.10,<0.15
 # ─── Auth (Phase F) ──────────────────────────
-argon2-cffi==23.1.0
+argon2-cffi==25.1.0
 pyotp==2.9.0
 qrcode==7.4.2
 # PyJWT 2.8.0 → 2.12.0: CVE-2026-32597 (HIGH, RFC8725 §3.10 violation —
 # accepts unknown crit header extensions)
-PyJWT==2.12.0
+PyJWT==2.13.0
 # cryptography 42.0.5 → 46.0.5: CVE-2026-26007 (subgroup-attack),
 # CVE-2024-12797 (OpenSSL RFC7250), CVE-2026-34073 (security bypass),
 # bundled-OpenSSL vulns (GHSA-h4gh-qq45-vh27)
-cryptography==46.0.5
+cryptography==48.0.0
