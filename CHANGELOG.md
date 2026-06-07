@@ -10,6 +10,72 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.4] — 2026-06-07
+
+Dependency-Bump-Sweep. Erste planmäßige Cleanup-Welle nach Aktivierung
+des `dep-audit` Workflows + Dependabot in v0.4.3. Baseline ist danach
+clean → dep-audit wechselt von `report-only` auf `strict`-Mode.
+
+### Bumped (Backend)
+
+- **fastapi** 0.104.1 → 0.136.3 (CVE-Cluster der 0.10x-Linie geschlossen,
+  Underscore-Header-Validation, SSE-Field-Validation)
+- **uvicorn[standard]** 0.24.0 → 0.48.0
+- **pydantic** 2.5.0 → 2.13.4
+- **spotipy** 2.23.0 → 2.26.0
+- **python-multipart** 0.0.26 → 0.0.30
+- **requests** 2.33.0 → 2.34.2
+- **ytmusicapi** 1.11.4 → 1.12.0
+- **PyJWT** 2.12.0 → 2.13.0
+- **argon2-cffi** 23.1.0 → 25.1.0
+- **yt-dlp** ≥2024.12.20 → ≥2026.3.17 (Bot-Check-Resilience, Format-Fixes)
+- **cryptography** 46.0.5 → 48.0.0 (bundled-OpenSSL bumps)
+
+### Bumped (Frontend)
+
+- **typescript** 5.9.3 → 6.0.3
+- **bits-ui** 1.8.0 → 2.18.1 (nur eine Verwendung — Dialog in TokenSheet)
+- **@sveltejs/kit** 2.59.0 → 2.61.1
+- **svelte** 5.55.5 → 5.56.0
+- **svelte-check** 4.4.7 → 4.5.0
+- **tailwindcss** + **@tailwindcss/vite** 4.2.4 → 4.3.0
+
+### Bumped (CI)
+
+- **actions/setup-python** 5 → 6
+- **docker/setup-buildx-action** 3 → 4
+- **docker/metadata-action** 5 → 6
+
+### Changed
+
+- **dep-audit Workflow** auf `strict`-Mode umgestellt. Bisher `report-only`
+  mit `continue-on-error: true` (baseline-cleanup-Phase). Jetzt:
+  pip-audit oder npm audit findings (high/critical) **failen das CI**.
+  Bei Dependabot-Bump-PRs heißt ein roter Check aktiv: "der Bump ist
+  nötig" — kein stilles "FYI" mehr.
+- **Dependabot** ignoriert ab jetzt `curl-cffi >=0.15`. Pin ist
+  absichtlich (yt-dlp-Bridge Inkompatibilität). Dependabot probierte
+  in PR #27 zu bumpen — wurde geschlossen, Konfig-Eintrag verhindert
+  Wiederholung.
+
+### Deferred (eigene v0.4.5-PR)
+
+- `lucide-svelte` 0.453 → 1.0.1 — Build-FAILURE, 9 Verwendungsstellen
+  mit Named-Imports. Tree-Shaking-API-Migration nötig.
+- `@sveltejs/vite-plugin-svelte` 4.0.4 → 7.1.2 — Major-Major-Jump
+  (v5/v6 übersprungen), Build + npm audit FAILURE. Vite-Config-Migration
+  zusammen mit eventuellem SvelteKit 3.x ziehen.
+
+### Operator Notes
+
+- Kein .env-Diff. Backend lädt fastapi 0.136 ohne Code-Anpassung
+  (CI Backend (Python 3.11) Check grün).
+- yt-dlp >=2026.3.17 ist relevant für Audit-Item #51 (Bot-Check-Pfad) —
+  prüft sich von selbst beim nächsten v0.4.4-Cycle ob die Symptome
+  besser werden.
+
+---
+
 ## [0.4.3] — 2026-06-01
 
 Security-Audit-Final-Cluster. Schließt die letzten drei verbliebenen Items
