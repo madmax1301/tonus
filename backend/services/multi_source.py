@@ -133,6 +133,13 @@ class MultiSourceResolver:
 
         Empty list wenn keine Quelle einen Treffer >= min_score liefert. Caller
         muss diesen Fall (alle Sources fail) als Error behandeln.
+
+        2-Pass-Strategie (v0.4.9): Pass 1 sucht mit album_suffix_for_query
+        (mehr Spezifität bei generischen Track-Namen). Wenn das 0 Kandidaten
+        liefert, Pass 2 ohne Album — Compilation-Namen wie "HAMBURG BALLERT
+        ANDERS" killen sonst die Query ("JUNIVERZ The Screech HAMBURG BALLERT
+        ANDERS" → 0 YouTube-Treffer, obwohl "JUNIVERZ The Screech" der
+        Top-Hit ist; Burn-in 2026-06-07).
         """
         if not self.enabled_sources:
             return []
@@ -142,6 +149,28 @@ class MultiSourceResolver:
         # nicht und sichern Resolver-Direct-Use ab (z.B. Tests).
         track_name = normalize_corrupt_track_name(track_name, track_info)
 
+        candidates = self._resolve_pass(track_name, artist, track_info)
+        if not candidates:
+            album = ((track_info or {}).get("album") or "").strip()
+            # Retry nur wenn ein Album-Suffix tatsächlich aktiv war (album
+            # gesetzt UND != track_name — sonst war die Query eh suffix-frei).
+            if album and album.lower() != track_name.strip().lower():
+                print(
+                    f"INFO: no candidates with album-suffix query (album='{album}') "
+                    "— retrying without album"
+                )
+                ti_no_album = dict(track_info)
+                ti_no_album["album"] = ""  # duration_ms etc. bleiben erhalten
+                candidates = self._resolve_pass(track_name, artist, ti_no_album)
+        return candidates
+
+    def _resolve_pass(
+        self,
+        track_name: str,
+        artist: str,
+        track_info: Optional[Dict] = None,
+    ) -> List[Dict]:
+        """Ein Such-Durchlauf über alle Sources + Duration/Score-Filter."""
         all_candidates: List[Dict] = []
 
         with ThreadPoolExecutor(max_workers=max(1, len(self.enabled_sources))) as pool:
