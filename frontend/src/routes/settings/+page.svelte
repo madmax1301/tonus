@@ -34,7 +34,7 @@
     ShieldCheck,
     KeyRound,
     Copy,
-    AlertTriangle,
+    TriangleAlert,
     Ban,
     Users as UsersIcon,
     UserPlus,
@@ -1383,7 +1383,7 @@
         <div
           style="background: rgba(248, 195, 113, 0.08); border: 1px dashed rgba(248, 195, 113, 0.35); border-radius: 14px; padding: 16px 20px; color: var(--color-fg-secondary); font-size: 13px; line-height: 1.55;"
         >
-          <AlertTriangle size={14} strokeWidth={2} style="display: inline; vertical-align: -2px; color: rgba(248, 195, 113, 0.95); margin-right: 6px;" />
+          <TriangleAlert size={14} strokeWidth={2} style="display: inline; vertical-align: -2px; color: rgba(248, 195, 113, 0.95); margin-right: 6px;" />
           {$t('settings.pats.legacy_note')}
         </div>
       {:else if shownToken}
@@ -1402,7 +1402,7 @@
           <p
             style="font-size: 12.5px; color: var(--color-fg-secondary); line-height: 1.5; margin: 0 0 12px;"
           >
-            <AlertTriangle size={12} strokeWidth={2} style="display: inline; vertical-align: -2px; color: rgba(248, 195, 113, 0.95); margin-right: 4px;" />
+            <TriangleAlert size={12} strokeWidth={2} style="display: inline; vertical-align: -2px; color: rgba(248, 195, 113, 0.95); margin-right: 4px;" />
             {$t('settings.pats.shown.warning')}
           </p>
           <div
@@ -1762,7 +1762,7 @@
                     class="inline-flex items-center gap-1.5"
                     style="font-size: 11.5px; color: var(--color-fg-secondary);"
                   >
-                    <AlertTriangle size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95);" />
+                    <TriangleAlert size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95);" />
                     {$t('settings.connections.restart_required')}
                   </span>
                 {/if}

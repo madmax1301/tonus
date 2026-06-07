@@ -2,7 +2,7 @@
   import { base } from '$app/paths';
   import { tint, DEFAULT_HUE } from '$lib/accent';
   import CoverArt from './CoverArt.svelte';
-  import { Download, Loader2 } from 'lucide-svelte';
+  import { Download, LoaderCircle } from 'lucide-svelte';
   import type { Album } from '$lib/api';
 
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
@@ -123,7 +123,7 @@
         aria-label="In Queue"
       >
         {#if loading}
-          <Loader2 size={14} strokeWidth={2.4} class="animate-spin" />
+          <LoaderCircle size={14} strokeWidth={2.4} class="animate-spin" />
         {:else if queueState?.kind === 'done' || queueState?.kind === 'exists'}
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
             <path d="M5 12l5 5L20 7" />
