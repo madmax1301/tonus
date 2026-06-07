@@ -20,6 +20,7 @@ Architektur:
 """
 from __future__ import annotations
 
+import re
 import sys
 import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -54,6 +55,38 @@ def normalize_corrupt_track_name(track_name: str, track_info: Optional[Dict]) ->
         return track_name  # nichts wovon man fallen könnte
     print(f"INFO: track_name='{track_name}' looks corrupt — using album_name='{album_name}' as fallback query")
     return album_name
+
+
+_DECORATION_RE_BRACKETS = re.compile(r'\[[^\]]*\]')
+_DECORATION_RE_PARENS = re.compile(r'\([^)]*\)')
+_DECORATION_RE_WS = re.compile(r'\s+')
+
+
+def strip_search_decorations(track_name: str) -> str:
+    """Entfernt Brackets-Content für YouTube/SoundCloud-Search-Queries.
+
+    YouTube-/Soundcloud-Suchen liefern oft 0-Treffer wenn der Query-String
+    "[Mix Cut]", "(Original Mix)", "(feat. XY)" enthält — die Bracket-Tokens
+    werden als hartes Match-Constraint interpretiert und die DJ/Remix-Suffixes
+    gibt's am Channel selten 1:1.
+
+    Beispiel: 'Bitches [Mix Cut] (Original Mix)' → 'Bitches'
+
+    Original-track_name bleibt unangetastet — calculate_match_score()
+    vergleicht den unveränderten String weiterhin mit den Result-Titeln,
+    Score-Diskriminierung bleibt scharf. Wir stripped NUR für den Search-
+    Fetch.
+
+    Idempotent. Wenn nach dem Strip nichts mehr übrig ist (Title bestand
+    nur aus Brackets-Content), fallback auf Original — sonst wäre der
+    Search-String leer.
+    """
+    if not track_name:
+        return track_name
+    stripped = _DECORATION_RE_BRACKETS.sub('', track_name)
+    stripped = _DECORATION_RE_PARENS.sub('', stripped)
+    stripped = _DECORATION_RE_WS.sub(' ', stripped).strip()
+    return stripped or track_name
 
 
 def album_suffix_for_query(track_name: str, track_info: Optional[Dict]) -> str:
@@ -260,7 +293,11 @@ class MultiSourceResolver:
         Scoring nutzt YouTubeService.calculate_match_score.
         """
         n = max(1, int(self.candidates_per_source))
-        query = f"{artist} {track_name}{album_suffix_for_query(track_name, track_info)}".strip()
+        # Stripped track_name fürs Search-Query (Brackets wie "[Mix Cut]" /
+        # "(Original Mix)" killen Provider-Trefferlisten). Original-track_name
+        # bleibt für die Score-Berechnung in calculate_match_score erhalten.
+        search_track_name = strip_search_decorations(track_name)
+        query = f"{artist} {search_track_name}{album_suffix_for_query(search_track_name, track_info)}".strip()
 
         # Beide Provider profitieren von full-extract (statt flat) für saubere
         # webpage_urls. Kostet 1 Extra-Roundtrip pro Treffer — bei 3 candidates
