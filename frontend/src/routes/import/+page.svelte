@@ -23,7 +23,7 @@
   import { tint, DEFAULT_HUE } from '$lib/accent';
   import { t } from '$lib/i18n';
   import { flyToQueue } from '$lib/fly-to-queue';
-  import { Upload, Loader2, Download, FileText, X, Search } from 'lucide-svelte';
+  import { Upload, LoaderCircle, Download, FileText, X, Search } from 'lucide-svelte';
 
   // localStorage-Key für die Job-Resume-Logik. Wenn der User reloadet,
   // ein neues Tab öffnet oder Tonus für 5 Min schließt, wird der laufende
@@ -1714,7 +1714,7 @@
               "
             >
               {#if csvQueueAllBusy}
-                <Loader2 size={13} class="animate-spin" />
+                <LoaderCircle size={13} class="animate-spin" />
                 Queue …
               {:else}
                 <Download size={13} strokeWidth={2} />
@@ -1822,7 +1822,7 @@
           "
         >
           {#if csvExportBusy && csvExportProgress}
-            <Loader2 size={11} class="animate-spin" />
+            <LoaderCircle size={11} class="animate-spin" />
             CSV {csvExportProgress.loaded.toLocaleString('de-DE')} / {csvExportProgress.total.toLocaleString(
               'de-DE'
             )}
@@ -1880,7 +1880,7 @@
                 aria-label="Bei Deezer {$t('import.recheck.button')}"
               >
                 {#if r?.loading}
-                  <Loader2 size={10} class="animate-spin" />
+                  <LoaderCircle size={10} class="animate-spin" />
                   {$t('import.recheck.checking')}
                 {:else if r?.results}
                   <Search size={10} strokeWidth={1.8} />
@@ -1971,7 +1971,7 @@
                         "
                       >
                         {#if qs === 'queued'}
-                          <Loader2 size={10} class="animate-spin" />
+                          <LoaderCircle size={10} class="animate-spin" />
                         {:else if qs === 'done'}
                           ✓ queued
                         {:else if qs === 'exists'}
@@ -2008,7 +2008,7 @@
           "
         >
           {#if csvLoadMoreBusy}
-            <Loader2 size={13} class="animate-spin" />
+            <LoaderCircle size={13} class="animate-spin" />
             lade …
           {:else}
             Mehr laden

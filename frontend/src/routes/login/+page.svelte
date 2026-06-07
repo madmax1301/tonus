@@ -25,7 +25,7 @@
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
   import { t } from '$lib/i18n';
-  import { Loader2, KeyRound, ShieldCheck, User, Plug, AlertTriangle, Check } from 'lucide-svelte';
+  import { LoaderCircle, KeyRound, ShieldCheck, User, Plug, TriangleAlert, Check } from 'lucide-svelte';
 
   // Modi:
   //   login       → Standard-Eingabe Username/Password
@@ -504,7 +504,7 @@
                   class="inline-flex items-center"
                   style="margin-top: 18px; padding: 10px 14px; border: 1px solid var(--color-border-soft); border-radius: 8px; font-size: 11.5px; color: var(--color-fg-secondary); line-height: 1.5; gap: 8px;"
                 >
-                  <AlertTriangle size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95); flex-shrink: 0;" />
+                  <TriangleAlert size={12} strokeWidth={2} style="color: rgba(248, 195, 113, 0.95); flex-shrink: 0;" />
                   <span>{$t('auth.onboarding.restart_required')}</span>
                 </div>
               {/if}
@@ -673,7 +673,7 @@
           "
         >
           {#if busy}
-            <Loader2 size={13} class="animate-spin" />
+            <LoaderCircle size={13} class="animate-spin" />
           {:else}
             <ShieldCheck size={13} strokeWidth={2} />
           {/if}
@@ -878,7 +878,7 @@
           "
         >
           {#if busy}
-            <Loader2 size={14} class="animate-spin" />
+            <LoaderCircle size={14} class="animate-spin" />
             {mode === 'setup' ? $t('auth.setup.submitting') : $t('auth.login.submitting')}
           {:else}
             {mode === 'setup' ? $t('auth.setup.submit') : $t('auth.login.submit')}

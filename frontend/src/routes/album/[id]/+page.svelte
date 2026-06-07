@@ -16,7 +16,7 @@
   import { get } from 'svelte/store';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import VinylWithCover from '$lib/components/VinylWithCover.svelte';
-  import { ArrowLeft, Download, Loader2, Check } from 'lucide-svelte';
+  import { ArrowLeft, Download, LoaderCircle, Check } from 'lucide-svelte';
 
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
 
@@ -314,7 +314,7 @@
             "
           >
             {#if albumState?.kind === 'queued'}
-              <Loader2 size={13} strokeWidth={2.4} class="animate-spin" />
+              <LoaderCircle size={13} strokeWidth={2.4} class="animate-spin" />
               <span class="skeleton-text">{$t('album.button.queueing')}</span>
             {:else if albumState?.kind === 'done'}
               <Check size={14} strokeWidth={2.4} />

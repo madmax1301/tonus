@@ -22,7 +22,7 @@
     Trash2,
     Eraser,
     X,
-    Loader2,
+    LoaderCircle,
     Search,
     Disc,
     Link2,
@@ -488,7 +488,7 @@
         "
       >
         {#if initialLoading}
-          <Loader2 size={11} strokeWidth={2} class="animate-spin" />
+          <LoaderCircle size={11} strokeWidth={2} class="animate-spin" />
         {:else}
           <span
             class="inline-block rounded-full"
@@ -553,7 +553,7 @@
         "
       >
         {#if busy.retryAll}
-          <Loader2 size={12} strokeWidth={2} class="animate-spin" />
+          <LoaderCircle size={12} strokeWidth={2} class="animate-spin" />
         {:else}
           <RotateCw size={12} strokeWidth={1.8} />
         {/if}
@@ -581,7 +581,7 @@
         "
       >
         {#if busy.cleanup}
-          <Loader2 size={12} strokeWidth={2} class="animate-spin" />
+          <LoaderCircle size={12} strokeWidth={2} class="animate-spin" />
         {:else}
           <Eraser size={12} strokeWidth={1.5} />
         {/if}
@@ -602,7 +602,7 @@
         "
       >
         {#if busy.clearAll}
-          <Loader2 size={12} strokeWidth={2} class="animate-spin" />
+          <LoaderCircle size={12} strokeWidth={2} class="animate-spin" />
         {:else}
           <Trash2 size={12} strokeWidth={1.5} />
         {/if}

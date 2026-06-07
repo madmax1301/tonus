@@ -10,6 +10,41 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.10] — 2026-06-07
+
+Frontend-Major-Migrationen. Schließt die zwei in v0.4.4 deferred
+Dependabot-PRs (#23, #25) plus den damit gekoppelten vite-Major (#36).
+
+### Changed
+
+- **lucide-svelte** 0.453 → 1.0.1. Breaking: 4 Icon-Renames/Entfernungen
+  über 6 Komponenten:
+  - `Loader2` → `LoaderCircle`
+  - `AlertTriangle` → `TriangleAlert`
+  - `Youtube` → `Play` (Brand-Icon in 1.0 entfernt — Trademark; `Play`
+    passt semantisch zum YouTube-Match-Mode)
+  - `Link2` unverändert (existiert weiter)
+- **vite** 5.4 → 8.0.16 + **@sveltejs/vite-plugin-svelte** 4.0 → 7.1.2
+  (gekoppelt — plugin-svelte 7 verlangt vite ^8). vite 8 nutzt
+  **rolldown** als Bundler statt rollup/esbuild → package-lock ~836
+  Zeilen kleiner. SvelteKit 2.61 + svelte 5.56 sind kompatibel, keine
+  vite.config-Änderung nötig.
+- **Dockerfile**: Frontend-Build-Stage auf `--platform=$BUILDPLATFORM`
+  gepinnt. rolldowns natives Rust-Binary hängt unter QEMU-arm64-
+  Emulation → der erste multi-arch-Build mit vite 8 lief >25min ohne
+  Ende. Der FE-Build läuft jetzt nativ auf der Builder-Arch; das
+  statische Output wird arch-unabhängig in beide Runtime-Images kopiert.
+  Build danach wieder ~2min.
+
+### Verifiziert
+
+- `svelte-check` 0 Errors (14 vorbestehende Warnings unverändert)
+- `vite build` grün, `vite preview` liefert HTTP 200 mit korrektem
+  `<title>Tonus</title>`
+- npm audit: 6 low, kein high/critical → dep-audit-Baseline bleibt clean
+
+---
+
 ## [0.4.9] — 2026-06-07
 
 Resolver-Fix für Compilation-Alben. Konkretes Failing-Beispiel aus

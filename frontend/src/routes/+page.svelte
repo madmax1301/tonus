@@ -28,7 +28,7 @@
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import AlbumGridCard from '$lib/components/AlbumGridCard.svelte';
-  import { Download, Loader2, Link2, Youtube } from 'lucide-svelte';
+  import { Download, LoaderCircle, Link2, Play } from 'lucide-svelte';
 
   type Mode = 'tracks' | 'albums' | 'url' | 'reverse';
 
@@ -526,7 +526,7 @@
         spellcheck="false"
       />
       {#if searching}
-        <Loader2 size={16} class="animate-spin" style="color: var(--color-fg-tertiary);" />
+        <LoaderCircle size={16} class="animate-spin" style="color: var(--color-fg-tertiary);" />
       {:else if mode === 'tracks' && trackResults.length > 0}
         <span class="uppercase" style="font-size: 11px; color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.04em;">
           {trackResults.length} {$t('common.matches')}
@@ -555,14 +555,14 @@
         style="background: {accent}; color: #0a0a0c; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; line-height: 1; text-transform: uppercase; flex-shrink: 0;"
       >
         {#if urlBusy}
-          <Loader2 size={11} class="animate-spin" />
+          <LoaderCircle size={11} class="animate-spin" />
         {:else}
           <Download size={11} strokeWidth={2} />
         {/if}
         {$t('library.url.queue_button')}
       </button>
     {:else if mode === 'reverse'}
-      <Youtube size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
+      <Play size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
       <input
         type="url"
         bind:value={revUrl}
@@ -580,7 +580,7 @@
         style="background: {accent}; color: #0a0a0c; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; line-height: 1; text-transform: uppercase; flex-shrink: 0;"
       >
         {#if revBusy}
-          <Loader2 size={11} class="animate-spin" />
+          <LoaderCircle size={11} class="animate-spin" />
         {:else}
           {$t('library.youtube.search_button', { provider: provider || 'Provider' })}
         {/if}
@@ -603,7 +603,7 @@
       { id: 'tracks' as Mode, labelKey: 'library.mode.tracks' as const, count: trackResults.length, icon: null },
       { id: 'albums' as Mode, labelKey: 'library.mode.albums' as const, count: albumResults.length, icon: null },
       { id: 'url' as Mode, labelKey: 'library.mode.url' as const, count: null, icon: Link2 },
-      { id: 'reverse' as Mode, labelKey: 'library.mode.youtube_match' as const, count: null, icon: Youtube }
+      { id: 'reverse' as Mode, labelKey: 'library.mode.youtube_match' as const, count: null, icon: Play }
     ] as m}
       {@const active = mode === m.id}
       <button
