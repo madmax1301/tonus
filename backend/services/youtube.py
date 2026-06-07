@@ -58,8 +58,26 @@ def _apply_source_lane(ydl_opts: Dict, lane: Optional[str]) -> Dict:
 # Option für die ganze Session ab — sonst bricht jeder Download mit
 # "Impersonate target 'chrome' is not available". Probe einmal beim
 # Module-Import, Cache als Modulvariable.
-def _probe_impersonate(target: str) -> bool:
+#
+# yt-dlp ≥2026.x verlangt den impersonate-Wert als ImpersonateTarget-Objekt
+# — ein roher String wie 'chrome' triggert ein assert in
+# networking/impersonate.py:is_supported_target. _parse_impersonate_target()
+# konvertiert einmal beim Module-Import (CLI macht intern dasselbe via
+# ImpersonateTarget.from_str).
+def _parse_impersonate_target(target: str):
+    """str → ImpersonateTarget. None wenn leer oder Parse-Fehler."""
     if not target:
+        return None
+    try:
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+        return ImpersonateTarget.from_str(target)
+    except Exception as e:
+        print(f"WARN: YOUTUBE_IMPERSONATE='{target}' nicht parsebar ({type(e).__name__}: {e}) — wird ignoriert")
+        return None
+
+
+def _probe_impersonate(target) -> bool:
+    if target is None:
         return False
     try:
         import curl_cffi  # noqa: F401
@@ -67,7 +85,7 @@ def _probe_impersonate(target: str) -> bool:
         print(f"WARN: curl-cffi nicht installiert — YOUTUBE_IMPERSONATE='{target}' wird ignoriert")
         return False
     try:
-        # yt-dlp's eigene Validierung: wenn der target-string nicht in der
+        # yt-dlp's eigene Validierung: wenn der target nicht in der
         # verfügbaren Liste ist, raised es ValueError schon beim YoutubeDL-init.
         with yt_dlp.YoutubeDL({'impersonate': target, 'quiet': True, 'no_warnings': True}):
             pass
@@ -77,7 +95,8 @@ def _probe_impersonate(target: str) -> bool:
         return False
 
 
-_IMPERSONATE_OK = _probe_impersonate(config.YOUTUBE_IMPERSONATE)
+_IMPERSONATE_TARGET = _parse_impersonate_target(config.YOUTUBE_IMPERSONATE)
+_IMPERSONATE_OK = _probe_impersonate(_IMPERSONATE_TARGET)
 
 
 def _apply_anti_detection_opts(ydl_opts: Dict) -> Dict:
@@ -106,7 +125,7 @@ def _apply_anti_detection_opts(ydl_opts: Dict) -> Dict:
     ydl_opts['sleep_interval'] = config.YOUTUBE_SLEEP_MIN_S
     ydl_opts['max_sleep_interval'] = config.YOUTUBE_SLEEP_MAX_S
     if _IMPERSONATE_OK:
-        ydl_opts['impersonate'] = config.YOUTUBE_IMPERSONATE
+        ydl_opts['impersonate'] = _IMPERSONATE_TARGET
     return ydl_opts
 
 
