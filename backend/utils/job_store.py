@@ -56,6 +56,8 @@ def init_jobs_db() -> None:
 
         # If the table existed before album_id was added, migrate in-place.
         _ensure_column(conn, "download_jobs", "album_id", "TEXT")
+        # v0.4.5: retry_count für transient-error re-queue (bot-check, timeout).
+        _ensure_column(conn, "download_jobs", "retry_count", "INTEGER NOT NULL DEFAULT 0")
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_download_jobs_status ON download_jobs(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_download_jobs_updated ON download_jobs(updated_at_ms)")
@@ -384,6 +386,40 @@ def upsert_job(
             json.dumps(payload) if payload is not None else None,
             now, now
         ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def requeue_for_retry(job_id: str, retry_count: int, message: str) -> None:
+    """Re-queue ein 'error'-Job als 'queued' für transient errors (bot-check,
+    yt-dlp 429 mit Retry-Spielraum). Setzt:
+      - status='queued' (Worker pickt es im nächsten _poll_next_queued_download)
+      - retry_count auf den neuen Wert
+      - error/file_path/download_url/stage/progress raus (clean slate)
+      - message neu für UI ("Bot-Check detected — re-queued (attempt N/5)")
+
+    payload_json bleibt erhalten — der nächste Versuch nutzt dieselben Params.
+    created_at_ms wird NICHT angefasst (queue-order konsistent: re-queued job
+    bleibt an seiner ursprünglichen Position, springt nicht ans Ende).
+    """
+    now = _now_ms()
+    conn = _db()
+    try:
+        conn.execute(
+            """UPDATE download_jobs
+               SET status='queued',
+                   retry_count=?,
+                   message=?,
+                   error=NULL,
+                   file_path=NULL,
+                   download_url=NULL,
+                   stage=NULL,
+                   progress=NULL,
+                   updated_at_ms=?
+               WHERE job_id=?""",
+            (retry_count, message, now, job_id),
+        )
         conn.commit()
     finally:
         conn.close()

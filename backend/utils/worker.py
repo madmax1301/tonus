@@ -34,6 +34,13 @@ from utils.job_store import (
 # überschrieben werden; siehe _load_cooldown_ranges)
 _COOLDOWN_NORMAL = (60, 300)        # 1–5 min nach success / unauffälligem error
 _COOLDOWN_429 = (300, 600)          # 5–10 min nach erkanntem 429
+_COOLDOWN_BOT_CHECK = (600, 1200)   # 10–20 min nach Bot-Check (IP-Wechsel-Window)
+
+# Bot-Check Re-Queue-Cap. YouTube zeigt "Sign in to confirm you're not a bot"
+# bei IP-Heuristiken (Traffic-Patterns, Akkumulation). Cooldown + dual-lane
+# IP-Wechsel löst das typischerweise. Cap verhindert Endlosschleife wenn die
+# IP wirklich gebrandmarkt ist (User braucht Cookies / VPN-Wechsel).
+_BOT_CHECK_MAX_RETRIES = int(os.environ.get("BOT_CHECK_MAX_RETRIES", "5"))
 
 
 def _load_cooldown_ranges() -> Tuple[Tuple[int, int], Tuple[int, int]]:
@@ -99,6 +106,27 @@ def _looks_like_429(message: str, error: str) -> bool:
     """Heuristik: zeigt der Job-Status auf YouTube-Rate-Limiting hin?"""
     blob = f"{message or ''} {error or ''}".lower()
     needles = ("429", "too many requests", "rate-limit", "rate limit")
+    return any(n in blob for n in needles)
+
+
+def _looks_like_bot_check(message: str, error: str) -> bool:
+    """Heuristik: hat yt-dlp einen YouTube-Bot-Check abbekommen?
+
+    YouTube serviert dann typischerweise "Sign in to confirm you're not a bot"
+    statt das Video-Player-Response. Im yt-dlp-Stack landet das als
+    ExtractorError oder UnsupportedError mit dem String im error-Field.
+
+    Behandlung: re-queue mit retry_count++ und langem Lane-Cooldown
+    (IP-Wechsel-Window im dual-lane Setup). Nach _BOT_CHECK_MAX_RETRIES
+    bleibt der Job permanent error — User muss Cookies setzen oder VPN
+    wechseln."""
+    blob = f"{message or ''} {error or ''}".lower()
+    needles = (
+        "sign in to confirm you're not a bot",
+        "sign in to confirm you",
+        "confirm you're not a bot",
+        "confirm you are not a bot",
+    )
     return any(n in blob for n in needles)
 
 
@@ -1351,7 +1379,49 @@ class JobWorker(threading.Thread):
             # interpretiert und visuelle Sprünge zwischen Lanes auslöst.
             finished = get_job(track_id) or {}
             normal_range, rl_range = _load_cooldown_ranges()
-            if _looks_like_429(finished.get("message", ""), finished.get("error", "")):
+            finished_msg = finished.get("message", "")
+            finished_err = finished.get("error", "")
+
+            # Bot-Check Re-Queue (v0.4.5): Job hat als 'error' geendet, aber
+            # die Failure ist transient (YouTube-Bot-Check). Statt den User mit
+            # permanent-error abzuschmettern, packen wir's zurück in die queue
+            # mit retry_count++. Lane-Cooldown geht extra lang, damit beim
+            # nächsten Pick die andere VPN-Lane (oder einfach Zeit) die IP-
+            # Reputation reset hat. Cap bei _BOT_CHECK_MAX_RETRIES — danach
+            # bleibt's permanent.
+            if (finished.get("status") == "error"
+                    and _looks_like_bot_check(finished_msg, finished_err)):
+                retry_count = int(finished.get("retry_count") or 0)
+                if retry_count < _BOT_CHECK_MAX_RETRIES:
+                    from utils.job_store import requeue_for_retry
+                    new_count = retry_count + 1
+                    requeue_for_retry(
+                        track_id,
+                        new_count,
+                        f"Bot-Check detected — re-queued (attempt {new_count}/{_BOT_CHECK_MAX_RETRIES})",
+                    )
+                    lo, hi = _COOLDOWN_BOT_CHECK
+                    cooldown = random.uniform(lo, hi)
+                    print(
+                        f"[worker] BOT-CHECK on '{track_id}' (lane {lane}) — "
+                        f"re-queued attempt {new_count}/{_BOT_CHECK_MAX_RETRIES}, "
+                        f"lane cooldown {cooldown:.0f}s"
+                    )
+                else:
+                    # Cap erreicht — permanent error mit operator-Hinweis.
+                    upsert_job(
+                        track_id,
+                        status="error",
+                        message=f"Bot-Check after {retry_count} retries — manuell prüfen (Cookies setzen, VPN wechseln, lange warten)",
+                        error=finished_err or "YouTube bot-check repeatedly",
+                    )
+                    lo, hi = rl_range
+                    cooldown = random.uniform(lo, hi)
+                    print(
+                        f"[worker] BOT-CHECK on '{track_id}' (lane {lane}) — "
+                        f"max retries ({_BOT_CHECK_MAX_RETRIES}) reached, giving up"
+                    )
+            elif _looks_like_429(finished_msg, finished_err):
                 lo, hi = rl_range
                 cooldown = random.uniform(lo, hi)
                 print(f"[worker] 429 on '{track_id}' (lane {lane}) — extended cooldown {cooldown:.0f}s")
