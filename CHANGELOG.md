@@ -10,6 +10,37 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.4.6] — 2026-06-07
+
+Hotfix für eine Regression aus dem v0.4.4-yt-dlp-Bump, gefunden beim
+v0.4.5-Deploy-Smoke auf dem NAS.
+
+### Fixed
+
+- **Impersonation silent-disabled seit v0.4.4** — yt-dlp ≥2026.x verlangt
+  den `impersonate`-Wert als `ImpersonateTarget`-Objekt; der rohe String
+  `'chrome'` aus `YOUTUBE_IMPERSONATE` triggerte einen `AssertionError`
+  in der Boot-Probe (`networking/impersonate.py:is_supported_target`).
+  Folge: TLS-Fingerprint-Spoofing war seit dem yt-dlp-Bump auf 2026.03.17
+  deaktiviert → schwächere Anti-Bot-Detection → mehr Bot-Checks (die
+  zwar seit v0.4.5 re-queued werden, aber vermeidbar sind).
+  Fix: `_parse_impersonate_target()` konvertiert den env-String einmal
+  beim Module-Import via `ImpersonateTarget.from_str()`.
+  Boot-Log zeigt jetzt keine `WARN: Impersonate-Probe fehlgeschlagen`
+  mehr.
+
+### Operator Notes
+
+- Kein .env-Diff — `YOUTUBE_IMPERSONATE=chrome` bleibt als String
+  konfiguriert, die Konversion passiert intern.
+- Side-Note aus derselben Diagnose: yt-dlp master erlaubt inzwischen
+  curl-cffi bis <0.16 (pin selbst auf 0.15.0). Das Tonus-Pin <0.15 kann
+  in einem späteren Cycle gelockert werden → würde `--ignore-vuln
+  CVE-2026-33752`, den Dependabot-ignore und das requirements-Pin
+  gleichzeitig auflösen. Separater Task, braucht Bridge-Smoke-Test.
+
+---
+
 ## [0.4.5] — 2026-06-07
 
 Resolver- und Worker-Robustheit. Zwei Operator-Pain-Points aus dem v0.4.4-
