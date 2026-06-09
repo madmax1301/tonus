@@ -470,6 +470,48 @@ navidrome_service = NavidromeService()
 start_navidrome_library_sync_background(deezer_service, spotify_service)
 
 
+def _start_playlist_reconcile_background() -> None:
+    """Periodischer Playlist-Reconcile (v0.5.0).
+
+    _reconcile_imported_playlists lief bisher NUR in _run_plugin_sync —
+    ohne Navidrome-Plugin wurden Playlist-Marker (SC-Playlist-Import,
+    CSV-Import) nie zu Subsonic-Playlists materialisiert. Dieser Thread
+    schließt die Lücke: alle PLAYLIST_RECONCILE_INTERVAL_S (default 15 min)
+    ein idempotenter Reconcile-Lauf. Bei leerem Marker-Set ist das ein
+    einzelnes SQL-LIKE-Query, praktisch kostenlos.
+
+    Daemon-Thread, lazy function-lookup (Funktion ist weiter unten im Modul
+    definiert — beim ersten Tick nach dem Sleep längst da)."""
+    import threading as _threading
+
+    def _loop() -> None:
+        import time as _time
+        # Erster Lauf nach 3 min — Boot-Phase (Worker-Start, Stale-Reset,
+        # Navidrome-Erreichbarkeit) nicht mit Subsonic-Calls belasten.
+        _time.sleep(180)
+        while True:
+            try:
+                recon = _reconcile_imported_playlists()
+                if recon.get("tracks_added", 0) > 0:
+                    print(
+                        f"[playlist-reconcile] {recon['tracks_added']} tracks "
+                        f"added across {recon['playlists']} playlists"
+                    )
+            except Exception as e:
+                print(f"[playlist-reconcile] WARN: {type(e).__name__}: {e}")
+            _time.sleep(config.PLAYLIST_RECONCILE_INTERVAL_S)
+
+    t = _threading.Thread(target=_loop, daemon=True, name="playlist-reconcile")
+    t.start()
+    print(
+        "Playlist reconcile: background thread started "
+        f"(first run after 180s, then every {config.PLAYLIST_RECONCILE_INTERVAL_S}s)"
+    )
+
+
+_start_playlist_reconcile_background()
+
+
 def physical_track_file_exists(
     track_info: dict,
     location: str,
@@ -594,13 +636,27 @@ class CsvImportRequest(BaseModel):
 
 
 class URLDownloadRequest(BaseModel):
-    """Phase 1: direkter Download einer beliebigen yt-dlp-URL (YouTube/SoundCloud/...)"""
+    """Phase 1: direkter Download einer beliebigen yt-dlp-URL (YouTube/SoundCloud/...)
+
+    v0.5.0: Playlist-URLs (SoundCloud-Sets, YouTube-Playlists) werden erkannt
+    und zu N einzelnen Worker-Jobs expandiert. `as_navidrome_playlist`
+    steuert, ob die Tracks zusätzlich einen Playlist-Marker bekommen —
+    _reconcile_imported_playlists baut daraus die gleichnamige Subsonic-
+    Playlist in Navidrome. Bei Single-Track-URLs wird das Flag ignoriert."""
     url: str
     location: Optional[str] = "local"
     format: Optional[str] = None
     quality: Optional[str] = None
     max_retries: Optional[int] = 0
     navidrome_library: Optional[str] = None
+    as_navidrome_playlist: Optional[bool] = True
+
+
+class URLProbeRequest(BaseModel):
+    """Leichtgewichtiger Probe-Call (v0.5.0): Frontend fragt beim Paste, ob
+    die URL eine Playlist ist, um die Playlist-UI (Track-Count + Navidrome-
+    Toggle) einzublenden. flat-extract, kein Download."""
+    url: str
 
 
 class URLSearchRequest(BaseModel):
@@ -2805,11 +2861,19 @@ def url_download_and_process(
     audio_quality: Optional[str],
     navidrome_library_path: Optional[str],
     track_hint: Optional[Dict] = None,
+    import_playlist_names: Optional[List[str]] = None,
+    source_lane: Optional[str] = None,
 ):
     """Background task: yt-dlp lädt direkt via URL (kein Spotify/Deezer-Match).
 
     Tags werden aus den yt-dlp-Metadaten gebildet (Title=Track, Uploader=Artist,
     Thumbnail=Cover). Funktioniert für jede yt-dlp-unterstützte Quelle.
+
+    v0.5.0: läuft auch im Worker-Kontext (Playlist-Tracks, kind='url'-Jobs).
+    `import_playlist_names` muss durchgereicht werden, weil das payload-Update
+    bei progress=25 das komplette payload_json ersetzt — ohne Re-Inject wäre
+    der Playlist-Marker weg bevor _reconcile_imported_playlists ihn liest.
+    `source_lane` bindet den Download an die VPN-Lane des Workers (dual-lane).
     """
     try:
         upsert_job(job_id, status="processing", message="Reading URL metadata...",
@@ -2868,21 +2932,26 @@ def url_download_and_process(
             "album": 'Singles',
             "album_art": thumb,
         }
+        refreshed_payload = {
+            "kind": "url",
+            "url": url,
+            "location": location,
+            "output_format": output_format,
+            "audio_quality": audio_quality,
+            "navidrome_library_path": navidrome_library_path,
+            "track": slim_track,
+        }
+        # Playlist-Marker erhalten — dieses Update ERSETZT payload_json,
+        # ohne Re-Inject würde der Marker verloren gehen (v0.5.0).
+        if import_playlist_names:
+            refreshed_payload["import_playlist_names"] = import_playlist_names
         upsert_job(
             job_id,
             status="processing",
             message="Preparing download location...",
             stage="preparing",
             progress=25,
-            payload={
-                "kind": "url",
-                "url": url,
-                "location": location,
-                "output_format": output_format,
-                "audio_quality": audio_quality,
-                "navidrome_library_path": navidrome_library_path,
-                "track": slim_track,
-            },
+            payload=refreshed_payload,
         )
 
         # Idempotenz-Check: User submittet dieselbe URL nochmal — vorher
@@ -2907,7 +2976,8 @@ def url_download_and_process(
                    stage="downloading", progress=40)
 
         download_result = youtube_service.download_by_url(
-            webpage, download_path, output_format, audio_quality
+            webpage, download_path, output_format, audio_quality,
+            source_lane=source_lane,
         )
         if not download_result.get('success'):
             upsert_job(job_id, status="error",
@@ -2968,11 +3038,137 @@ def url_download_and_process(
         upsert_job(job_id, status="error", message=f"Error: {str(e)}", progress=0)
 
 
+# Playlist-URL-Heuristik (v0.5.0): nur URLs, die nach Playlist aussehen,
+# bekommen den (1-2s teuren) flat-extract-Expand. Single-Track-URLs behalten
+# ihre bisherige Latenz. False-positive ist harmlos — wenn der Expand kein
+# `_type=playlist` findet, fällt der Handler auf den Single-Pfad zurück.
+_PLAYLIST_URL_RE = re.compile(
+    r"(soundcloud\.com/[^/]+/sets/"   # SC: /artist/sets/name
+    r"|[?&]list="                      # YT: watch?v=..&list=… / playlist?list=…
+    r"|youtube\.com/playlist)",
+    re.IGNORECASE,
+)
+
+
+def _queue_playlist_tracks(
+    expanded: Dict,
+    location: str,
+    output_format: str,
+    audio_quality: Optional[str],
+    navidrome_path: Optional[str],
+    as_navidrome_playlist: bool,
+) -> Dict:
+    """Queut die Tracks einer expandierten Playlist als Worker-Jobs (v0.5.0).
+
+    Anders als der Single-URL-Pfad (BackgroundTask, status='processing')
+    werden Playlist-Tracks als status='queued' angelegt — der JobWorker
+    arbeitet sie über die Download-Lanes ab. Damit greifen Lane-Cooldowns
+    und Bot-Check-Re-Queue (#51); 200 Tracks hämmern SoundCloud nicht
+    parallel zu.
+
+    Dedup pro Track über die stabile job_id (hash aus url+location+format):
+      - queued/processing  → skip (läuft schon)
+      - completed          → skip, aber Playlist-Marker in den bestehenden
+                             Job mergen — der Reconcile nimmt ihn dann mit.
+                             Grenze: Reconcile filtert auf created_at_ms
+                             (60-Tage-Fenster); Jobs älter als das bleiben
+                             außen vor (Long-Tail, akzeptiert für v0.5.0).
+      - error/absent       → (neu) queuen
+    """
+    from utils.job_store import merge_playlist_names_into_download_job
+
+    playlist_name = expanded["name"]
+    marker = [playlist_name] if as_navidrome_playlist else []
+
+    queued = 0
+    skipped = 0
+    for entry in expanded["tracks"]:
+        track_url = entry["url"]
+        job_id = f"url-{abs(hash((track_url, location, output_format))) % 10_000_000}"
+
+        existing = get_job(job_id)
+        if existing and existing.get("status") in ("queued", "processing"):
+            skipped += 1
+            continue
+        if existing and existing.get("status") == "completed":
+            skipped += 1
+            if marker:
+                merge_playlist_names_into_download_job(job_id, marker)
+            continue
+
+        title = entry.get("title") or track_url
+        uploader = entry.get("uploader") or "URL"
+        payload = {
+            "kind": "url",
+            "url": track_url,
+            "location": location,
+            "output_format": output_format,
+            "audio_quality": audio_quality,
+            "navidrome_library_path": navidrome_path,
+            "track": {
+                "id": job_id,
+                "name": title,
+                "artist": uploader,
+                "album": "",
+                "album_art": "",
+            },
+        }
+        if marker:
+            payload["import_playlist_names"] = marker
+
+        upsert_job(
+            job_id,
+            status="queued",
+            message=f"Queued from playlist '{playlist_name}'",
+            stage="queued",
+            progress=0,
+            payload=payload,
+        )
+        queued += 1
+
+    return {
+        "status": "queued",
+        "kind": "playlist",
+        "playlist_name": playlist_name,
+        "queued": queued,
+        "skipped": skipped,
+        "total": expanded["total"],
+        "truncated": expanded["truncated"],
+    }
+
+
+@app.post("/api/url/probe")
+async def url_probe(req: URLProbeRequest, _: None = Depends(require_token)):
+    """Probe (v0.5.0): ist die URL eine Playlist? flat-extract, kein Download.
+
+    Frontend ruft das debounced beim Paste auf, um die Playlist-UI
+    (Track-Count + Navidrome-Toggle) einzublenden.
+    """
+    url = (req.url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Bitte eine vollständige URL angeben (http/https).")
+    if not _PLAYLIST_URL_RE.search(url):
+        return {"kind": "track"}
+
+    expanded = youtube_service.expand_playlist_url(url)
+    if not expanded:
+        return {"kind": "track"}
+    return {
+        "kind": "playlist",
+        "name": expanded["name"],
+        "track_count": len(expanded["tracks"]),
+        "total": expanded["total"],
+        "truncated": expanded["truncated"],
+    }
+
+
 @app.post("/api/url/download")
 async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTasks, _: None = Depends(require_token), __: None = Depends(_rl_url_download)):
     """Phase 1: Direkter Download via URL ohne Spotify/Deezer-Match.
 
     Funktioniert für YouTube, SoundCloud, Bandcamp, Vimeo … alles was yt-dlp kennt.
+    v0.5.0: Playlist-URLs werden zu N Worker-Jobs expandiert (siehe
+    _queue_playlist_tracks); Single-URLs behalten den BackgroundTask-Pfad.
     """
     if not req.url or not req.url.strip().startswith(('http://', 'https://')):
         raise HTTPException(status_code=400, detail="Bitte eine vollständige URL angeben (http/https).")
@@ -2982,6 +3178,27 @@ async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTask
     navidrome_path: Optional[str] = None
     if location == "navidrome":
         navidrome_path = resolve_navidrome_library_path_optional(req.navidrome_library)
+
+    # ── Playlist-Branch (v0.5.0) ────────────────────────────────────
+    if _PLAYLIST_URL_RE.search(req.url):
+        expanded = youtube_service.expand_playlist_url(req.url.strip())
+        if expanded:
+            result = _queue_playlist_tracks(
+                expanded,
+                location,
+                output_format,
+                req.quality,
+                navidrome_path,
+                bool(req.as_navidrome_playlist),
+            )
+            # Sofort-Reconcile im Hintergrund: Tracks, die schon in der
+            # Library sind (Dedup-Skip mit Marker-Merge), landen direkt in
+            # der Navidrome-Playlist statt erst beim nächsten periodischen
+            # Lauf. Neue Downloads zieht der Background-Thread nach.
+            if bool(req.as_navidrome_playlist) and result.get("skipped", 0) > 0:
+                background_tasks.add_task(_reconcile_imported_playlists)
+            return result
+        # Heuristik-Hit aber kein Playlist-Extract → Single-Pfad weiter unten.
 
     # Stabile job_id aus URL — verhindert Duplikate beim doppelten Klick
     job_id = f"url-{abs(hash((req.url.strip(), location, output_format))) % 10_000_000}"
