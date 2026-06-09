@@ -72,6 +72,42 @@
   let urlMessage = $state<string | null>(null);
   let urlError = $state<string | null>(null);
 
+  // ── Playlist-Erkennung (v0.5.0) ─────────────────────────
+  // Debounced Probe beim Tippen/Pasten: ist die URL eine SC/YT-Playlist?
+  // Wenn ja → Info-Zeile + Navidrome-Playlist-Toggle einblenden.
+  let urlPlaylistInfo = $state<{ name: string; count: number; truncated: boolean } | null>(null);
+  let urlAsNavidromePlaylist = $state(true);
+  let urlProbeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function looksLikePlaylistUrl(u: string): boolean {
+    // Spiegel der Backend-Heuristik — spart Probe-Calls für offensichtliche
+    // Single-Track-URLs (Backend validiert eh nochmal).
+    return /soundcloud\.com\/[^/]+\/sets\/|[?&]list=|youtube\.com\/playlist/i.test(u);
+  }
+
+  function onUrlInput() {
+    if (urlProbeTimer) clearTimeout(urlProbeTimer);
+    urlPlaylistInfo = null;
+    const u = urlInput.trim();
+    if (!u || !looksLikePlaylistUrl(u)) return;
+    // 500ms Debounce — Probe macht einen flat-extract (~1-2s), nicht bei
+    // jedem Tastendruck feuern.
+    urlProbeTimer = setTimeout(async () => {
+      try {
+        const r = await urlApi.probe(u);
+        if (r.kind === 'playlist' && urlInput.trim() === u) {
+          urlPlaylistInfo = {
+            name: r.name ?? '',
+            count: r.track_count ?? 0,
+            truncated: r.truncated ?? false
+          };
+        }
+      } catch {
+        // Probe ist Komfort — Fehler still schlucken, Submit klärt es.
+      }
+    }, 500);
+  }
+
   async function submitUrl(ev?: MouseEvent | KeyboardEvent) {
     if (!urlInput.trim()) return;
     urlBusy = true;
@@ -86,9 +122,24 @@
       coverEl = ev.currentTarget as HTMLElement;
     }
     try {
-      const r = await urlApi.download(urlInput.trim(), { location: $defaultLocation });
-      urlMessage = r.message ?? `In Queue als ${r.job_id}`;
+      const r = await urlApi.download(urlInput.trim(), {
+        location: $defaultLocation,
+        asNavidromePlaylist: urlAsNavidromePlaylist
+      });
+      if ('kind' in r && r.kind === 'playlist') {
+        urlMessage = $t('library.playlist.queued', {
+          queued: r.queued,
+          skipped: r.skipped,
+          name: r.playlist_name
+        });
+        if (r.truncated) {
+          urlMessage += ' — ' + $t('library.playlist.truncated', { total: r.total });
+        }
+      } else {
+        urlMessage = r.message ?? `In Queue als ${r.job_id}`;
+      }
       urlInput = '';
+      urlPlaylistInfo = null;
       if (coverEl) {
         flyToQueue(coverEl, null, accent, 32);
       }
@@ -541,6 +592,7 @@
       <input
         type="url"
         bind:value={urlInput}
+        oninput={onUrlInput}
         onkeydown={(e) => e.key === 'Enter' && submitUrl(e)}
         placeholder={$t('library.placeholder.url')}
         spellcheck="false"
@@ -731,6 +783,26 @@
 
   <!-- ─── URL: nur Status + Hint (Eingabe lebt jetzt in der Top-Search-Bar) ─── -->
   {:else if mode === 'url'}
+    {#if urlPlaylistInfo}
+      <!-- Playlist erkannt (v0.5.0): Info-Zeile + Navidrome-Toggle -->
+      <div class="flex items-center gap-4 flex-wrap mb-3" style="font-size: 12px;">
+        <span style="color: {accent};">
+          📋 {$t('library.playlist.detected', {
+            name: urlPlaylistInfo.name,
+            count: urlPlaylistInfo.count
+          })}
+        </span>
+        {#if urlPlaylistInfo.truncated}
+          <span style="color: var(--color-status-error);">
+            {$t('library.playlist.truncated_hint')}
+          </span>
+        {/if}
+        <label class="flex items-center gap-1.5 cursor-pointer" style="color: var(--color-fg-secondary);">
+          <input type="checkbox" bind:checked={urlAsNavidromePlaylist} />
+          <span style="font-size: 12px;">{$t('library.playlist.toggle')}</span>
+        </label>
+      </div>
+    {/if}
     {#if urlMessage || urlError}
       <div class="flex items-center gap-3 flex-wrap mb-3" style="font-size: 12px;">
         {#if urlMessage}

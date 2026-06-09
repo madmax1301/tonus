@@ -10,6 +10,59 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.5.0] — 2026-06-09
+
+**SoundCloud-Playlist-Import + automatischer Navidrome-Playlist-Build.**
+Eine SC-Set-URL (oder YouTube-Playlist-URL) im URL-Mode pasten → alle
+Tracks werden gequeut und landen nach Download automatisch in einer
+gleichnamigen Navidrome-Playlist.
+
+Design-Doc: `docs/superpowers/specs/2026-06-09-soundcloud-playlist-import-design.md`
+
+### Added
+
+- **Playlist-Erkennung im URL-Mode** — `POST /api/url/download` erkennt
+  Playlist-URLs (SC `/sets/`, YT `list=`/`/playlist`) und expandiert sie
+  via yt-dlp flat-extract zu N einzelnen Download-Jobs. Single-URLs
+  verhalten sich exakt wie bisher (gleiche Latenz, BackgroundTask-Pfad).
+- **`POST /api/url/probe`** — leichtgewichtiger Probe-Endpoint; das
+  Frontend zeigt beim Paste „Playlist: ‚Name' — N Tracks" + Toggle
+  „Als Navidrome-Playlist anlegen" (default an).
+- **Worker-Dispatch für `kind='url'`-Jobs** — Playlist-Tracks laufen als
+  `status='queued'` durch die Download-Lanes statt als parallele
+  BackgroundTasks. Damit greifen Lane-Cooldowns, VPN-Lane-Binding und
+  Bot-Check-Re-Queue (#51) — 200 Tracks hämmern SoundCloud nicht zu.
+- **Periodischer Playlist-Reconcile-Thread** — `_reconcile_imported_playlists`
+  lief bisher nur bei Plugin-Syncs; ohne Navidrome-Plugin wurden
+  Playlist-Marker nie zu Subsonic-Playlists. Jetzt alle 15 min
+  (`PLAYLIST_RECONCILE_INTERVAL_S`) + sofort nach Playlist-Submit für
+  Tracks, die schon in der Library sind.
+- **Dedup mit Playlist-Vollständigkeit** — Tracks die schon
+  queued/processing/completed sind, werden nicht doppelt geladen; bei
+  completed wird der Playlist-Marker in den bestehenden Job gemerged,
+  damit die Navidrome-Playlist trotzdem vollständig wird.
+
+### Env (neu, optional)
+
+| Var | Default | Zweck |
+|---|---|---|
+| `PLAYLIST_MAX_TRACKS` | `200` | Safety-Cap pro Playlist-Expand |
+| `PLAYLIST_RECONCILE_INTERVAL_S` | `900` | Reconcile-Thread-Intervall |
+
+### Operator Notes
+
+- Tracks werden **direkt von SoundCloud** geladen (treu zur Playlist —
+  exakt die Version, die der Kurator gewählt hat), kein Resolver-Umweg.
+  Wenn SC einen Track blockt, greift Bot-Check-Re-Queue; die Playlist
+  füllt sich über Zeit nach (idempotenter Reconcile).
+- Tags wie bei URL-Downloads üblich: Artist = SC-Uploader, Album =
+  „Singles". Die Tracks liegen also unter `<Uploader>/Singles/`.
+- Scope v1: SoundCloud + YouTube-Playlists. Spotify/Apple-Playlist-URLs
+  bewusst nicht (brauchen API-Auth → CSV-Import nutzen).
+- 7 neue Unit-Tests (`expand_playlist_url`, gemocktes yt-dlp), Suite 21✓.
+
+---
+
 ## [0.4.10] — 2026-06-07
 
 Frontend-Major-Migrationen. Schließt die zwei in v0.4.4 deferred

@@ -686,12 +686,43 @@ export const importApi = {
     }>('/api/import/spotify-history', { files, ...opts })
 };
 
+export interface UrlProbeResult {
+  kind: 'track' | 'playlist';
+  name?: string;
+  track_count?: number;
+  total?: number;
+  truncated?: boolean;
+}
+
+export interface UrlPlaylistDownloadResult {
+  status: string;
+  kind: 'playlist';
+  playlist_name: string;
+  queued: number;
+  skipped: number;
+  total: number;
+  truncated: boolean;
+}
+
+export interface UrlTrackDownloadResult {
+  job_id: string;
+  status: string;
+  message?: string;
+  kind?: undefined;
+}
+
 export const urlApi = {
-  download: (url: string, opts: { location?: 'local' | 'navidrome' } = {}) =>
-    api.post<{ job_id: string; status: string; message?: string }>('/api/url/download', {
+  download: (
+    url: string,
+    opts: { location?: 'local' | 'navidrome'; asNavidromePlaylist?: boolean } = {}
+  ) =>
+    api.post<UrlTrackDownloadResult | UrlPlaylistDownloadResult>('/api/url/download', {
       url,
-      location: opts.location ?? 'navidrome'
-    })
+      location: opts.location ?? 'navidrome',
+      as_navidrome_playlist: opts.asNavidromePlaylist ?? true
+    }),
+  // v0.5.0: leichtgewichtiger Probe-Call — ist die URL eine Playlist?
+  probe: (url: string) => api.post<UrlProbeResult>('/api/url/probe', { url })
 };
 
 export interface ReverseLookupResult {

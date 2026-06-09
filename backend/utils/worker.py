@@ -1350,19 +1350,44 @@ class JobWorker(threading.Thread):
         # dem Setzen der Cooldown wieder frei — siehe Reorder-Block unten.
         try:
             with self._lock:
-                from app import download_and_process
+                if params.get("kind") == "url" and params.get("url"):
+                    # URL-Job (v0.5.0, Playlist-Expand): kein Deezer/Spotify-
+                    # Match — direkt via yt-dlp von der Quell-URL laden.
+                    # Läuft hier im Worker statt als BackgroundTask, damit
+                    # Lane-Cooldowns + Bot-Check-Re-Queue (finally-Block
+                    # unten) greifen. Single-URL-Submits aus dem Frontend
+                    # behalten ihren BackgroundTask-Pfad (status='processing'
+                    # ab Anlage — die sieht dieser Poll nie).
+                    from app import url_download_and_process
 
-                download_and_process(
-                    track_id=track_id,
-                    location=params.get("location", "local"),
-                    video_id=params.get("video_id"),
-                    output_format=params.get("output_format"),
-                    audio_quality=params.get("audio_quality"),
-                    metadata_provider=params.get("metadata_provider", "deezer"),
-                    max_retries=params.get("max_retries", 0),
-                    navidrome_library_path=params.get("navidrome_library_path"),
-                    source_lane=propagated_lane,
-                )
+                    # track_hint bewusst NICHT aus payload["track"] — das sind
+                    # flat-extract-Daten (Queue-UI-Anzeige); der Full-Extract
+                    # in url_download_and_process liefert die kanonischen Tags.
+                    url_download_and_process(
+                        track_id,
+                        params["url"],
+                        params.get("location", "local"),
+                        params.get("output_format"),
+                        params.get("audio_quality"),
+                        params.get("navidrome_library_path"),
+                        track_hint=None,
+                        import_playlist_names=params.get("import_playlist_names"),
+                        source_lane=propagated_lane,
+                    )
+                else:
+                    from app import download_and_process
+
+                    download_and_process(
+                        track_id=track_id,
+                        location=params.get("location", "local"),
+                        video_id=params.get("video_id"),
+                        output_format=params.get("output_format"),
+                        audio_quality=params.get("audio_quality"),
+                        metadata_provider=params.get("metadata_provider", "deezer"),
+                        max_retries=params.get("max_retries", 0),
+                        navidrome_library_path=params.get("navidrome_library_path"),
+                        source_lane=propagated_lane,
+                    )
         finally:
             # ----- Per-Lane-Cooldown -----
             # Greift IMMER, egal ob success oder error. Bei 429 wird's deutlich

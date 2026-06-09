@@ -167,6 +167,15 @@ MULTI_SOURCE_CANDIDATES_PER_SOURCE = int(os.getenv("MULTI_SOURCE_CANDIDATES_PER_
 # 30-60-90min Sets durchzulassen. Aus dem 2026-05-10 Burn-in: alle
 # Falschmatches waren >15min.
 MAX_TRACK_DURATION_S = int(os.getenv("MAX_TRACK_DURATION_S", "900"))
+# Safety-Cap für Playlist-Expand (v0.5.0): wie viele Tracks aus einer
+# SoundCloud/YouTube-Playlist-URL maximal gequeut werden. Schützt vor
+# Runaway-Imports bei 1000+-Track-Playlists — Response markiert
+# truncated=true, Frontend zeigt eine Warnung.
+PLAYLIST_MAX_TRACKS = int(os.getenv("PLAYLIST_MAX_TRACKS", "200"))
+# Intervall des Playlist-Reconcile-Background-Threads (v0.5.0): materialisiert
+# Playlist-Marker (SC-Import, CSV-Import) zu Subsonic-Playlists, auch ohne
+# Navidrome-Plugin-Syncs. Idempotent, bei leerem Marker-Set ~kostenlos.
+PLAYLIST_RECONCILE_INTERVAL_S = int(os.getenv("PLAYLIST_RECONCILE_INTERVAL_S", "900"))
 
 # ─── Security: Album-Art-URL-Allowlist (Audit C-1, 2026-05-12) ────
 # SSRF-Schutz für services.metadata._download_album_art. Ohne diese

@@ -994,6 +994,75 @@ class YouTubeService:
                 'error': str(e),
             }
 
+    def expand_playlist_url(self, url: str, limit: Optional[int] = None) -> Optional[Dict]:
+        """Expandiert eine Playlist-URL (SoundCloud-Set, YouTube-Playlist) zu
+        einer Track-Liste via yt-dlp flat-extract (v0.5.0).
+
+        Returns None wenn die URL KEINE Playlist ist (einzelner Track,
+        kaputte URL, Extract-Fehler) — Caller fällt dann auf den bisherigen
+        Single-URL-Pfad zurück. Sonst:
+            {
+                'name': str,               # Playlist-Titel von der Quelle
+                'tracks': [{'url', 'title', 'uploader'}, ...],
+                'total': int,              # Anzahl VOR dem Cap
+                'truncated': bool,         # True wenn total > limit
+            }
+
+        flat-extract lädt nur die Index-Seite (1 Request), kein Download und
+        keine per-Track-Roundtrips — schnell genug für den Probe-Endpoint.
+        SC-Pseudo-Entries (api.soundcloud.com-Resolver-URLs ohne webpage)
+        werden gefiltert, analog _search_yt_dlp_extractor.
+        """
+        if limit is None:
+            limit = config.PLAYLIST_MAX_TRACKS
+
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+            'skip_download': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+        ydl_opts = self._add_cookies_to_opts(ydl_opts)
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as e:
+            print(f"WARN: playlist expand failed for {url[:80]}: {type(e).__name__}: {e}")
+            return None
+
+        if not info or info.get('_type') != 'playlist':
+            return None
+
+        entries = info.get('entries') or []
+        tracks: List[Dict] = []
+        for e in entries:
+            if not e:
+                continue
+            track_url = e.get('webpage_url') or e.get('url') or ''
+            # SC-flat-extract liefert teils api.soundcloud.com-Resolver-URLs —
+            # die kann download_by_url nicht laden. Skip analog Search-Pfad.
+            if not track_url or 'api.' in track_url:
+                continue
+            tracks.append({
+                'url': track_url,
+                'title': (e.get('title') or '').strip(),
+                'uploader': (e.get('uploader') or e.get('channel') or '').strip(),
+            })
+
+        if not tracks:
+            return None
+
+        total = len(tracks)
+        truncated = total > limit
+        return {
+            'name': (info.get('title') or '').strip() or 'Imported Playlist',
+            'tracks': tracks[:limit],
+            'total': total,
+            'truncated': truncated,
+        }
+
     # ------------------------------------------------------------------
     # Generischer URL-Download (Phase 1) — funktioniert mit allem, was yt-dlp
     # versteht: YouTube, SoundCloud, Bandcamp, Vimeo, Mixcloud, Dailymotion …
