@@ -950,14 +950,12 @@ def merge_playlist_names_into_download_job(job_id: str, new_names: List[str]) ->
         conn.close()
 
 
-def bulk_merge_playlist_names_into_download_jobs(
-    updates: Dict[str, List[str]]
-) -> Dict[str, int]:
-    """Batch-Variante von merge_playlist_names_into_download_job.
+def _bulk_merge_payload_list(key: str, updates: Dict[str, List[str]]) -> Dict[str, int]:
+    """Generischer Batch-Merge einer String-Liste in download_jobs.payload_json.
 
-    `updates` = {download_job_id: [new_playlist_names, ...]}.
-    Eine Connection, eine Transaction, alle SELECTs und UPDATEs in einem
-    Pass. Returnt {download_job_id: anzahl_neu_hinzugefügter_namen}.
+    `updates` = {download_job_id: [neue_werte, ...]} — dedupliziert gegen die
+    bestehende Liste unter `key`. Eine Connection, eine Transaction, alle
+    SELECTs und UPDATEs in einem Pass. Returnt {job_id: anzahl_neu}.
 
     Hintergrund (2026-05-10): bei playlist_sync mit ~8000 Queue-Matches
     machte die Single-Call-Variante 8000× open+commit+close auf der DB.
@@ -991,7 +989,7 @@ def bulk_merge_playlist_names_into_download_jobs(
             except Exception:
                 result[jid] = 0
                 continue
-            existing = payload.get("import_playlist_names") or []
+            existing = payload.get(key) or []
             if not isinstance(existing, list):
                 existing = []
             merged = list(existing)
@@ -1002,7 +1000,7 @@ def bulk_merge_playlist_names_into_download_jobs(
                     added += 1
             result[jid] = added
             if added > 0:
-                payload["import_playlist_names"] = merged
+                payload[key] = merged
                 write_tuples.append((_json.dumps(payload), now, jid))
 
         if write_tuples:
@@ -1014,3 +1012,27 @@ def bulk_merge_playlist_names_into_download_jobs(
         return result
     finally:
         conn.close()
+
+
+def bulk_merge_playlist_names_into_download_jobs(
+    updates: Dict[str, List[str]]
+) -> Dict[str, int]:
+    """Batch-Variante von merge_playlist_names_into_download_job.
+    Siehe _bulk_merge_payload_list für Transaktions-Semantik."""
+    return _bulk_merge_payload_list("import_playlist_names", updates)
+
+
+def bulk_merge_reconciled_playlists(updates: Dict[str, List[str]]) -> Dict[str, int]:
+    """Memo-Marker (v0.5.2): 'Track ist in Subsonic-Playlist X bestätigt'.
+
+    Vom Playlist-Reconcile geschrieben, sobald ein Track in Navidrome
+    aufgelöst UND der Playlist hinzugefügt (oder dort schon vorhanden)
+    ist. Künftige Reconcile-Läufe überspringen memoizierte (job, playlist)-
+    Paare — ohne das Memo prüfte der 15-min-Thread bei großen Marker-
+    Beständen (5285 Tracks / 218 Playlists nach dem CSV-Import-Backlog)
+    jeden Lauf ALLE Tracks erneut gegen Navidrome.
+
+    Nebeneffekt: manuell aus einer Navidrome-Playlist entfernte Tracks
+    werden nicht mehr bei jedem Lauf wieder hinzugefügt — gewollt.
+    """
+    return _bulk_merge_payload_list("reconciled_playlists", updates)
