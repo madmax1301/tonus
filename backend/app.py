@@ -3588,6 +3588,8 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
         return {"playlists": 0, "tracks_added": 0}
 
     total_added = 0
+    unresolved_total = 0
+    unresolved_playlists = 0
     # Memo-Updates: {job_id: [playlist_name, ...]} — nach dem Loop in einem
     # einzigen Batch in payload_json gemerged (eine Transaction statt N).
     memo_updates: Dict[str, List[str]] = defaultdict(list)
@@ -3614,10 +3616,11 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
             else:
                 unresolved += 1
         if not sub_ids:
-            print(
-                f"[plugin-reconcile] '{playlist_name}': "
-                f"no resolvable subsonic IDs yet ({unresolved} unresolved of {len(items)})"
-            )
+            # Nicht pro Playlist loggen (v0.5.4): dauerhaft unauflösbare
+            # Marker (Download fehlte, Tags matchen nicht) würden sonst
+            # jede 15 min dutzende Zeilen wiederholen — Summary unten.
+            unresolved_total += unresolved
+            unresolved_playlists += 1
             continue
 
         result = navidrome_service.add_tracks_to_playlist(playlist_id, sub_ids)
@@ -3644,6 +3647,13 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
         from utils.job_store import bulk_merge_reconciled_playlists
 
         bulk_merge_reconciled_playlists(dict(memo_updates))
+
+    if unresolved_total:
+        print(
+            f"[plugin-reconcile] {unresolved_total} track(s) across "
+            f"{unresolved_playlists} playlist(s) not resolvable in Navidrome yet "
+            f"(missing download or tag mismatch) — will retry"
+        )
 
     return {"playlists": len(by_playlist), "tracks_added": total_added}
 
