@@ -10,6 +10,26 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.5.3] — 2026-06-11
+
+Queue-Anzeige-Polish für Playlist-Imports.
+
+### Fixed
+
+- **Queued Playlist-Tracks zeigten rohe URLs** — SoundCloud liefert beim
+  flat-extract eines Sets nur für die ersten ~5 Einträge Titel; der Rest
+  sind Stubs (api-v2-URL, kein Titel/Cover). Die Queue zeigte deshalb
+  `https://api-v2.soundcloud.com/tracks/…` als Track-Name. Jetzt:
+  Placeholder „<Playlistname> · Track N/M", Playlist-Owner als Artist
+  und das Set-Artwork als Cover. Sobald eine Lane den Track verarbeitet,
+  ersetzt der Worker das wie bisher durch die echten Metadaten
+  (Full-Extract bei progress=25); in der Library landen Tracks immer
+  mit echtem Titel + embedded Cover.
+- YouTube-Playlist-Einträge übernehmen ihr per-Entry-Thumbnail (bei
+  YT liefert der flat-extract welche) statt des Set-Artworks.
+
+---
+
 ## [0.5.2] — 2026-06-10
 
 Performance-/Log-Fix für den Playlist-Reconcile aus v0.5.0.
