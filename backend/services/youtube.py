@@ -99,6 +99,25 @@ _IMPERSONATE_TARGET = _parse_impersonate_target(config.YOUTUBE_IMPERSONATE)
 _IMPERSONATE_OK = _probe_impersonate(_IMPERSONATE_TARGET)
 
 
+def _best_thumbnail(info: Dict) -> str:
+    """Beste Thumbnail-URL aus einem yt-dlp-Info-Dict ('' wenn keins).
+
+    yt-dlp liefert je nach Extractor entweder 'thumbnail' (Single-URL)
+    oder 'thumbnails' (Liste, aufsteigend nach Qualität sortiert —
+    letzter Eintrag ist der größte). Flat-extract-Stubs haben oft keins
+    von beidem.
+    """
+    thumb = info.get('thumbnail')
+    if thumb:
+        return thumb
+    thumbs = info.get('thumbnails') or []
+    if isinstance(thumbs, list) and thumbs:
+        last = thumbs[-1]
+        if isinstance(last, dict):
+            return last.get('url') or ''
+    return ''
+
+
 def _apply_anti_detection_opts(ydl_opts: Dict) -> Dict:
     """Hardening gegen YouTube-Bot-Detection und Rate-Limit-Trigger.
 
@@ -1010,10 +1029,17 @@ class YouTubeService:
         Sonst:
             {
                 'name': str,               # Playlist-Titel von der Quelle
-                'tracks': [{'url', 'title', 'uploader'}, ...],
+                'uploader': str,           # Playlist-Owner ('' wenn unbekannt)
+                'artwork': str,            # Playlist-Cover-URL ('' wenn keins)
+                'tracks': [{'url', 'title', 'uploader', 'thumbnail'}, ...],
                 'total': int,              # Anzahl VOR dem Cap
                 'truncated': bool,         # True wenn total > limit
             }
+
+        v0.5.3: 'artwork'/'thumbnail' für die Queue-Anzeige — SC-flat-extract
+        liefert für Set-Einträge nach den ersten ~5 nur Stubs (api-v2-URL,
+        kein Titel/Cover). Das Set-Artwork dient als Placeholder-Cover bis
+        der Worker beim Download die echten Metadaten zieht.
 
         flat-extract lädt nur die Index-Seite (1 Request), kein Download und
         keine per-Track-Roundtrips — schnell genug für den Probe-Endpoint.
@@ -1056,6 +1082,7 @@ class YouTubeService:
                 'url': track_url,
                 'title': (e.get('title') or '').strip(),
                 'uploader': (e.get('uploader') or e.get('channel') or '').strip(),
+                'thumbnail': _best_thumbnail(e),
             })
 
         if not tracks:
@@ -1065,6 +1092,8 @@ class YouTubeService:
         truncated = total > limit
         return {
             'name': (info.get('title') or '').strip() or 'Imported Playlist',
+            'uploader': (info.get('uploader') or info.get('channel') or '').strip(),
+            'artwork': _best_thumbnail(info),
             'tracks': tracks[:limit],
             'total': total,
             'truncated': truncated,

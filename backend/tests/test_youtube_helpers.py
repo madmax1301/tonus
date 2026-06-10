@@ -112,6 +112,8 @@ def test_expand_playlist_url_basic(monkeypatch) -> None:
     _mock_ydl(monkeypatch, {
         "_type": "playlist",
         "title": "Hardstyle Bangers",
+        "uploader": "madmax",
+        "thumbnail": "https://i1.sndcdn.com/artworks-set-500x500.jpg",
         "entries": [
             {"webpage_url": "https://soundcloud.com/a/t1", "title": "T1", "uploader": "A"},
             {"webpage_url": "https://soundcloud.com/a/t2", "title": "T2", "uploader": "A"},
@@ -121,10 +123,42 @@ def test_expand_playlist_url_basic(monkeypatch) -> None:
     out = svc.expand_playlist_url("https://soundcloud.com/a/sets/x")
     assert out is not None
     assert out["name"] == "Hardstyle Bangers"
+    assert out["uploader"] == "madmax"
+    assert out["artwork"] == "https://i1.sndcdn.com/artworks-set-500x500.jpg"
     assert len(out["tracks"]) == 2
     assert out["total"] == 2
     assert out["truncated"] is False
-    assert out["tracks"][0] == {"url": "https://soundcloud.com/a/t1", "title": "T1", "uploader": "A"}
+    assert out["tracks"][0] == {
+        "url": "https://soundcloud.com/a/t1",
+        "title": "T1",
+        "uploader": "A",
+        "thumbnail": "",
+    }
+
+
+def test_expand_playlist_url_entry_thumbnails(monkeypatch) -> None:
+    # v0.5.3: per-Entry-Thumbnail — 'thumbnail' (Single) gewinnt, sonst
+    # letzter Eintrag aus 'thumbnails' (höchste Qualität), sonst ''.
+    _mock_ydl(monkeypatch, {
+        "_type": "playlist",
+        "title": "Covers",
+        "entries": [
+            {"webpage_url": "https://x/t1", "title": "T1",
+             "thumbnail": "https://img/t1.jpg"},
+            {"webpage_url": "https://x/t2", "title": "T2",
+             "thumbnails": [{"url": "https://img/small.jpg"}, {"url": "https://img/big.jpg"}]},
+            {"webpage_url": "https://x/t3", "title": "T3"},
+        ],
+    })
+    svc = YouTubeService()
+    out = svc.expand_playlist_url("https://youtube.com/playlist?list=abc")
+    assert out is not None
+    assert out["tracks"][0]["thumbnail"] == "https://img/t1.jpg"
+    assert out["tracks"][1]["thumbnail"] == "https://img/big.jpg"
+    assert out["tracks"][2]["thumbnail"] == ""
+    # Kein Set-Artwork/Uploader im Info-Dict → leere Strings, keine KeyErrors
+    assert out["artwork"] == ""
+    assert out["uploader"] == ""
 
 
 def test_expand_playlist_url_not_a_playlist(monkeypatch) -> None:

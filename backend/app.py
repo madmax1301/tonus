@@ -3079,10 +3079,18 @@ def _queue_playlist_tracks(
 
     playlist_name = expanded["name"]
     marker = [playlist_name] if as_navidrome_playlist else []
+    # Placeholder-Daten für die Queue-Anzeige (v0.5.3): SC-flat-extract
+    # liefert für Set-Einträge nach den ersten ~5 nur Stubs (api-v2-URL,
+    # kein Titel/Cover) — statt der rohen URL zeigen wir "Playlist · Track
+    # N/M" und das Set-Artwork. Der Worker ersetzt das beim Download durch
+    # die echten Metadaten (payload-Refresh bei progress=25).
+    pl_uploader = expanded.get("uploader") or ""
+    pl_artwork = expanded.get("artwork") or ""
+    track_count = len(expanded["tracks"])
 
     queued = 0
     skipped = 0
-    for entry in expanded["tracks"]:
+    for idx, entry in enumerate(expanded["tracks"], start=1):
         track_url = entry["url"]
         job_id = f"url-{abs(hash((track_url, location, output_format))) % 10_000_000}"
 
@@ -3096,8 +3104,8 @@ def _queue_playlist_tracks(
                 merge_playlist_names_into_download_job(job_id, marker)
             continue
 
-        title = entry.get("title") or track_url
-        uploader = entry.get("uploader") or "URL"
+        title = entry.get("title") or f"{playlist_name} · Track {idx}/{track_count}"
+        uploader = entry.get("uploader") or pl_uploader or "URL"
         payload = {
             "kind": "url",
             "url": track_url,
@@ -3110,7 +3118,7 @@ def _queue_playlist_tracks(
                 "name": title,
                 "artist": uploader,
                 "album": "",
-                "album_art": "",
+                "album_art": entry.get("thumbnail") or pl_artwork,
             },
         }
         if marker:
