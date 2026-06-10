@@ -55,11 +55,18 @@ export const strings = {
     'library.url.queue_button': 'In Queue',
     'library.youtube.search_button': 'Match auf {provider} suchen',
     'library.youtube.direct_button': 'Doch direkt mit YouTube-Tags laden',
+    'library.mode.playlist': 'Playlist · SC/YT',
+    'library.placeholder.playlist': 'https://soundcloud.com/…/sets/… oder YouTube-Playlist',
     'library.playlist.detected': 'Playlist: „{name}" — {count} Tracks',
     'library.playlist.toggle': 'Als Navidrome-Playlist anlegen',
     'library.playlist.queued': '{queued} Tracks aus „{name}" gequeut ({skipped} übersprungen)',
     'library.playlist.truncated': 'auf die ersten von {total} Tracks begrenzt',
     'library.playlist.truncated_hint': 'große Playlist — wird beim Queuen begrenzt',
+    'library.playlist.probing': 'prüfe Playlist …',
+    'library.playlist.not_a_playlist':
+      'Das sieht nicht nach einer Playlist-URL aus — SC-Sets enden auf /sets/…, YouTube-Playlists enthalten list=. Einzelne Tracks gehören in den URL-Tab.',
+    'library.playlist.hint':
+      'Was du bekommst: alle Tracks der Playlist als einzelne Downloads (direkt von der Quelle, Tags wie dort) — plus optional eine gleichnamige Playlist in Navidrome, die sich füllt sobald Tracks fertig sind. Schon vorhandene Tracks werden übersprungen, landen aber trotzdem in der Playlist. Private SC-Sets brauchen den Share-Link (endet auf /s-XXXXX).',
     'library.url.hint':
       'Was du bekommst: Audio aus der URL + Tags wie auf der Quelle (YouTube-Title als Track-Name, Channel als Artist, Thumbnail als Cover). Schnell, unsauber. Für SoundCloud, Bandcamp, Vimeo, Random-YouTube — alles wo du keinen Spotify/Deezer-Match brauchst. SoundCloud-Sets und YouTube-Playlists werden erkannt und komplett gequeut.',
     'library.youtube.hint':
@@ -590,11 +597,18 @@ export const strings = {
     'library.url.queue_button': 'Queue',
     'library.youtube.search_button': 'Find match on {provider}',
     'library.youtube.direct_button': 'Take YouTube tags instead',
+    'library.mode.playlist': 'Playlist · SC/YT',
+    'library.placeholder.playlist': 'https://soundcloud.com/…/sets/… or YouTube playlist',
     'library.playlist.detected': 'Playlist: "{name}" — {count} tracks',
     'library.playlist.toggle': 'Create as Navidrome playlist',
     'library.playlist.queued': 'Queued {queued} tracks from "{name}" ({skipped} skipped)',
     'library.playlist.truncated': 'capped to the first of {total} tracks',
     'library.playlist.truncated_hint': 'large playlist — will be capped on queue',
+    'library.playlist.probing': 'checking playlist …',
+    'library.playlist.not_a_playlist':
+      "This doesn't look like a playlist URL — SC sets end in /sets/…, YouTube playlists contain list=. Single tracks belong in the URL tab.",
+    'library.playlist.hint':
+      'What you get: every track of the playlist as an individual download (straight from the source, tags as-is) — plus, optionally, a Navidrome playlist with the same name that fills up as tracks finish. Tracks already in your library are skipped but still added to the playlist. Private SC sets need the share link (ends in /s-XXXXX).',
     'library.url.hint':
       'What you get: audio from the URL + tags as they are on the source (YouTube title as track name, channel as artist, thumbnail as cover). Fast, messy. For SoundCloud, Bandcamp, Vimeo, random YouTube — anywhere you don’t need a Spotify/Deezer match. SoundCloud sets and YouTube playlists are detected and queued in full.',
     'library.youtube.hint':

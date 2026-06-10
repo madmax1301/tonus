@@ -687,11 +687,13 @@ export const importApi = {
 };
 
 export interface UrlProbeResult {
-  kind: 'track' | 'playlist';
+  kind: 'track' | 'playlist' | 'error';
   name?: string;
   track_count?: number;
   total?: number;
   truncated?: boolean;
+  // kind='error' (v0.5.1): Expand fehlgeschlagen (z.B. privates SC-Set, 404)
+  message?: string;
 }
 
 export interface UrlPlaylistDownloadResult {

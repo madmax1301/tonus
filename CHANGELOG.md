@@ -10,6 +10,41 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.5.1] — 2026-06-10
+
+Follow-up aus dem v0.5.0-Live-Test: Fehler-Transparenz + Auffindbarkeit.
+
+### Added
+
+- **Eigener Library-Tab „Playlist · SC/YT"** — der Playlist-Import war im
+  URL-Mode versteckt (Auto-Detection ohne sichtbaren Einstieg). Jetzt:
+  dedizierter Mode-Tab mit eigenem Eingabefeld, Live-Probe-Status
+  („prüfe Playlist …" → „Playlist: ‚Name' — N Tracks"), immer sichtbarem
+  Navidrome-Toggle und erklärendem Hint (inkl. Share-Link-Hinweis für
+  private Sets). Der URL-Tab behält die Auto-Detection als Convenience.
+
+### Fixed
+
+- **Expand-Fehler erzeugte Fake-Success** — schlug der Playlist-Extract
+  fehl (z.B. HTTP 404 bei privaten SC-Sets), fiel der Handler still auf
+  den Single-URL-Pfad zurück: „✓ In Queue als url-XXXX", der Job starb
+  unsichtbar im Error-Haufen. Jetzt: **422 mit Operator-Hinweis**
+  („Playlist nicht lesbar (404). Wenn das Set privat ist: den
+  SoundCloud-Share-Link nutzen (endet auf /s-XXXXX) …").
+  `expand_playlist_url` unterscheidet jetzt „keine Playlist" (None →
+  Single-Pfad) von „Extract-Fehler" (`{'error': …}` → 422).
+- **Probe meldet Fehler sofort** — `POST /api/url/probe` liefert
+  `kind='error'` + Message; das Frontend zeigt das Problem schon beim
+  Paste (rot), nicht erst nach dem Submit.
+
+### Operator Notes
+
+- Private SoundCloud-Sets: Share → Link kopieren → der Link mit
+  `/s-XXXXX`-Secret-Token macht das Set für yt-dlp lesbar. Alternativ
+  SC-Cookies in der cookies.txt hinterlegen oder Set öffentlich stellen.
+
+---
+
 ## [0.5.0] — 2026-06-09
 
 **SoundCloud-Playlist-Import + automatischer Navidrome-Playlist-Build.**
