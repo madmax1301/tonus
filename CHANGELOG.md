@@ -10,6 +10,20 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.5.4] — 2026-06-11
+
+### Fixed
+
+- **Rest-Log-Spam im Reconcile** — dauerhaft unauflösbare Marker (Track
+  wurde nie heruntergeladen oder Tags matchen den Navidrome-Index nicht)
+  loggten weiter pro Playlist eine „no resolvable subsonic IDs yet"-Zeile
+  alle 15 Minuten (~56 Zeilen pro Lauf nach dem v0.5.2-Deploy). Jetzt:
+  eine einzige Summary-Zeile pro Lauf („N track(s) across M playlist(s)
+  not resolvable …"). Die Retry-Semantik bleibt unverändert — sobald ein
+  Track im Index auftaucht, wird er nachgezogen und memoized.
+
+---
+
 ## [0.5.3] — 2026-06-11
 
 Queue-Anzeige-Polish für Playlist-Imports.
