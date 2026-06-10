@@ -10,6 +10,32 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.5.2] — 2026-06-10
+
+Performance-/Log-Fix für den Playlist-Reconcile aus v0.5.0.
+
+### Fixed
+
+- **Reconcile-Memo gegen Lookup-/Log-Spam** — der 15-min-Reconcile-Thread
+  prüfte bei jedem Lauf ALLE Playlist-Marker im 60-Tage-Fenster erneut
+  (nach dem ersten Materialisieren: ~5 300 Subsonic-Lookups + 218
+  „+0 tracks"-Logzeilen pro Lauf, für 60 Tage). Jetzt merkt sich jeder
+  Job pro Playlist, dass er erfolgreich reconciled wurde
+  (`reconciled_playlists`-Liste in `payload_json`) und wird übersprungen.
+  Unresolved Tracks (noch nicht im Navidrome-Index) bleiben ohne Memo und
+  werden weiter nachgezogen; bei Subsonic-API-Fehlern wird nicht memoized.
+- **Leise Steady-State-Logs** — die per-Playlist-Logzeile erscheint nur
+  noch bei `added > 0`. Sind alle Paare memoized, returnt der Lauf früh
+  ohne jede Ausgabe.
+
+### Changed
+
+- **Nebeneffekt (gewollt):** Tracks, die manuell aus einer
+  Navidrome-Playlist entfernt wurden, werden vom Reconcile nicht mehr
+  bei jedem Lauf wieder hinzugefügt — das Memo gilt als „war schon drin".
+
+---
+
 ## [0.5.1] — 2026-06-10
 
 Follow-up aus dem v0.5.0-Live-Test: Fehler-Transparenz + Auffindbarkeit.

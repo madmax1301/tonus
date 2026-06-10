@@ -3564,13 +3564,25 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
         title = (track_obj.get("name") or "").strip()
         if not artist or not title:
             continue
+        # Memo (v0.5.2): Paare (Job, Playlist) die schon erfolgreich in
+        # Navidrome bestätigt wurden, überspringen — sonst hämmern wir bei
+        # jedem 15-min-Lauf tausende Subsonic-Lookups für längst
+        # reconcilierte Tracks und spammen "+0"-Logzeilen.
+        memo = payload.get("reconciled_playlists") or []
         for pl_name in playlist_names:
-            by_playlist[pl_name].append({"artist": artist, "title": title})
+            if pl_name in memo:
+                continue
+            by_playlist[pl_name].append(
+                {"artist": artist, "title": title, "job_id": r["job_id"]}
+            )
 
     if not by_playlist:
         return {"playlists": 0, "tracks_added": 0}
 
     total_added = 0
+    # Memo-Updates: {job_id: [playlist_name, ...]} — nach dem Loop in einem
+    # einzigen Batch in payload_json gemerged (eine Transaction statt N).
+    memo_updates: Dict[str, List[str]] = defaultdict(list)
     for playlist_name, items in by_playlist.items():
         existing = navidrome_service.find_playlist_by_name(playlist_name)
         if existing:
@@ -3584,11 +3596,13 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
         # Subsonic-IDs auflösen — Misses (Track noch nicht im Index) werden
         # beim nächsten Reconcile-Lauf nachgezogen.
         sub_ids: List[str] = []
+        resolved_items: List[Dict[str, str]] = []
         unresolved = 0
         for it in items:
             sid = navidrome_service.find_track_id_by_artist_title(it["artist"], it["title"])
             if sid:
                 sub_ids.append(sid)
+                resolved_items.append(it)
             else:
                 unresolved += 1
         if not sub_ids:
@@ -3601,11 +3615,27 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
         result = navidrome_service.add_tracks_to_playlist(playlist_id, sub_ids)
         added = result.get("added", 0)
         total_added += added
-        print(
-            f"[plugin-reconcile] '{playlist_name}' (pid={playlist_id}): "
-            f"+{added} tracks (already in playlist: {result.get('already_present', 0)}, "
-            f"unresolved: {unresolved})"
-        )
+        if added > 0:
+            print(
+                f"[plugin-reconcile] '{playlist_name}' (pid={playlist_id}): "
+                f"+{added} tracks (already in playlist: {result.get('already_present', 0)}, "
+                f"unresolved: {unresolved})"
+            )
+        # Resolved + in der Playlist (frisch oder schon drin) → memoizen.
+        # Unresolved Items bleiben ohne Memo und werden nachgezogen.
+        # Guard: bei API-Fehler liefert add_tracks_to_playlist added=0 obwohl
+        # to_add nicht leer war — dann NICHT memoizen, sonst gehen die Tracks
+        # verloren. Erfolg ⇔ added + already_present deckt alle sub_ids ab.
+        if added + result.get("already_present", 0) >= len(sub_ids):
+            for it in resolved_items:
+                jid = it.get("job_id")
+                if jid:
+                    memo_updates[jid].append(playlist_name)
+
+    if memo_updates:
+        from utils.job_store import bulk_merge_reconciled_playlists
+
+        bulk_merge_reconciled_playlists(dict(memo_updates))
 
     return {"playlists": len(by_playlist), "tracks_added": total_added}
 
