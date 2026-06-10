@@ -28,9 +28,9 @@
   import GlassCard from '$lib/components/GlassCard.svelte';
   import AlbumArt from '$lib/components/AlbumArt.svelte';
   import AlbumGridCard from '$lib/components/AlbumGridCard.svelte';
-  import { Download, LoaderCircle, Link2, Play } from 'lucide-svelte';
+  import { Download, LoaderCircle, Link2, Play, ListMusic } from 'lucide-svelte';
 
-  type Mode = 'tracks' | 'albums' | 'url' | 'reverse';
+  type Mode = 'tracks' | 'albums' | 'url' | 'reverse' | 'playlist';
 
   let query = $state('');
   let mode = $state<Mode>('tracks');
@@ -72,40 +72,104 @@
   let urlMessage = $state<string | null>(null);
   let urlError = $state<string | null>(null);
 
-  // ── Playlist-Erkennung (v0.5.0) ─────────────────────────
-  // Debounced Probe beim Tippen/Pasten: ist die URL eine SC/YT-Playlist?
-  // Wenn ja → Info-Zeile + Navidrome-Playlist-Toggle einblenden.
-  let urlPlaylistInfo = $state<{ name: string; count: number; truncated: boolean } | null>(null);
-  let urlAsNavidromePlaylist = $state(true);
-  let urlProbeTimer: ReturnType<typeof setTimeout> | null = null;
+  // ── Playlist-Import (v0.5.0/v0.5.1, eigener Tab) ────────
+  // Dedizierter Mode für SC-Sets / YT-Playlists. Debounced Probe zeigt
+  // Name + Track-Count (oder den Fehler, z.B. privates Set/404) schon
+  // beim Paste; Navidrome-Toggle steuert den Playlist-Build.
+  let plUrl = $state('');
+  let plBusy = $state(false);
+  let plProbing = $state(false);
+  let plMessage = $state<string | null>(null);
+  let plError = $state<string | null>(null);
+  let plInfo = $state<{ name: string; count: number; truncated: boolean } | null>(null);
+  let plNotAPlaylist = $state(false);
+  let plAsNavidrome = $state(true);
+  let plProbeTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function looksLikePlaylistUrl(u: string): boolean {
-    // Spiegel der Backend-Heuristik — spart Probe-Calls für offensichtliche
-    // Single-Track-URLs (Backend validiert eh nochmal).
-    return /soundcloud\.com\/[^/]+\/sets\/|[?&]list=|youtube\.com\/playlist/i.test(u);
-  }
-
-  function onUrlInput() {
-    if (urlProbeTimer) clearTimeout(urlProbeTimer);
-    urlPlaylistInfo = null;
-    const u = urlInput.trim();
-    if (!u || !looksLikePlaylistUrl(u)) return;
+  function onPlaylistInput() {
+    if (plProbeTimer) clearTimeout(plProbeTimer);
+    plInfo = null;
+    plError = null;
+    plNotAPlaylist = false;
+    const u = plUrl.trim();
+    if (!u || !u.startsWith('http')) return;
     // 500ms Debounce — Probe macht einen flat-extract (~1-2s), nicht bei
     // jedem Tastendruck feuern.
-    urlProbeTimer = setTimeout(async () => {
+    plProbeTimer = setTimeout(async () => {
+      plProbing = true;
       try {
         const r = await urlApi.probe(u);
-        if (r.kind === 'playlist' && urlInput.trim() === u) {
-          urlPlaylistInfo = {
+        if (plUrl.trim() !== u) return; // Eingabe hat sich geändert
+        if (r.kind === 'playlist') {
+          plInfo = {
             name: r.name ?? '',
             count: r.track_count ?? 0,
             truncated: r.truncated ?? false
           };
+        } else if (r.kind === 'error') {
+          plError = r.message ?? 'Playlist nicht lesbar';
+        } else {
+          // Backend sagt: keine Playlist-URL — Hinweis statt Fehler.
+          plNotAPlaylist = true;
         }
       } catch {
         // Probe ist Komfort — Fehler still schlucken, Submit klärt es.
+      } finally {
+        plProbing = false;
       }
     }, 500);
+  }
+
+  async function submitPlaylist(ev?: MouseEvent | KeyboardEvent) {
+    if (!plUrl.trim()) return;
+    plBusy = true;
+    plMessage = null;
+    plError = null;
+    let coverEl: HTMLElement | null = null;
+    if (ev) {
+      coverEl = ev.currentTarget as HTMLElement;
+    }
+    try {
+      const r = await urlApi.download(plUrl.trim(), {
+        location: $defaultLocation,
+        asNavidromePlaylist: plAsNavidrome
+      });
+      if ('kind' in r && r.kind === 'playlist') {
+        plMessage = $t('library.playlist.queued', {
+          queued: r.queued,
+          skipped: r.skipped,
+          name: r.playlist_name
+        });
+        if (r.truncated) {
+          plMessage += ' — ' + $t('library.playlist.truncated', { total: r.total });
+        }
+      } else {
+        // URL war doch ein Einzeltrack — Backend hat ihn normal gequeut.
+        plMessage = r.message ?? `In Queue als ${r.job_id}`;
+      }
+      plUrl = '';
+      plInfo = null;
+      plNotAPlaylist = false;
+      if (coverEl) {
+        flyToQueue(coverEl, null, accent, 32);
+      }
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 409 || err.status === 422)) {
+        const detail =
+          err.body && typeof err.body === 'object' && 'detail' in err.body
+            ? String((err.body as { detail: unknown }).detail)
+            : err.message;
+        if (err.status === 422) {
+          plError = detail;
+        } else {
+          plMessage = detail;
+        }
+      } else {
+        plError = err instanceof Error ? err.message : 'Playlist-Import fehlgeschlagen';
+      }
+    } finally {
+      plBusy = false;
+    }
   }
 
   async function submitUrl(ev?: MouseEvent | KeyboardEvent) {
@@ -122,34 +186,33 @@
       coverEl = ev.currentTarget as HTMLElement;
     }
     try {
-      const r = await urlApi.download(urlInput.trim(), {
-        location: $defaultLocation,
-        asNavidromePlaylist: urlAsNavidromePlaylist
-      });
+      const r = await urlApi.download(urlInput.trim(), { location: $defaultLocation });
       if ('kind' in r && r.kind === 'playlist') {
+        // Playlist-URL im URL-Tab gepastet — Backend expandiert trotzdem
+        // (Convenience); der dedizierte Playlist-Tab bietet mehr Kontrolle.
         urlMessage = $t('library.playlist.queued', {
           queued: r.queued,
           skipped: r.skipped,
           name: r.playlist_name
         });
-        if (r.truncated) {
-          urlMessage += ' — ' + $t('library.playlist.truncated', { total: r.total });
-        }
       } else {
         urlMessage = r.message ?? `In Queue als ${r.job_id}`;
       }
       urlInput = '';
-      urlPlaylistInfo = null;
       if (coverEl) {
         flyToQueue(coverEl, null, accent, 32);
       }
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
+      if (err instanceof ApiError && (err.status === 409 || err.status === 422)) {
         const detail =
           err.body && typeof err.body === 'object' && 'detail' in err.body
             ? String((err.body as { detail: unknown }).detail)
             : 'bereits vorhanden';
-        urlMessage = `${detail}`;
+        if (err.status === 422) {
+          urlError = detail;
+        } else {
+          urlMessage = `${detail}`;
+        }
       } else {
         urlError = err instanceof Error ? err.message : 'URL-Download fehlgeschlagen';
       }
@@ -273,7 +336,7 @@
     let restoredMode: Mode | null = null;
 
     if (qFromUrl) restoredQ = qFromUrl;
-    if (modeFromUrl && ['tracks', 'albums', 'url', 'reverse'].includes(modeFromUrl)) {
+    if (modeFromUrl && ['tracks', 'albums', 'url', 'reverse', 'playlist'].includes(modeFromUrl)) {
       restoredMode = modeFromUrl;
     }
 
@@ -592,7 +655,6 @@
       <input
         type="url"
         bind:value={urlInput}
-        oninput={onUrlInput}
         onkeydown={(e) => e.key === 'Enter' && submitUrl(e)}
         placeholder={$t('library.placeholder.url')}
         spellcheck="false"
@@ -637,6 +699,32 @@
           {$t('library.youtube.search_button', { provider: provider || 'Provider' })}
         {/if}
       </button>
+    {:else if mode === 'playlist'}
+      <ListMusic size={20} strokeWidth={1.5} style="color: {accent}; flex-shrink: 0;" />
+      <input
+        type="url"
+        bind:value={plUrl}
+        oninput={onPlaylistInput}
+        onkeydown={(e) => e.key === 'Enter' && submitPlaylist(e)}
+        placeholder={$t('library.placeholder.playlist')}
+        spellcheck="false"
+        autocomplete="off"
+        class="flex-1 bg-transparent outline-none"
+        style="font-size: 18px; font-weight: 300; letter-spacing: -0.005em; color: var(--color-fg-primary);"
+      />
+      <button
+        onclick={(e) => submitPlaylist(e)}
+        disabled={plBusy || !plUrl.trim()}
+        class="inline-flex items-center gap-1.5 transition-opacity disabled:opacity-40"
+        style="background: {accent}; color: #0a0a0c; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; line-height: 1; text-transform: uppercase; flex-shrink: 0;"
+      >
+        {#if plBusy}
+          <LoaderCircle size={11} class="animate-spin" />
+        {:else}
+          <Download size={11} strokeWidth={2} />
+        {/if}
+        {$t('library.url.queue_button')}
+      </button>
     {/if}
   </div>
 
@@ -655,7 +743,8 @@
       { id: 'tracks' as Mode, labelKey: 'library.mode.tracks' as const, count: trackResults.length, icon: null },
       { id: 'albums' as Mode, labelKey: 'library.mode.albums' as const, count: albumResults.length, icon: null },
       { id: 'url' as Mode, labelKey: 'library.mode.url' as const, count: null, icon: Link2 },
-      { id: 'reverse' as Mode, labelKey: 'library.mode.youtube_match' as const, count: null, icon: Play }
+      { id: 'reverse' as Mode, labelKey: 'library.mode.youtube_match' as const, count: null, icon: Play },
+      { id: 'playlist' as Mode, labelKey: 'library.mode.playlist' as const, count: null, icon: ListMusic }
     ] as m}
       {@const active = mode === m.id}
       <button
@@ -783,26 +872,6 @@
 
   <!-- ─── URL: nur Status + Hint (Eingabe lebt jetzt in der Top-Search-Bar) ─── -->
   {:else if mode === 'url'}
-    {#if urlPlaylistInfo}
-      <!-- Playlist erkannt (v0.5.0): Info-Zeile + Navidrome-Toggle -->
-      <div class="flex items-center gap-4 flex-wrap mb-3" style="font-size: 12px;">
-        <span style="color: {accent};">
-          📋 {$t('library.playlist.detected', {
-            name: urlPlaylistInfo.name,
-            count: urlPlaylistInfo.count
-          })}
-        </span>
-        {#if urlPlaylistInfo.truncated}
-          <span style="color: var(--color-status-error);">
-            {$t('library.playlist.truncated_hint')}
-          </span>
-        {/if}
-        <label class="flex items-center gap-1.5 cursor-pointer" style="color: var(--color-fg-secondary);">
-          <input type="checkbox" bind:checked={urlAsNavidromePlaylist} />
-          <span style="font-size: 12px;">{$t('library.playlist.toggle')}</span>
-        </label>
-      </div>
-    {/if}
     {#if urlMessage || urlError}
       <div class="flex items-center gap-3 flex-wrap mb-3" style="font-size: 12px;">
         {#if urlMessage}
@@ -815,6 +884,47 @@
     {/if}
     <p style="font-size: 12px; color: var(--color-fg-tertiary);">
       {$t('library.url.hint')}
+    </p>
+
+  <!-- ─── Playlist-Import: Probe-Info + Toggle + Status + Hint (v0.5.1) ─── -->
+  {:else if mode === 'playlist'}
+    {#if plProbing}
+      <div class="flex items-center gap-2 mb-3" style="font-size: 12px; color: var(--color-fg-tertiary);">
+        <LoaderCircle size={12} class="animate-spin" />
+        {$t('library.playlist.probing')}
+      </div>
+    {:else if plInfo}
+      <div class="flex items-center gap-4 flex-wrap mb-3" style="font-size: 12px;">
+        <span style="color: {accent};">
+          📋 {$t('library.playlist.detected', { name: plInfo.name, count: plInfo.count })}
+        </span>
+        {#if plInfo.truncated}
+          <span style="color: var(--color-status-error);">
+            {$t('library.playlist.truncated_hint')}
+          </span>
+        {/if}
+      </div>
+    {:else if plNotAPlaylist}
+      <div class="mb-3" style="font-size: 12px; color: var(--color-fg-tertiary);">
+        {$t('library.playlist.not_a_playlist')}
+      </div>
+    {/if}
+    <label class="flex items-center gap-1.5 cursor-pointer mb-3" style="color: var(--color-fg-secondary); font-size: 12px;">
+      <input type="checkbox" bind:checked={plAsNavidrome} />
+      <span>{$t('library.playlist.toggle')}</span>
+    </label>
+    {#if plMessage || plError}
+      <div class="flex items-center gap-3 flex-wrap mb-3" style="font-size: 12px;">
+        {#if plMessage}
+          <span style="color: var(--color-status-done);">✓ {plMessage}</span>
+        {/if}
+        {#if plError}
+          <span style="color: var(--color-status-error);">{plError}</span>
+        {/if}
+      </div>
+    {/if}
+    <p style="font-size: 12px; color: var(--color-fg-tertiary);">
+      {$t('library.playlist.hint')}
     </p>
 
   <!-- ─── YouTube-Match: Hint + Direct-Action + Lookup-Results ─── -->

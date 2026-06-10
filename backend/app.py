@@ -3137,12 +3137,30 @@ def _queue_playlist_tracks(
     }
 
 
+def _playlist_expand_error_detail(raw: str) -> str:
+    """Operator-freundliche Message für Playlist-Expand-Fehler (v0.5.1).
+
+    Der häufigste Fall ist 404 auf private SoundCloud-Sets: die normale
+    Set-URL ist für Anonym-Zugriff (yt-dlp) unsichtbar — der Share-Link
+    trägt einen Secret-Token (…/sets/name/s-XXXXX) der das aufschließt."""
+    if "404" in raw:
+        return (
+            "Playlist nicht lesbar (404). Wenn das Set privat ist: den "
+            "SoundCloud-Share-Link nutzen (endet auf /s-XXXXX) oder das Set "
+            "öffentlich stellen. Alternativ SC-Cookies in der cookies.txt "
+            "hinterlegen."
+        )
+    return f"Playlist nicht lesbar: {raw[:200]}"
+
+
 @app.post("/api/url/probe")
 async def url_probe(req: URLProbeRequest, _: None = Depends(require_token)):
     """Probe (v0.5.0): ist die URL eine Playlist? flat-extract, kein Download.
 
     Frontend ruft das debounced beim Paste auf, um die Playlist-UI
-    (Track-Count + Navidrome-Toggle) einzublenden.
+    (Track-Count + Navidrome-Toggle) einzublenden. Expand-Fehler (private
+    Sets, 404) werden als kind='error' gemeldet, damit der User es schon
+    beim Paste sieht statt erst nach dem Submit (v0.5.1).
     """
     url = (req.url or "").strip()
     if not url.startswith(("http://", "https://")):
@@ -3151,8 +3169,10 @@ async def url_probe(req: URLProbeRequest, _: None = Depends(require_token)):
         return {"kind": "track"}
 
     expanded = youtube_service.expand_playlist_url(url)
-    if not expanded:
+    if expanded is None:
         return {"kind": "track"}
+    if expanded.get("error"):
+        return {"kind": "error", "message": _playlist_expand_error_detail(expanded["error"])}
     return {
         "kind": "playlist",
         "name": expanded["name"],
@@ -3182,6 +3202,16 @@ async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTask
     # ── Playlist-Branch (v0.5.0) ────────────────────────────────────
     if _PLAYLIST_URL_RE.search(req.url):
         expanded = youtube_service.expand_playlist_url(req.url.strip())
+        # Expand-FEHLER (404 bei privaten Sets etc.) → klarer 422 statt
+        # still auf den Single-Pfad zu fallen. Ein Single-Download dieser
+        # Playlist-URL würde identisch scheitern — der alte Fall-Through
+        # erzeugte Fake-Success "In Queue als url-XXXX" + unsichtbaren
+        # Error-Job (v0.5.1-Fix).
+        if expanded and expanded.get("error"):
+            raise HTTPException(
+                status_code=422,
+                detail=_playlist_expand_error_detail(expanded["error"]),
+            )
         if expanded:
             result = _queue_playlist_tracks(
                 expanded,

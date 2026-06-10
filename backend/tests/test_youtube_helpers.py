@@ -134,9 +134,14 @@ def test_expand_playlist_url_not_a_playlist(monkeypatch) -> None:
 
 
 def test_expand_playlist_url_extract_error(monkeypatch) -> None:
-    _mock_ydl(monkeypatch, RuntimeError("boom"))
+    # v0.5.1: Extract-Fehler liefert {'error': ...} statt None — Caller
+    # zeigt das dem User (422) statt still auf den Single-Pfad zu fallen.
+    _mock_ydl(monkeypatch, RuntimeError("boom 404"))
     svc = YouTubeService()
-    assert svc.expand_playlist_url("https://soundcloud.com/a/sets/x") is None
+    out = svc.expand_playlist_url("https://soundcloud.com/a/sets/x")
+    assert out is not None
+    assert "boom 404" in out["error"]
+    assert "tracks" not in out
 
 
 def test_expand_playlist_url_truncation(monkeypatch) -> None:

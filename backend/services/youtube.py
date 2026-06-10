@@ -998,9 +998,16 @@ class YouTubeService:
         """Expandiert eine Playlist-URL (SoundCloud-Set, YouTube-Playlist) zu
         einer Track-Liste via yt-dlp flat-extract (v0.5.0).
 
-        Returns None wenn die URL KEINE Playlist ist (einzelner Track,
-        kaputte URL, Extract-Fehler) — Caller fällt dann auf den bisherigen
-        Single-URL-Pfad zurück. Sonst:
+        Returns None wenn die URL KEINE Playlist ist (einzelner Track) —
+        Caller fällt dann auf den bisherigen Single-URL-Pfad zurück.
+
+        Returns {'error': str} wenn der Extract FEHLSCHLÄGT (404 bei
+        privaten Sets, Netzwerk, Geo-Block) — der Caller soll das dem User
+        zeigen statt still auf den Single-Pfad zu fallen; ein Single-
+        Download derselben Playlist-URL würde identisch scheitern
+        (v0.5.1-Fix: vorher Fake-Success "In Queue als url-XXXX").
+
+        Sonst:
             {
                 'name': str,               # Playlist-Titel von der Quelle
                 'tracks': [{'url', 'title', 'uploader'}, ...],
@@ -1030,7 +1037,7 @@ class YouTubeService:
                 info = ydl.extract_info(url, download=False)
         except Exception as e:
             print(f"WARN: playlist expand failed for {url[:80]}: {type(e).__name__}: {e}")
-            return None
+            return {'error': str(e)}
 
         if not info or info.get('_type') != 'playlist':
             return None
