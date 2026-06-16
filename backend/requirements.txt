@@ -28,7 +28,7 @@ curl-cffi>=0.10,<0.15
 # ─── Auth (Phase F) ──────────────────────────
 argon2-cffi==25.1.0
 pyotp==2.9.0
-qrcode==7.4.2
+qrcode==8.2
 # PyJWT 2.8.0 → 2.12.0: CVE-2026-32597 (HIGH, RFC8725 §3.10 violation —
 # accepts unknown crit header extensions)
 PyJWT==2.13.0
