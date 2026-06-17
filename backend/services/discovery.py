@@ -4,7 +4,7 @@ Diese Helpers werden an zwei Stellen genutzt:
 
 1. CLI-Skript ``scripts/sync_missing_tracks.py`` —
    "Lückenfüller aus N Quellen → Queue".
-2. HTTP-Endpoints (Navidrome-Plugin) — Genre-Mix, LB-Weekly, Library-Missing.
+2. HTTP-Endpoints (Navidrome-Plugin) — Genre-Mix, LB-Weekly.
 
 Entwurfsgrundsätze:
 - Reine Bibliotheks-Funktionen, kein argparse, kein print, kein sys.exit.
