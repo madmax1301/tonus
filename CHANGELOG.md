@@ -10,6 +10,28 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.5.5] — 2026-06-17
+
+Dependency-Sweep + zwei frisch publizierte Security-Fixes.
+
+### Security
+
+- **python-multipart 0.0.30 → 0.0.32** — CVE-2026-53540 (DoS: negative
+  Content-Length puffert den ganzen Body im Speicher).
+- **cryptography 48.0.0 → 48.0.1** — GHSA-537c-gmf6-5ccf (verwundbares
+  OpenSSL in den gebündelten Wheels).
+
+### Changed
+
+- **Dependency-Bumps (Dependabot):** fastapi 0.137.1, uvicorn 0.49.0,
+  ytmusicapi 1.12.1, pyotp 2.10.0, qrcode 8.2 (Backend); @sveltejs/kit
+  2.65.x, @tailwindcss/vite 4.3.1 (Frontend); pytest 9.0.3 + httpx 0.28.1
+  (test-only). CI-Actions: docker/login-action 4, docker/setup-qemu-action
+  4, actions/upload-artifact 7. Die kritischen Pins (`yt-dlp`, `curl-cffi`)
+  bleiben unangetastet.
+
+---
+
 ## [0.5.4] — 2026-06-11
 
 ### Fixed
