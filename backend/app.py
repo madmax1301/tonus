@@ -725,6 +725,24 @@ class PluginMixDiscoveryRequest(BaseModel):
     discovery_ratio: float = 0.4   # 0.0 = nur familiars, 1.0 = nur new
 
 
+class PluginLbWeeklyDiscoveryRequest(BaseModel):
+    """Trigger-Body für /api/plugin/lbweekly/discovery — eine der vier
+    LB-'createdfor'-Playlists pro Call. Quelle ist eine fertig kuratierte
+    LB-Playlist (source_patch + occurrence), nicht artist-radio.
+
+    Gequeute Tracks tragen die BESTEHENDEN sync-Marker
+    (plugin_sync_playlist_name + plugin_sync_navidrome_user), damit der
+    vorhandene finished-tracks/Build-Pfad sie unverändert verarbeitet.
+    """
+    navidrome_user: str
+    listenbrainz_user: str
+    source_patch: str            # "weekly-exploration" | "weekly-jams"
+    occurrence: int = 0          # 0 = aktuelle Woche, 1 = "Last Week's …"
+    playlist_name: str           # Navidrome-Playlist-Name (z.B. "Weekly Exploration")
+    location: str = "navidrome"
+    max_tracks: int = 60
+
+
 # Response models
 class TrackResponse(BaseModel):
     id: str
@@ -3926,6 +3944,116 @@ def _run_plugin_mix_discovery(req: PluginMixDiscoveryRequest) -> None:
     )
 
 
+def _check_lbweekly_tracks_in_library(
+    req: "PluginLbWeeklyDiscoveryRequest",
+) -> List[Dict[str, str]]:
+    """Synchroner Library-Lookup für die existing-Liste eines LB-Weekly-Calls.
+    Liefert die schon vorhandenen Tracks mit Subsonic-ID (Plugin persistiert
+    sie im KVStore für die Build-Phase)."""
+    from services.discovery import lb_playlist_tracks
+    items = lb_playlist_tracks(req.listenbrainz_user, req.source_patch, req.occurrence)
+    existing: List[Dict[str, str]] = []
+    for it in items[: req.max_tracks]:
+        try:
+            sid = navidrome_service.find_track_id_by_artist_title(
+                it.get("artist", ""), it.get("title", "")
+            )
+            if sid:
+                existing.append({
+                    "subsonic_id": sid,
+                    "artist": it.get("artist", ""),
+                    "title": it.get("title", ""),
+                })
+        except Exception:
+            continue
+    return existing
+
+
+def occ_tag(occurrence: int) -> str:
+    return "cur" if occurrence == 0 else f"occ{occurrence}"
+
+
+def _run_plugin_lbweekly_discovery(req: "PluginLbWeeklyDiscoveryRequest") -> None:
+    """Background-Task hinter POST /api/plugin/lbweekly/discovery.
+
+    Zieht die LB-Playlist (source_patch+occurrence), dedupliziert gegen
+    Library, queued fehlende Tracks als download_jobs mit den BESTEHENDEN
+    sync-Markern (plugin_sync_playlist_name + plugin_sync_navidrome_user),
+    sodass /api/plugin/finished-tracks + der Plugin-Reconcile sie unverändert
+    der user-owned Subsonic-Playlist zuordnen."""
+    from services.discovery import lb_playlist_tracks, deezer_search_track
+
+    started = _now_ms()
+    items = lb_playlist_tracks(req.listenbrainz_user, req.source_patch, req.occurrence)
+    if not items:
+        print(f"[plugin-lbweekly] no LB tracks for {req.source_patch!r} occ={req.occurrence}")
+        return
+
+    location = req.location if req.location in ("local", "navidrome") else "navidrome"
+    output_format = config.OUTPUT_FORMAT
+    provider = "deezer"
+    navidrome_path = resolve_navidrome_library_path_optional(None)
+    run_id = f"plugin-lbweekly-{req.navidrome_user}-{req.source_patch}-{occ_tag(req.occurrence)}-{started}"
+
+    queued = skipped = failed = 0
+    for it in items[: req.max_tracks]:
+        artist = (it.get("artist") or "").strip()
+        title = (it.get("title") or "").strip()
+        if not artist or not title:
+            continue
+        try:
+            if navidrome_service.find_track_id_by_artist_title(artist, title):
+                skipped += 1
+                continue
+        except Exception:
+            pass
+        deezer_track = deezer_search_track(artist, title)
+        if not deezer_track:
+            failed += 1
+            continue
+        track_id = str(deezer_track.get("id", ""))
+        if not track_id:
+            failed += 1
+            continue
+        artist_obj = deezer_track.get("artist") or {}
+        album_obj = deezer_track.get("album") or {}
+        track_hint = {
+            "id": track_id, "name": deezer_track.get("title", ""),
+            "artist": artist_obj.get("name", ""), "album": album_obj.get("title", ""),
+            "album_art": (album_obj.get("cover_xl") or album_obj.get("cover_big")
+                          or album_obj.get("cover_medium")),
+        }
+        try:
+            if get_duplicate_download_reason(track_id, provider, location,
+                                             output_format,
+                                             navidrome_library_path=navidrome_path):
+                skipped += 1
+                continue
+            track_for_queue = _resolve_track_for_queue(track_id, provider, track_hint)
+            payload_extra = {
+                "provider": provider, "record_track_id": track_id,
+                "location": location, "video_id": None,
+                "output_format": output_format, "audio_quality": None,
+                "metadata_provider": provider, "max_retries": 0,
+                "navidrome_library_path": navidrome_path,
+                "track": track_for_queue,
+                # BESTEHENDE sync-Marker — finished-tracks filtert exakt darauf.
+                "plugin_sync_run_id": run_id,
+                "plugin_sync_playlist_name": req.playlist_name,
+                "plugin_sync_navidrome_user": req.navidrome_user,
+            }
+            upsert_job(track_id, status="queued",
+                       message=f"Download queued (lbweekly={req.playlist_name})",
+                       progress=0, stage="queued", payload=payload_extra)
+            queued += 1
+        except Exception as e:
+            failed += 1
+            print(f"[plugin-lbweekly] queue fail {track_id}: {e}")
+
+    print(f"[plugin-lbweekly] {req.playlist_name!r} done in {_now_ms()-started}ms — "
+          f"pool={len(items)} queued={queued} skipped={skipped} failed={failed}")
+
+
 def _run_plugin_sync(req: PluginSyncRequest) -> None:
     """Background-Task hinter POST /api/plugin/sync.
 
@@ -4157,6 +4285,22 @@ async def plugin_mix_discovery(
         "message": "mix discovery + queueing missing tracks in background",
         "existing": existing,
     }
+
+
+@app.post("/api/plugin/lbweekly/discovery")
+async def plugin_lbweekly_discovery(
+    req: PluginLbWeeklyDiscoveryRequest,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(require_token),
+):
+    """Plugin-Trigger für eine LB-'createdfor'-Playlist. Queued fehlende
+    Tracks im Hintergrund (mit sync-Markern) und liefert synchron die
+    bereits-in-Library-Liste für die Plugin-Build-Phase."""
+    background_tasks.add_task(_run_plugin_lbweekly_discovery, req)
+    existing = _check_lbweekly_tracks_in_library(req)
+    return {"started": True,
+            "message": "lbweekly discovery + queueing missing tracks in background",
+            "existing": existing}
 
 
 @app.get("/api/plugin/finished-tracks")
