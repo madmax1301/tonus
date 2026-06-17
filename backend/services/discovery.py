@@ -211,8 +211,13 @@ def lb_genre_top_recordings(genre: str, count: int = 50) -> List[Dict]:
     return out
 
 
-def lb_playlist_tracks(user: str, slug_or_mbid: str) -> List[Dict]:
-    """Tracks einer LB-'createdfor'-Playlist (z.B. 'daily-jams')."""
+def lb_playlist_tracks(user: str, slug_or_mbid: str, occurrence: int = 0) -> List[Dict]:
+    """Tracks einer LB-'createdfor'-Playlist (z.B. 'weekly-exploration').
+
+    occurrence=0 → neueste Version des matchenden source_patch,
+    occurrence=1 → zweitneueste (Vorwoche, 'Last Week's …').
+    Leere Liste, wenn die gewünschte occurrence nicht existiert.
+    """
     out: List[Dict] = []
     try:
         r = requests.get(
@@ -223,7 +228,8 @@ def lb_playlist_tracks(user: str, slug_or_mbid: str) -> List[Dict]:
         if not r.ok:
             return out
         playlists = (r.json().get("playlists") or [])
-        target = None
+        # Alle Playlists mit passendem source_patch sammeln, nach date desc sortieren.
+        matches = []
         for p in playlists:
             pl = p.get("playlist") or {}
             ext = pl.get("extension", {}).get(
@@ -235,10 +241,11 @@ def lb_playlist_tracks(user: str, slug_or_mbid: str) -> List[Dict]:
                 .get("source_patch", "")
             )
             if slug_or_mbid in algo or slug_or_mbid in pl.get("identifier", ""):
-                target = pl
-                break
-        if not target:
+                matches.append(pl)
+        if len(matches) <= occurrence:
             return out
+        matches.sort(key=lambda pl: pl.get("date", ""), reverse=True)
+        target = matches[occurrence]
         for t in target.get("track") or []:
             artist = t.get("creator", "")
             title = t.get("title", "")
