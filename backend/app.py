@@ -16,11 +16,10 @@ import threading
 _csv_lock = threading.Lock()
 _worker: "Optional[JobWorker]" = None  # forward ref — JobWorker imported below
 
-# Plugin-Sync-State: wird vom Background-Task `_run_plugin_sync` befüllt und
-# vom Endpoint `/api/plugin/sync-status` gelesen, damit das Navidrome-Plugin
-# das Ergebnis seines letzten Triggers anzeigen kann. Module-global statt
-# DB, weil es immer nur einen Eintrag gibt (letzter Run) und FastAPI mit
-# BackgroundTasks im selben Prozess läuft.
+# Plugin-Sync-State: wird von /api/plugin/sync-status gelesen, damit das
+# Navidrome-Plugin den Status des letzten Runs anzeigen kann. Module-global
+# statt DB, weil es immer nur einen Eintrag gibt (letzter Run) und FastAPI
+# mit BackgroundTasks im selben Prozess läuft.
 _plugin_sync_lock = threading.Lock()
 _plugin_sync_state: Dict[str, Any] = {
     "last_status": None,         # None | "running" | "ok" | "error"
@@ -473,11 +472,9 @@ start_navidrome_library_sync_background(deezer_service, spotify_service)
 def _start_playlist_reconcile_background() -> None:
     """Periodischer Playlist-Reconcile (v0.5.0).
 
-    _reconcile_imported_playlists lief bisher NUR in _run_plugin_sync —
-    ohne Navidrome-Plugin wurden Playlist-Marker (SC-Playlist-Import,
-    CSV-Import) nie zu Subsonic-Playlists materialisiert. Dieser Thread
-    schließt die Lücke: alle PLAYLIST_RECONCILE_INTERVAL_S (default 15 min)
-    ein idempotenter Reconcile-Lauf. Bei leerem Marker-Set ist das ein
+    Läuft alle PLAYLIST_RECONCILE_INTERVAL_S (default 15 min) idempotent:
+    Playlist-Marker (SC-Playlist-Import, CSV-Import, LB-Weekly) werden zu
+    Subsonic-Playlists materialisiert. Bei leerem Marker-Set ist das ein
     einzelnes SQL-LIKE-Query, praktisch kostenlos.
 
     Daemon-Thread, lazy function-lookup (Funktion ist weiter unten im Modul
@@ -670,35 +667,6 @@ class URLSearchRequest(BaseModel):
     query: str
     source: Optional[str] = None  # DEPRECATED 0.2.0: ignored, multi-source-search runs always
     limit: Optional[int] = 10
-
-
-class PluginSyncRequest(BaseModel):
-    """Trigger-Body für /api/plugin/sync — vom Navidrome-Plugin gepostet.
-
-    Ruft die Discovery-Pipeline (LB-Top-Artists → Deezer-Radio) und queut
-    fehlende Tracks asynchron in download_jobs. Returnt sofort, damit der
-    Plugin-Cron-Callback nicht im 30 s-Hostlimit hängt.
-
-    `playlist_name` (optional): wenn gesetzt, werden alle gequeuten Tracks
-    dieses Runs einer gleichnamigen Subsonic-Playlist in Navidrome hinzugefügt
-    sobald sie heruntergeladen sind. Der Platzhalter ``{date}`` wird durch
-    das aktuelle Datum (YYYY-MM-DD) ersetzt — typischer Wert
-    ``"Discovery {date}"``. Leerstring oder None deaktiviert die Playlist.
-
-    `navidrome_user` (optional, Multi-User-Setup): identifiziert den Navidrome-
-    User, dem die Tracks dieses Runs gehören. Wird im Track-Payload-Marker
-    gespeichert und vom Plugin via /api/plugin/finished-tracks zurückgelesen,
-    damit das Plugin im Namen DIESES Users die Subsonic-Playlist erstellen
-    kann. Wenn None, übernimmt das Backend selbst die Playlist-Erstellung
-    (alter Single-User-Pfad, Admin-Auth)."""
-    listenbrainz_user: str
-    top_artists: int = 10
-    tracks_per_artist: int = 5
-    history_days: int = 90
-    max_total: int = 50
-    location: Optional[str] = "navidrome"
-    playlist_name: Optional[str] = None
-    navidrome_user: Optional[str] = None
 
 
 class PluginMixDiscoveryRequest(BaseModel):
@@ -3387,64 +3355,6 @@ async def plugin_health():
     }
 
 
-@app.get("/api/plugin/library/missing")
-async def plugin_library_missing(
-    listenbrainz_user: str = Query(..., min_length=1),
-    top_artists: int = Query(10, ge=1, le=50),
-    tracks_per_artist: int = Query(5, ge=1, le=20),
-    history_days: int = Query(90, ge=1, le=3650),
-    max_total: int = Query(50, ge=1, le=500),
-):
-    """Discovery-Quelle für das Plugin: liefert eine kuratierte Track-Liste
-    auf Basis der ListenBrainz-Top-Artists des Users (Deezer-Artist-Radio,
-    gefiltert gegen die eigene Hör-History).
-
-    Antwort enthält Deezer-Track-IDs und ein schlankes track_hint-Objekt pro
-    Item, sodass das Plugin direkt /api/download pro Item triggern kann
-    (statt den langsamen CSV-Import-Pfad mit Polling — Navidrome killt
-    Plugin-Callbacks die länger als ~30 s laufen)."""
-    from services.discovery import discover_via_artist_radio
-
-    items = discover_via_artist_radio(
-        listenbrainz_user=listenbrainz_user,
-        top_artists=top_artists,
-        tracks_per_artist=tracks_per_artist,
-        history_days=history_days,
-        max_total=max_total,
-    )
-
-    out_items = []
-    for it in items:
-        track = it.get("deezer_track") or {}
-        track_id = str(track.get("id", ""))
-        if not track_id:
-            continue
-        artist_obj = track.get("artist") or {}
-        album_obj = track.get("album") or {}
-        out_items.append({
-            "artist": it["artist"],
-            "title": it["title"],
-            "track_id": track_id,
-            "track_hint": {
-                "id": track_id,
-                "name": track.get("title", ""),
-                "artist": artist_obj.get("name", ""),
-                "album": album_obj.get("title", ""),
-                "album_art": (
-                    album_obj.get("cover_xl")
-                    or album_obj.get("cover_big")
-                    or album_obj.get("cover_medium")
-                ),
-            },
-        })
-
-    return {
-        "items": out_items,
-        "count": len(out_items),
-        "source": "listenbrainz+deezer-radio",
-    }
-
-
 @app.get("/api/plugin/sync-status")
 async def plugin_sync_status():
     """Kompaktes Status-Aggregat für den Read-Only-Block in der Plugin-
@@ -3531,13 +3441,11 @@ def _reconcile_imported_playlists(max_age_days: int = 60) -> Dict[str, int]:
     read-before-write in ``add_tracks_to_playlist`` — der Helper kann beliebig
     oft laufen ohne Duplikate zu erzeugen.
 
-    Wird automatisch am Anfang/Ende jedes ``_run_plugin_sync`` aufgerufen.
     Tracks deren Subsonic-Index-Eintrag noch nicht existiert (Scanner war
     noch nicht durch) werden beim nächsten Reconcile-Lauf nachgezogen.
 
     Backward-Compat: alter Funktionsname `_reconcile_plugin_playlists` ist
-    unten als Alias verfügbar, damit existing Plugin-Sync-Aufrufe weiter
-    funktionieren.
+    unten als Alias verfügbar.
     """
     import json as _json
     from collections import defaultdict
@@ -4052,208 +3960,6 @@ def _run_plugin_lbweekly_discovery(req: "PluginLbWeeklyDiscoveryRequest") -> Non
 
     print(f"[plugin-lbweekly] {req.playlist_name!r} done in {_now_ms()-started}ms — "
           f"pool={len(items)} queued={queued} skipped={skipped} failed={failed}")
-
-
-def _run_plugin_sync(req: PluginSyncRequest) -> None:
-    """Background-Task hinter POST /api/plugin/sync.
-
-    Macht in einem Schwung:
-      1. Reconcile vorheriger Plugin-Runs (Tracks die inzwischen completed sind
-         werden ihrer Playlist hinzugefügt)
-      2. Discovery via services.discovery.discover_via_artist_radio
-      3. Pro Track: Dup-Check + upsert_job ('queued') mit Plugin-Run-Markern
-      4. Reconcile am Ende (nimmt Tracks mit, die schon in der Library waren
-         und im Dup-Check geskipped wurden — die haben aber keine Marker, also
-         streng genommen nutzlos hier; bleibt drin als safety net falls ein
-         Worker-Track zwischenzeitlich fertig wurde)
-
-    Schreibt während des Laufs in `_plugin_sync_state`, damit
-    /api/plugin/sync-status den Fortschritt sehen kann.
-    """
-    from services.discovery import discover_via_artist_radio
-
-    started = _now_ms()
-    run_id = f"plugin-{started}"
-    resolved_playlist = _resolve_playlist_name_template(req.playlist_name)
-    with _plugin_sync_lock:
-        _plugin_sync_state.update({
-            "last_status": "running",
-            "last_started_ms": started,
-            "last_finished_ms": 0,
-            "last_candidates": 0,
-            "last_queued": 0,
-            "last_skipped": 0,
-            "last_failed": 0,
-            "last_error": None,
-            "last_run_id": run_id,
-            "last_playlist_name": resolved_playlist,
-        })
-
-    def _set_final(status: str, error: Optional[str] = None) -> None:
-        with _plugin_sync_lock:
-            _plugin_sync_state["last_status"] = status
-            _plugin_sync_state["last_finished_ms"] = _now_ms()
-            if error is not None:
-                _plugin_sync_state["last_error"] = error[:500] if error else None
-
-    # Erst aufräumen: Tracks früherer Runs, die inzwischen heruntergeladen +
-    # vom Scanner gefunden wurden, in ihre Playlist aufnehmen. Greift z.B. wenn
-    # gestern 30 Tracks getriggert wurden, von denen heute 10 fertig sind.
-    try:
-        recon = _reconcile_plugin_playlists()
-        if recon["tracks_added"] > 0 or recon["playlists"] > 0:
-            print(
-                f"[plugin-sync] pre-reconcile: {recon['tracks_added']} tracks "
-                f"added across {recon['playlists']} playlists"
-            )
-    except Exception as e:
-        # Reconcile darf den Sync-Trigger nicht blockieren — bei Fehler nur loggen.
-        print(f"[plugin-sync] pre-reconcile failed (continuing): {e}")
-
-    try:
-        items = discover_via_artist_radio(
-            listenbrainz_user=req.listenbrainz_user,
-            top_artists=req.top_artists,
-            tracks_per_artist=req.tracks_per_artist,
-            history_days=req.history_days,
-            max_total=req.max_total,
-        )
-    except Exception as e:
-        _set_final("error", f"discovery failed: {e}")
-        print(f"[plugin-sync] discovery error: {e}")
-        return
-
-    with _plugin_sync_lock:
-        _plugin_sync_state["last_candidates"] = len(items)
-
-    if not items:
-        _set_final("ok", None)
-        return
-
-    location = req.location if req.location in ("local", "navidrome") else "navidrome"
-    output_format = config.OUTPUT_FORMAT
-    provider = "deezer"
-    navidrome_path: Optional[str] = None
-    if location == "navidrome":
-        navidrome_path = resolve_navidrome_library_path_optional(None)
-
-    queued = 0
-    skipped = 0
-    failed = 0
-    location_msg = "local downloads folder" if location == "local" else "Navidrome server"
-
-    for it in items:
-        track = it.get("deezer_track") or {}
-        track_id = str(track.get("id", ""))
-        if not track_id:
-            failed += 1
-            continue
-
-        artist_obj = track.get("artist") or {}
-        album_obj = track.get("album") or {}
-        track_hint = {
-            "id": track_id,
-            "name": track.get("title", ""),
-            "artist": artist_obj.get("name", ""),
-            "album": album_obj.get("title", ""),
-            "album_art": (
-                album_obj.get("cover_xl")
-                or album_obj.get("cover_big")
-                or album_obj.get("cover_medium")
-            ),
-        }
-
-        try:
-            dup = get_duplicate_download_reason(
-                track_id, provider, location, output_format,
-                navidrome_library_path=navidrome_path,
-            )
-            if dup:
-                skipped += 1
-                continue
-
-            track_for_queue = _resolve_track_for_queue(track_id, provider, track_hint)
-            payload_extra: Dict[str, Any] = {
-                "provider": provider,
-                "record_track_id": track_id,
-                "location": location,
-                "video_id": None,
-                "output_format": output_format,
-                "audio_quality": None,
-                "metadata_provider": provider,
-                "max_retries": 0,
-                "navidrome_library_path": navidrome_path,
-                "track": track_for_queue,
-                "plugin_sync_run_id": run_id,
-            }
-            if resolved_playlist:
-                # Marker, anhand dessen _reconcile_plugin_playlists die Tracks
-                # später ihrer Playlist zuordnet.
-                payload_extra["plugin_sync_playlist_name"] = resolved_playlist
-            if req.navidrome_user:
-                # Multi-User-Modus: Plugin übernimmt Subsonic-Playlist-Erstellung
-                # via /api/plugin/finished-tracks + host.SubsonicAPICall im Namen
-                # dieses Users. Backend-Reconcile skippt Tracks mit diesem Marker.
-                payload_extra["plugin_sync_navidrome_user"] = req.navidrome_user
-            upsert_job(
-                track_id,
-                status="queued",
-                message=f"Download queued for {location_msg} (plugin-sync)",
-                progress=0,
-                stage="queued",
-                payload=payload_extra,
-            )
-            queued += 1
-        except Exception as e:
-            failed += 1
-            print(f"[plugin-sync] queue fail for track {track_id}: {e}")
-
-        if (queued + skipped + failed) % 5 == 0:
-            with _plugin_sync_lock:
-                _plugin_sync_state["last_queued"] = queued
-                _plugin_sync_state["last_skipped"] = skipped
-                _plugin_sync_state["last_failed"] = failed
-
-    with _plugin_sync_lock:
-        _plugin_sync_state["last_queued"] = queued
-        _plugin_sync_state["last_skipped"] = skipped
-        _plugin_sync_state["last_failed"] = failed
-
-    elapsed_ms = _now_ms() - started
-    print(
-        f"[plugin-sync] done in {elapsed_ms} ms — candidates={len(items)} "
-        f"queued={queued} skipped={skipped} failed={failed}"
-    )
-
-    # Post-Reconcile: greift hauptsächlich für Tracks die im Dup-Check
-    # geskipped wurden (= waren schon in der Library), damit auch die in der
-    # heutigen Playlist landen. Tracks die wir gerade neu gequeued haben sind
-    # noch nicht 'completed', die kommen erst beim nächsten Pre-Reconcile rein.
-    if resolved_playlist:
-        try:
-            recon = _reconcile_plugin_playlists()
-            print(
-                f"[plugin-sync] post-reconcile: {recon['tracks_added']} tracks "
-                f"added across {recon['playlists']} playlists"
-            )
-        except Exception as e:
-            print(f"[plugin-sync] post-reconcile failed: {e}")
-
-    _set_final("ok", None)
-
-
-@app.post("/api/plugin/sync")
-async def plugin_sync(
-    req: PluginSyncRequest,
-    background_tasks: BackgroundTasks,
-    _: None = Depends(require_token),
-):
-    """Plugin-Trigger: feuere-und-vergiss. Startet die Discovery+Queue-
-    Pipeline im Hintergrund und returnt sofort, damit das Navidrome-Plugin
-    nicht in seinem ~30 s-Callback-Timeout hängt. Status-Polling über
-    /api/plugin/sync-status (Feld plugin_sync.last_status)."""
-    background_tasks.add_task(_run_plugin_sync, req)
-    return {"started": True, "message": "discovery+queue running in background"}
 
 
 @app.post("/api/plugin/mix/discovery")
