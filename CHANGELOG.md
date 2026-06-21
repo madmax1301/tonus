@@ -10,6 +10,37 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.6.0] — 2026-06-17
+
+ListenBrainz-Weekly-Mirror — ersetzt die artist-radio-Discovery.
+
+### Added
+
+- **LB-Weekly-Mirror:** Das Navidrome-Plugin spiegelt jetzt die vier
+  ListenBrainz-„Created For You"-Playlists (**Weekly Exploration**,
+  **Weekly Jams**, **Last Week's Exploration**, **Last Week's Jams**) als
+  gleichnamige, user-owned Navidrome-Playlists und hält sie wöchentlich
+  aktuell (replace-in-place). Fehlende Tracks werden automatisch
+  heruntergeladen, bereits vorhandene direkt aus der Library übernommen.
+  - Neuer Endpoint `POST /api/plugin/lbweekly/discovery` (LB-`createdfor`
+    als Quelle statt Deezer-artist-radio).
+  - `lb_playlist_tracks(user, source_patch, occurrence)` — `occurrence=1`
+    liefert die Vorwochen-Version für die „Last Week's"-Playlists.
+  - Wiederverwendet die bestehenden `plugin_sync_*`-Marker → der
+    finished-tracks-/Reconcile-Build-Pfad baut die Playlists.
+
+### Removed
+
+- **artist-radio-Discovery** (LB-Top-Artists → Deezer-Radio): ersetzt durch
+  den LB-Weekly-Mirror. Entfernt: `POST /api/plugin/sync`,
+  `GET /api/plugin/library/missing`, `discover_via_artist_radio` +
+  CLI-Wrapper. **Breaking** für das Plugin-Config-Schema: die Felder
+  `top_artists`, `tracks_per_artist`, `max_queue_per_run` und das per-User
+  `playlist_name`-Template entfallen; neu ist der Toggle `lb_weekly_mirror`
+  (Plugin ≥ v0.5.0 erforderlich).
+
+---
+
 ## [0.5.5] — 2026-06-17
 
 Dependency-Sweep + zwei frisch publizierte Security-Fixes.
