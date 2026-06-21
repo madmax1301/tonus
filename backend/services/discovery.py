@@ -1,13 +1,10 @@
 """Discovery- und Sync-Pipelines.
 
-Diese Helpers werden an drei Stellen genutzt:
+Diese Helpers werden an zwei Stellen genutzt:
 
-1. CLI-Skript ``scripts/discover_via_artist_radio.py`` —
-   "ListenBrainz Top-Artists → Deezer Artist Radio → Queue".
-2. CLI-Skript ``scripts/sync_missing_tracks.py`` —
+1. CLI-Skript ``scripts/sync_missing_tracks.py`` —
    "Lückenfüller aus N Quellen → Queue".
-3. HTTP-Endpoint ``GET /api/plugin/library/missing`` (für das
-   Navidrome-Plugin) — dieselbe Discovery-Logik, aber inproc.
+2. HTTP-Endpoints (Navidrome-Plugin) — Genre-Mix, LB-Weekly.
 
 Entwurfsgrundsätze:
 - Reine Bibliotheks-Funktionen, kein argparse, kein print, kein sys.exit.
@@ -18,9 +15,7 @@ from __future__ import annotations
 
 import csv
 import io
-import time
-from collections import Counter
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional
 
 import requests
 
@@ -34,110 +29,6 @@ USER_AGENT = "tonus-discovery/1.0"
 # ---------------------------------------------------------------------------
 # ListenBrainz helpers
 # ---------------------------------------------------------------------------
-
-
-def _lb_range_from_days(days: int) -> str:
-    if days <= 7:
-        return "this_week"
-    if days <= 31:
-        return "this_month"
-    if days <= 365:
-        return "this_year"
-    return "all_time"
-
-
-def lb_top_artists(user: str, days: int, top_n: int) -> List[str]:
-    """Top-N gehörte Artists aus LB-Statistics-API. Fallback über Listens-Counting."""
-    rng = _lb_range_from_days(days)
-    try:
-        r = requests.get(
-            f"{LB_API}/stats/user/{user}/artists",
-            params={"range": rng, "count": top_n},
-            timeout=20,
-            headers={"User-Agent": USER_AGENT},
-        )
-        r.raise_for_status()
-        block = (r.json().get("payload") or {}).get("artists") or []
-        names = [a.get("artist_name") for a in block if a.get("artist_name")]
-        if names:
-            return names[:top_n]
-    except Exception:
-        pass
-    return _lb_top_artists_via_listens(user, days, top_n)
-
-
-def _lb_top_artists_via_listens(user: str, days: int, top_n: int) -> List[str]:
-    cutoff = int(time.time() - days * 86400)
-    counter: Counter = Counter()
-    max_ts: Optional[int] = None
-    for _ in range(20):  # max 2000 Listens
-        params: Dict[str, int] = {"count": 100}
-        if max_ts is not None:
-            params["max_ts"] = max_ts
-        try:
-            r = requests.get(
-                f"{LB_API}/user/{user}/listens",
-                params=params,
-                timeout=15,
-                headers={"User-Agent": USER_AGENT},
-            )
-            if not r.ok:
-                break
-            listens = ((r.json().get("payload") or {}).get("listens")) or []
-        except Exception:
-            break
-        if not listens:
-            break
-        for lst in listens:
-            meta = lst.get("track_metadata") or {}
-            artist = meta.get("artist_name")
-            ts = lst.get("listened_at") or 0
-            if artist and ts >= cutoff:
-                counter[artist] += 1
-        min_ts = min(l.get("listened_at", 0) for l in listens)
-        if min_ts <= cutoff:
-            break
-        max_ts = min_ts - 1
-    return [a for a, _ in counter.most_common(top_n)]
-
-
-def lb_listened_track_keys(user: str, days: int, max_listens: int = 5000) -> Set[str]:
-    """Skip-Liste 'artist|title' aller Listens der letzten <days> Tage (lowercase)."""
-    cutoff = int(time.time() - days * 86400)
-    keys: Set[str] = set()
-    fetched = 0
-    max_ts: Optional[int] = None
-    while fetched < max_listens:
-        params: Dict[str, int] = {"count": 100}
-        if max_ts is not None:
-            params["max_ts"] = max_ts
-        try:
-            r = requests.get(
-                f"{LB_API}/user/{user}/listens",
-                params=params,
-                timeout=15,
-                headers={"User-Agent": USER_AGENT},
-            )
-            if not r.ok:
-                break
-            listens = ((r.json().get("payload") or {}).get("listens")) or []
-        except Exception:
-            break
-        if not listens:
-            break
-        for lst in listens:
-            meta = lst.get("track_metadata") or {}
-            a = (meta.get("artist_name") or "").strip().lower()
-            t = (meta.get("track_name") or "").strip().lower()
-            ts = lst.get("listened_at") or 0
-            if a and t and ts >= cutoff:
-                keys.add(f"{a}|{t}")
-        fetched += len(listens)
-        min_ts = min(l.get("listened_at", 0) for l in listens)
-        if min_ts <= cutoff:
-            break
-        max_ts = min_ts - 1
-    return keys
 
 
 def lb_recommendations(user: str, count: int = 100) -> List[Dict]:
@@ -211,8 +102,13 @@ def lb_genre_top_recordings(genre: str, count: int = 50) -> List[Dict]:
     return out
 
 
-def lb_playlist_tracks(user: str, slug_or_mbid: str) -> List[Dict]:
-    """Tracks einer LB-'createdfor'-Playlist (z.B. 'daily-jams')."""
+def lb_playlist_tracks(user: str, slug_or_mbid: str, occurrence: int = 0) -> List[Dict]:
+    """Tracks einer LB-'createdfor'-Playlist (z.B. 'weekly-exploration').
+
+    occurrence=0 → neueste Version des matchenden source_patch,
+    occurrence=1 → zweitneueste (Vorwoche, 'Last Week's …').
+    Leere Liste, wenn die gewünschte occurrence nicht existiert.
+    """
     out: List[Dict] = []
     try:
         r = requests.get(
@@ -223,7 +119,8 @@ def lb_playlist_tracks(user: str, slug_or_mbid: str) -> List[Dict]:
         if not r.ok:
             return out
         playlists = (r.json().get("playlists") or [])
-        target = None
+        # Alle Playlists mit passendem source_patch sammeln, nach date desc sortieren.
+        matches = []
         for p in playlists:
             pl = p.get("playlist") or {}
             ext = pl.get("extension", {}).get(
@@ -235,10 +132,11 @@ def lb_playlist_tracks(user: str, slug_or_mbid: str) -> List[Dict]:
                 .get("source_patch", "")
             )
             if slug_or_mbid in algo or slug_or_mbid in pl.get("identifier", ""):
-                target = pl
-                break
-        if not target:
+                matches.append(pl)
+        if len(matches) <= occurrence:
             return out
+        matches.sort(key=lambda pl: pl.get("date", ""), reverse=True)
+        target = matches[occurrence]
         for t in target.get("track") or []:
             artist = t.get("creator", "")
             title = t.get("title", "")
@@ -286,35 +184,6 @@ def mbid_to_meta(mbid: str) -> Optional[Dict]:
 # ---------------------------------------------------------------------------
 # Deezer helpers
 # ---------------------------------------------------------------------------
-
-
-def deezer_search_artist_id(artist_name: str) -> Optional[Dict]:
-    try:
-        r = requests.get(
-            f"{DEEZER_BASE}/search/artist",
-            params={"q": artist_name, "limit": 1},
-            timeout=15,
-            headers={"User-Agent": USER_AGENT},
-        )
-        r.raise_for_status()
-        items = r.json().get("data") or []
-        return items[0] if items else None
-    except Exception:
-        return None
-
-
-def deezer_artist_radio(artist_id: str, limit: int) -> List[Dict]:
-    try:
-        r = requests.get(
-            f"{DEEZER_BASE}/artist/{artist_id}/radio",
-            params={"limit": limit},
-            timeout=15,
-            headers={"User-Agent": USER_AGENT},
-        )
-        r.raise_for_status()
-        return r.json().get("data") or []
-    except Exception:
-        return []
 
 
 def deezer_search_track(artist: str, title: str) -> Optional[Dict]:
@@ -430,58 +299,6 @@ def read_text_file_tracks(path: str) -> List[Dict]:
 # ---------------------------------------------------------------------------
 # High-Level Pipelines
 # ---------------------------------------------------------------------------
-
-
-def discover_via_artist_radio(
-    *,
-    listenbrainz_user: str,
-    top_artists: int = 10,
-    tracks_per_artist: int = 5,
-    history_days: int = 90,
-    max_total: int = 50,
-    skip_listened: bool = True,
-) -> List[Dict]:
-    """LB-Top-Artists → Deezer-Artist-Radio → Filter History.
-
-    Output: Liste von Items
-        ``{"artist": str, "title": str, "deezer_track": dict}``
-
-    deezer_track ist der vollständige Deezer-Track (mit ``id``, ``album``, …),
-    sodass Caller direkt einen Download triggern können.
-    """
-    artists = lb_top_artists(listenbrainz_user, history_days, top_artists)
-    if not artists:
-        return []
-
-    skip_keys: Set[str] = (
-        lb_listened_track_keys(listenbrainz_user, history_days) if skip_listened else set()
-    )
-
-    out: List[Dict] = []
-    for artist_name in artists:
-        if len(out) >= max_total:
-            break
-        ainfo = deezer_search_artist_id(artist_name)
-        if not ainfo:
-            continue
-        radio = deezer_artist_radio(str(ainfo["id"]), tracks_per_artist * 4)
-        added = 0
-        for track in radio:
-            if added >= tracks_per_artist or len(out) >= max_total:
-                break
-            t_artist = (track.get("artist") or {}).get("name", "").strip().lower()
-            t_title = (track.get("title", "")).strip().lower()
-            if f"{t_artist}|{t_title}" in skip_keys:
-                continue
-            out.append(
-                {
-                    "artist": (track.get("artist") or {}).get("name", ""),
-                    "title": track.get("title", ""),
-                    "deezer_track": track,
-                }
-            )
-            added += 1
-    return out
 
 
 def collect_wanted_tracks(
