@@ -97,7 +97,7 @@ If your acquisition needs are already handled by a Lidarr-based stack and Soulse
 - **Hot-reloadable defaults** — change worker cooldowns, default provider, audio codec from the UI without a container restart
 - **Dual-VPN source-IP splitting** (optional, NAS-mode) — bind alternating download threads to two network interfaces for higher throughput on rate-limited APIs
 - **Persistent state on a separate volume** — auth DB and queue jobs live in `/app/data/`; clearing the audio download cache cannot wipe your users
-- **Navidrome plugin** — Go binary that triggers per-user discovery + auto-playlist runs in Navidrome via PAT auth. *Plugin repo is being prepared for public release — track progress in [issue #3](https://github.com/madmax1301/tonus/issues/3).*
+- **Navidrome plugin** — companion [tonus-navidrome-plugin](https://github.com/madmax1301/tonus-navidrome-plugin) (Extism/WASM) mirrors each user's ListenBrainz *Weekly Exploration/Jams* into Navidrome as personal playlists and queues the missing tracks through Tonus via PAT auth. Grab the `.ndp` from its [releases](https://github.com/madmax1301/tonus-navidrome-plugin/releases).
 
 ## Quick Start
 
@@ -175,7 +175,7 @@ If `TONUS_API_TOKEN` is set in `.env`, the legacy static-token plugin path remai
 
 **Why two volumes?** `/app/downloads` is a working area for in-flight files — clearing it during cleanup must not destroy your users or queue history. `/app/data` is the durable store. Bind-mount both separately.
 
-The plugin lives in its own repo and will be published once it's ready for external use — track progress in [issue #3](https://github.com/madmax1301/tonus/issues/3).
+The plugin lives in [its own repo](https://github.com/madmax1301/tonus-navidrome-plugin) — install the prebuilt `.ndp` from its releases and point it at this backend.
 
 ## Authentication
 
