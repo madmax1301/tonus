@@ -10,6 +10,19 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.6.1] — 2026-07-27
+
+### Fixed
+
+- **LB-Weekly-Discovery lieferte 0 Tracks** — der ListenBrainz-`createdfor`-
+  Endpoint gibt nur Playlist-Metadaten zurück (leeres `track`-Array); die
+  Tracks stehen erst im Einzel-Playlist-Endpoint `/1/playlist/<mbid>`.
+  `lb_playlist_tracks` lädt die Tracks jetzt von dort nach (MBID aus
+  `identifier` extrahiert). Behebt leere Discovery + `existing=0` bei allen
+  vier LB-Weekly-Playlists.
+
+---
+
 ## [0.6.0] — 2026-06-17
 
 ListenBrainz-Weekly-Mirror — ersetzt die artist-radio-Discovery.
