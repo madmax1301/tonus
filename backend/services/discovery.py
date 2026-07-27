@@ -137,7 +137,30 @@ def lb_playlist_tracks(user: str, slug_or_mbid: str, occurrence: int = 0) -> Lis
             return out
         matches.sort(key=lambda pl: pl.get("date", ""), reverse=True)
         target = matches[occurrence]
-        for t in target.get("track") or []:
+
+        # createdfor liefert nur Playlist-Metadaten — das `track`-Array ist
+        # dort leer. Die eigentlichen Tracks stehen erst im Einzel-Playlist-
+        # Endpoint /1/playlist/<mbid>. MBID aus `identifier` extrahieren
+        # (z.B. "https://listenbrainz.org/playlist/<uuid>") und nachladen.
+        tracks = target.get("track") or []
+        if not tracks:
+            import re as _re
+            ident = target.get("identifier", "") or ""
+            m = _re.search(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                ident,
+            )
+            if m:
+                pr = requests.get(
+                    f"{LB_API}/playlist/{m.group(0)}",
+                    timeout=20,
+                    headers={"User-Agent": USER_AGENT},
+                )
+                if pr.ok:
+                    tracks = ((pr.json().get("playlist") or {}).get("track")) or []
+
+        for t in tracks:
             artist = t.get("creator", "")
             title = t.get("title", "")
             if artist and title:
