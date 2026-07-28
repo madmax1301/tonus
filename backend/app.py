@@ -596,6 +596,18 @@ class AlbumDownloadRequest(BaseModel):
     navidrome_library: Optional[str] = None
 
 
+class ArtistDownloadRequest(BaseModel):
+    artist_id: str
+    location: Optional[str] = "local"  # 'local' or 'navidrome'
+    format: Optional[str] = None
+    quality: Optional[str] = None
+    provider: Optional[str] = None  # "deezer" (only provider supported for now)
+    max_retries: Optional[int] = 0  # Extra attempts per track if a download fails (0–5)
+    navidrome_library: Optional[str] = None
+    include_singles: Optional[bool] = False  # include record_type 'single'
+    include_compilations: Optional[bool] = False  # include record_type 'compilation' (best-of/samplers)
+
+
 class ReverseLookupRequest(BaseModel):
     url: str
     provider: Optional[str] = None  # "deezer" | "spotify"
@@ -1086,6 +1098,22 @@ async def search_albums(request: SearchRequest):
         return svc.search_albums(request.query, request.limit or 20)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Album search failed: {str(e)}")
+
+
+@app.post("/api/search/artists")
+async def search_artists(request: SearchRequest):
+    """Search for artists (for the artist card / "download all" flow)."""
+    provider = resolve_metadata_provider(request.provider)
+    svc = get_metadata_service(provider)
+    if not hasattr(svc, "search_artists"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Artist search is not supported for provider '{provider}' yet.",
+        )
+    try:
+        return svc.search_artists(request.query, request.limit or 8)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Artist search failed: {str(e)}")
 
 
 @app.get("/api/album/{album_id}")
@@ -1837,64 +1865,55 @@ async def clear_queue(
 
 
 
-@app.post("/api/download/album")
-async def download_album(request: AlbumDownloadRequest, background_tasks: BackgroundTasks, _: None = Depends(require_token)):
-    """Start downloading all tracks from an album"""
-
-    provider = resolve_metadata_provider(request.provider)
-    svc = get_metadata_service(provider)
-    album_job_id = f"album:{request.album_id}"
-
-    album = svc.get_album_details(request.album_id)
-
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-
-    # Validate location
-    location = request.location if request.location in ["local", "navidrome"] else "local"
-    location_msg = "local downloads folder" if location == "local" else "Navidrome server"
-
-    output_format = request.format or config.OUTPUT_FORMAT
-    navidrome_path: Optional[str] = None
-    if location == "navidrome":
-        navidrome_path = resolve_navidrome_library_path_optional(request.navidrome_library)
-
-    to_queue = []
-    for track in album["tracks"]:
-        if (
-            get_duplicate_download_reason(
-                track["id"],
-                provider,
-                location,
-                output_format,
-                navidrome_library_path=navidrome_path,
-            )
-            is None
-        ):
-            to_queue.append(track)
-
+def _queue_album_tracks(
+    album: Dict,
+    *,
+    provider: str,
+    location: str,
+    output_format: str,
+    quality: Optional[str],
+    max_retries: Optional[int],
+    navidrome_path: Optional[str],
+) -> Dict:
+    """Dedup one album's tracks against the library, register the album_meta
+    aggregator, and enqueue the missing tracks. Returns a summary dict. Does
+    NOT raise on an all-duplicate album — the caller decides (single-album →
+    409, artist fan-out → skip). Shared by /api/download/album and
+    /api/download/artist.
+    """
+    album_id = str(album.get("id") or "")
+    tracks = album.get("tracks") or []
+    to_queue = [
+        t for t in tracks
+        if get_duplicate_download_reason(
+            t["id"], provider, location, output_format,
+            navidrome_library_path=navidrome_path,
+        ) is None
+    ]
     if not to_queue:
-        raise HTTPException(
-            status_code=409,
-            detail="All tracks from this album are already in your library.",
-        )
+        return {
+            "album_id": album_id,
+            "album_name": album.get("name"),
+            "queued": 0,
+            "skipped": len(tracks),
+            "queued_track_ids": [],
+        }
 
-    # Album-Aggregator: NICHT 'queued' — sonst greift ihn der Worker als Track-Download
-    # ab, scheitert an svc.get_track_details('album:...') und landet als Geist-Eintrag
-    # mit Cover aber ohne Track-Name in der Queue. Eigener Status 'album_meta' wird
-    # vom Worker UND von /api/queue ignoriert, bleibt nur für /api/download/album/status
-    # via get_job() abrufbar.
+    # Album-Aggregator: NICHT 'queued' — sonst greift ihn der Worker als Track-
+    # Download ab, scheitert an svc.get_track_details('album:...') und landet als
+    # Geist-Eintrag. Status 'album_meta' wird vom Worker UND /api/queue ignoriert,
+    # bleibt nur über get_job() für die Status-Route abrufbar.
     upsert_job(
-        album_job_id,
+        f"album:{album_id}",
         status="album_meta",
-        message=f"Album '{album['name']}' queued",
+        message=f"Album '{album.get('name')}' queued",
         stage="queued",
         progress=0,
-        album_id=request.album_id,
+        album_id=album_id,
         payload={
-            "album_id": request.album_id,
-            "album_name": album["name"],
-            "artist": album["artist"],
+            "album_id": album_id,
+            "album_name": album.get("name"),
+            "artist": album.get("artist"),
             "album_art": album.get("album_art"),
             "track_ids": [t["id"] for t in to_queue],
             "total_tracks": len(to_queue),
@@ -1911,34 +1930,74 @@ async def download_album(request: AlbumDownloadRequest, background_tasks: Backgr
         upsert_job(
             track["id"],
             status="queued",
-            message=f"Queued (Album: {album['name']})",
+            message=f"Queued (Album: {album.get('name')})",
             progress=0,
             stage="queued",
-            album_id=request.album_id,
+            album_id=album_id,
             payload={
                 "provider": provider,
                 "record_track_id": track["id"],
                 "location": location,
                 "video_id": None,
                 "output_format": output_format,
-                "audio_quality": request.quality,
+                "audio_quality": quality,
                 "metadata_provider": provider,
-                "max_retries": _clamp_download_retries(request.max_retries),
+                "max_retries": _clamp_download_retries(max_retries),
                 "navidrome_library_path": navidrome_path,
                 "track": track_for_queue,
             },
         )
-    # All tracks enqueued in SQLite — worker picks them up one by one
 
-    skipped = len(album["tracks"]) - len(to_queue)
+    return {
+        "album_id": album_id,
+        "album_name": album.get("name"),
+        "queued": len(to_queue),
+        "skipped": len(tracks) - len(to_queue),
+        "queued_track_ids": [t["id"] for t in to_queue],
+    }
+
+
+@app.post("/api/download/album")
+async def download_album(request: AlbumDownloadRequest, background_tasks: BackgroundTasks, _: None = Depends(require_token)):
+    """Start downloading all tracks from an album"""
+    provider = resolve_metadata_provider(request.provider)
+    svc = get_metadata_service(provider)
+
+    album = svc.get_album_details(request.album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    location = request.location if request.location in ["local", "navidrome"] else "local"
+    location_msg = "local downloads folder" if location == "local" else "Navidrome server"
+    output_format = request.format or config.OUTPUT_FORMAT
+    navidrome_path: Optional[str] = None
+    if location == "navidrome":
+        navidrome_path = resolve_navidrome_library_path_optional(request.navidrome_library)
+
+    summary = _queue_album_tracks(
+        album,
+        provider=provider,
+        location=location,
+        output_format=output_format,
+        quality=request.quality,
+        max_retries=request.max_retries,
+        navidrome_path=navidrome_path,
+    )
+    if summary["queued"] == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="All tracks from this album are already in your library.",
+        )
+
+    skipped = summary["skipped"]
     return {
         "status": "queued",
-        "message": f"Queued {len(to_queue)} track(s) from '{album['name']}' to {location_msg}"
+        "message": f"Queued {summary['queued']} track(s) from '{album['name']}' to {location_msg}"
         + (f" ({skipped} skipped — already in library)" if skipped else ""),
         "album_id": request.album_id,
-        "total_tracks": len(to_queue),
+        "total_tracks": summary["queued"],
         "skipped_tracks": skipped,
-        "queued_track_ids": [t["id"] for t in to_queue],
+        "queued_track_ids": summary["queued_track_ids"],
     }
 
 
@@ -1990,6 +2049,184 @@ async def get_album_download_status(album_id: str):
         "failed_tracks": agg["failed_tracks"],
         "current_track": agg["current_track"],
         "track_ids": payload.get("track_ids") or [],
+    }
+
+
+def _run_artist_queueing(
+    artist_id: str,
+    albums: List[Dict],
+    *,
+    provider: str,
+    location: str,
+    output_format: str,
+    quality: Optional[str],
+    max_retries: Optional[int],
+    navidrome_path: Optional[str],
+) -> None:
+    """Background fan-out: fetch each album's tracklist and enqueue the missing
+    tracks. Runs outside the request so a large discography doesn't block the
+    HTTP response. Rewrites the artist_meta aggregator when done."""
+    svc = get_metadata_service(provider)
+    total_queued = 0
+    total_skipped = 0
+    all_ids: List[str] = []
+    per_album: List[Dict] = []
+    artist_name: Optional[str] = None
+
+    for a in albums:
+        try:
+            detail = svc.get_album_details(a["id"])
+            if not detail:
+                continue
+            artist_name = artist_name or detail.get("artist")
+            summary = _queue_album_tracks(
+                detail,
+                provider=provider,
+                location=location,
+                output_format=output_format,
+                quality=quality,
+                max_retries=max_retries,
+                navidrome_path=navidrome_path,
+            )
+        except Exception as e:
+            print(f"artist-download {artist_id}: album {a.get('id')} failed: {e}")
+            continue
+        total_queued += summary["queued"]
+        total_skipped += summary["skipped"]
+        all_ids.extend(summary["queued_track_ids"])
+        per_album.append({
+            "album_id": a["id"],
+            "album_name": a.get("name") or summary.get("album_name"),
+            "queued": summary["queued"],
+            "skipped": summary["skipped"],
+        })
+
+    upsert_job(
+        f"artist:{artist_id}",
+        status="artist_meta",
+        message=f"Artist '{artist_name or artist_id}': {total_queued} track(s) queued, "
+                f"{total_skipped} already in library, across {len(per_album)} album(s)",
+        stage="queued",
+        progress=100,
+        payload={
+            "artist_id": artist_id,
+            "artist_name": artist_name,
+            "albums": per_album,
+            "queued_track_ids": all_ids,
+            "total_tracks": total_queued,
+            "total_skipped": total_skipped,
+            "queueing": False,
+        },
+    )
+
+
+@app.post("/api/download/artist")
+async def download_artist(request: ArtistDownloadRequest, background_tasks: BackgroundTasks, _: None = Depends(require_token)):
+    """Queue an artist's whole discography (albums + EPs by default; singles /
+    compilations opt-in). The per-album fetch + enqueue runs in the background —
+    poll /api/download/artist/status/{artist_id} for progress."""
+    provider = resolve_metadata_provider(request.provider)
+    svc = get_metadata_service(provider)
+    if not hasattr(svc, "get_artist_albums"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Artist download is not supported for provider '{provider}' yet.",
+        )
+
+    albums = svc.get_artist_albums(
+        request.artist_id,
+        include_singles=bool(request.include_singles),
+        include_compilations=bool(request.include_compilations),
+    )
+    if not albums:
+        raise HTTPException(status_code=404, detail="No matching releases found for this artist.")
+
+    location = request.location if request.location in ["local", "navidrome"] else "local"
+    location_msg = "local downloads folder" if location == "local" else "Navidrome server"
+    output_format = request.format or config.OUTPUT_FORMAT
+    navidrome_path: Optional[str] = None
+    if location == "navidrome":
+        navidrome_path = resolve_navidrome_library_path_optional(request.navidrome_library)
+
+    # Seed the artist_meta aggregator immediately so the status endpoint has
+    # something to report while the background fan-out runs.
+    upsert_job(
+        f"artist:{request.artist_id}",
+        status="artist_meta",
+        message=f"Queuing {len(albums)} release(s) for artist {request.artist_id}…",
+        stage="queued",
+        progress=0,
+        payload={
+            "artist_id": request.artist_id,
+            "artist_name": None,
+            "albums": [{"album_id": a["id"], "album_name": a.get("name")} for a in albums],
+            "queued_track_ids": [],
+            "total_tracks": 0,
+            "total_skipped": 0,
+            "queueing": True,
+        },
+    )
+
+    background_tasks.add_task(
+        _run_artist_queueing,
+        request.artist_id,
+        albums,
+        provider=provider,
+        location=location,
+        output_format=output_format,
+        quality=request.quality,
+        max_retries=request.max_retries,
+        navidrome_path=navidrome_path,
+    )
+
+    return {
+        "status": "started",
+        "message": f"Queuing {len(albums)} release(s) to {location_msg} — downloads will trickle in.",
+        "artist_id": request.artist_id,
+        "album_count": len(albums),
+    }
+
+
+@app.get("/api/download/artist/status/{artist_id}")
+async def get_artist_download_status(artist_id: str):
+    """Aggregate an artist download's progress by summing its albums' aggregates."""
+    meta = get_job(f"artist:{artist_id}")
+    if not meta:
+        raise HTTPException(status_code=404, detail="Artist download not found")
+    payload = meta.get("payload") or {}
+    albums = payload.get("albums") or []
+
+    total = completed = failed = 0
+    current = None
+    for alb in albums:
+        aid = alb.get("album_id")
+        if not aid:
+            continue
+        agg = get_album_aggregate(aid, exclude_job_id=f"album:{aid}")
+        total += agg["total_tracks"]
+        completed += agg["completed_tracks"]
+        failed += agg["failed_tracks"]
+        if current is None and agg.get("current_track"):
+            current = agg["current_track"]
+
+    if payload.get("queueing"):
+        status = "queueing"
+    elif total == 0:
+        status = "empty"
+    elif (completed + failed) >= total:
+        status = "completed" if failed == 0 else "completed_with_errors"
+    else:
+        status = "downloading"
+
+    return {
+        "status": status,
+        "artist_name": payload.get("artist_name"),
+        "album_count": len(albums),
+        "total_tracks": total,
+        "completed_tracks": completed,
+        "failed_tracks": failed,
+        "current_track": current,
+        "albums": albums,
     }
 
 

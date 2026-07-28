@@ -219,6 +219,76 @@ class DeezerService:
             out.append(track)
         return out
 
+    def get_artist_albums(
+        self,
+        artist_id: str,
+        include_singles: bool = False,
+        include_compilations: bool = False,
+    ) -> List[Dict]:
+        """Listet die Releases eines Künstlers via /artist/{id}/albums.
+
+        Deezer klassifiziert jedes Release über `record_type`
+        (album / ep / single / compilation). Standard: nur album + ep —
+        Singles und Compilations (Best-of, Sampler) werden weggelassen, da sie
+        sonst massenhaft Dubletten desselben Tracks erzeugen. Über die Flags
+        einzeln zuschaltbar.
+
+        Output: Liste von ``{id, name, album_art, release_date, record_type,
+        nb_tracks}`` — nach Release-Datum absteigend sortiert.
+        """
+        if not artist_id:
+            return []
+        wanted = {"album", "ep"}
+        if include_singles:
+            wanted.add("single")
+        if include_compilations:
+            wanted.add("compilation")
+
+        def _norm(a: Dict) -> Optional[Dict]:
+            rt = (a.get("record_type") or "album").lower()
+            if rt not in wanted:
+                return None
+            aid = str(a.get("id", ""))
+            if not aid:
+                return None
+            return {
+                "id": aid,
+                "name": a.get("title", ""),
+                "album_art": a.get("cover_xl") or a.get("cover_big") or a.get("cover_medium"),
+                "release_date": (a.get("release_date") or "")[:10],
+                "record_type": rt,
+                "nb_tracks": int(a.get("nb_tracks") or 0),
+            }
+
+        out: List[Dict] = []
+        seen_ids = set()
+        try:
+            data = _get(f"/artist/{artist_id}/albums", {"limit": 100})
+        except Exception as e:
+            print(f"Deezer artist-albums lookup error: {e}")
+            return []
+
+        # Erste Seite via _get, Folgeseiten via absoluter `next`-URL über die Session.
+        for _ in range(20):  # Safety-Cap: max ~2000 Releases
+            for a in data.get("data") or []:
+                entry = _norm(a)
+                if entry and entry["id"] not in seen_ids:
+                    seen_ids.add(entry["id"])
+                    out.append(entry)
+            next_url = data.get("next")
+            if not next_url:
+                break
+            try:
+                page = _get_session("default").get(next_url, timeout=15)
+                page.raise_for_status()
+                data = page.json()
+            except Exception as e:
+                print(f"Deezer artist-albums pagination: {e}")
+                break
+
+        out.sort(key=lambda x: x.get("release_date", ""), reverse=True)
+        return out
+
     def get_album_details(self, album_id: str, source: str = "default") -> Optional[Dict]:
         try:
             album = _get(f"/album/{album_id}", source=source)
