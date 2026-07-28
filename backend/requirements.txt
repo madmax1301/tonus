@@ -9,7 +9,7 @@ python-multipart==0.0.32
 # requests 2.31.0 → 2.33.0: CVE-2024-35195 (cert-verify-bypass),
 # CVE-2024-47081 (.netrc credential leak), CVE-2026-25645 (security bypass)
 requests==2.34.2
-aiofiles==23.2.1
+aiofiles==25.1.0
 pydantic==2.13.4
 # python-dotenv 1.0.0 → 1.2.2: CVE-2026-28684 (arbitrary file overwrite via symlink)
 python-dotenv==1.2.2
