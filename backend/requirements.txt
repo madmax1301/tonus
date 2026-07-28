@@ -36,4 +36,4 @@ PyJWT==2.13.0
 # CVE-2024-12797 (OpenSSL RFC7250), CVE-2026-34073 (security bypass),
 # bundled-OpenSSL vulns (GHSA-h4gh-qq45-vh27)
 # → 48.0.1: GHSA-537c-gmf6-5ccf (vulnerable OpenSSL in den Wheels)
-cryptography==48.0.1
+cryptography==49.0.0
