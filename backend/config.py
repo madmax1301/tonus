@@ -14,6 +14,11 @@ DEFAULT_METADATA_PROVIDER = _raw_provider if _raw_provider in ("deezer", "spotif
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:8000/callback")
+# Optional ISO-3166-1 alpha-2 market code (e.g. "DE", "US") to scope Spotify search
+# results to a catalog/region. Empty = no market filter (results follow the app
+# token's own region). Do NOT hardcode a market — that silently drops tracks not
+# available there.
+SPOTIFY_MARKET = os.getenv("SPOTIFY_MARKET", "").strip().upper()
 
 # Navidrome Configuration
 # Multiple libraries: set NAVIDROME_MUSIC_PATHS to a comma- or newline-separated list of absolute paths.

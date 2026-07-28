@@ -10,6 +10,31 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.7.0] — 2026-07-28
+
+### Added
+
+- **Artist-Download („Download all")** — bei einer Album-Suche erscheint über
+  den Ergebnissen eine Artist-Card (Bild, Name, Album-Zahl) mit „Alle laden".
+  Lädt die komplette Diskografie: Alben + EPs per Default, Singles und
+  Best-of/Sampler optional zuschaltbar. Der Fan-out über die Alben läuft im
+  Hintergrund (blockt die Response nicht) und nutzt die bestehende
+  Album-Dedup-/Queue-Pipeline. Neue Endpoints `POST /api/search/artists`,
+  `POST /api/download/artist`, `GET /api/download/artist/status/{id}`.
+  Aktuell Deezer. (Wunsch aus [#56](https://github.com/madmax1301/tonus/issues/56).)
+
+### Fixed
+
+- **Spotify-Suche auf Markt `MX` festgenagelt** — jeder Spotify-Track-/Album-
+  Search war hart auf `market='MX'` (Mexiko) gesetzt, unabhängig von der Region
+  des Nutzers, und filterte so Ergebnisse nach mexikanischer Verfügbarkeit
+  ([#55](https://github.com/madmax1301/tonus/issues/55)). Markt ist jetzt über
+  `SPOTIFY_MARKET` (ISO-Ländercode) konfigurierbar und standardmäßig **kein**
+  Filter. Fehler-Logs zeigen nun die ausgehenden Params (`q`/`limit`/`market`),
+  damit missverständliche 400er (z.B. „Invalid limit") diagnostizierbar sind.
+
+---
+
 ## [0.6.1] — 2026-07-27
 
 ### Fixed

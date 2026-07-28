@@ -53,8 +53,9 @@ class SpotifyService:
 
     def search_tracks(self, query: str, limit: int = 20) -> List[Dict]:
         """Search for tracks on Spotify"""
+        market = config.SPOTIFY_MARKET or None
         try:
-            results = self._call(self.client.search, q=query, type='track', limit=limit, market='MX')
+            results = self._call(self.client.search, q=query, type='track', limit=limit, market=market)
             tracks = []
             for item in results["tracks"]["items"]:
                 tracks.append({
@@ -72,7 +73,9 @@ class SpotifyService:
                 })
             return tracks
         except Exception as e:
-            print(f"Spotify search error: {e}")
+            # Log the outgoing params so a 400 (e.g. "Invalid limit") is
+            # diagnosable — Spotify's error text alone is often misleading.
+            print(f"Spotify track-search error (q={query!r} limit={limit} market={market!r}): {e}")
             raise
 
     def get_track_details(self, track_id: str) -> Optional[Dict]:
@@ -100,8 +103,9 @@ class SpotifyService:
 
     def search_albums(self, query: str, limit: int = 20) -> List[Dict]:
         """Search for albums on Spotify"""
+        market = config.SPOTIFY_MARKET or None
         try:
-            results = self._call(self.client.search, q=query, type='album', limit=limit, market='MX')
+            results = self._call(self.client.search, q=query, type='album', limit=limit, market=market)
             albums = []
             for item in results["albums"]["items"]:
                 albums.append({
@@ -116,7 +120,7 @@ class SpotifyService:
                 })
             return albums
         except Exception as e:
-            print(f"Spotify album search error: {e}")
+            print(f"Spotify album-search error (q={query!r} limit={limit} market={market!r}): {e}")
             raise
 
     def get_album_details(self, album_id: str) -> Optional[Dict]:
