@@ -348,6 +348,15 @@ export interface Album {
   external_url: string;
 }
 
+export interface Artist {
+  id: string;
+  name: string;
+  picture?: string;
+  nb_album: number;
+  nb_fan: number;
+  external_url: string;
+}
+
 export interface MetadataProvider {
   id: string;
   label: string;
@@ -396,7 +405,9 @@ export const searchApi = {
   tracks: (query: string, provider?: string, limit = 20) =>
     api.post<Track[]>('/api/search', { query, provider, limit }),
   albums: (query: string, provider?: string, limit = 20) =>
-    api.post<Album[]>('/api/search/albums', { query, provider, limit })
+    api.post<Album[]>('/api/search/albums', { query, provider, limit }),
+  artists: (query: string, provider?: string, limit = 8) =>
+    api.post<Artist[]>('/api/search/artists', { query, provider, limit })
 };
 
 export interface AlbumDetail extends Album {
@@ -439,6 +450,40 @@ export const downloadApi = {
         quality: opts.quality
       }
     )
+};
+
+export interface ArtistDownloadOpts extends DownloadOpts {
+  include_singles?: boolean;
+  include_compilations?: boolean;
+}
+
+export interface ArtistDownloadStatus {
+  status: 'queueing' | 'downloading' | 'completed' | 'completed_with_errors' | 'empty';
+  artist_name?: string | null;
+  album_count: number;
+  total_tracks: number;
+  completed_tracks: number;
+  failed_tracks: number;
+  current_track?: string | null;
+  albums: { album_id: string; album_name?: string; queued?: number; skipped?: number }[];
+}
+
+export const artistApi = {
+  download: (artistId: string, opts: ArtistDownloadOpts = {}) =>
+    api.post<{ status: string; message: string; artist_id: string; album_count: number }>(
+      '/api/download/artist',
+      {
+        artist_id: artistId,
+        location: opts.location ?? 'navidrome',
+        provider: opts.provider,
+        format: opts.format,
+        quality: opts.quality,
+        include_singles: opts.include_singles ?? false,
+        include_compilations: opts.include_compilations ?? false
+      }
+    ),
+  status: (artistId: string) =>
+    api.get<ArtistDownloadStatus>(`/api/download/artist/status/${encodeURIComponent(artistId)}`)
 };
 
 export const providersApi = {

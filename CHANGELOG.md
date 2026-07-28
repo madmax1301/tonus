@@ -12,6 +12,17 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ## [Unreleased]
 
+### Added
+
+- **Artist-Download („Download all")** — bei einer Album-Suche erscheint über
+  den Ergebnissen eine Artist-Card (Bild, Name, Album-Zahl) mit „Alle laden".
+  Lädt die komplette Diskografie: Alben + EPs per Default, Singles und
+  Best-of/Sampler optional zuschaltbar. Der Fan-out über die Alben läuft im
+  Hintergrund (blockt die Response nicht) und nutzt die bestehende
+  Album-Dedup-/Queue-Pipeline. Neue Endpoints `POST /api/search/artists`,
+  `POST /api/download/artist`, `GET /api/download/artist/status/{id}`.
+  Aktuell Deezer. (Wunsch aus [#56](https://github.com/madmax1301/tonus/issues/56).)
+
 ### Fixed
 
 - **Spotify-Suche auf Markt `MX` festgenagelt** — jeder Spotify-Track-/Album-

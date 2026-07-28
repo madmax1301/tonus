@@ -5,6 +5,7 @@
   import {
     searchApi,
     downloadApi,
+    artistApi,
     providersApi,
     urlApi,
     reverseApi,
@@ -12,6 +13,7 @@
     ApiError,
     type Track,
     type Album,
+    type Artist,
     type MetadataProvidersResponse,
     type ReverseLookupResult,
     type HealthResponse
@@ -55,6 +57,14 @@
   });
   let trackResults = $state<Track[]>([]);
   let albumResults = $state<Album[]>([]);
+  // Artist-Card (Mockup 1): der Top-Artist-Treffer wird über den Album-Ergebnissen
+  // gezeigt, mit "Download all". Nur Deezer liefert Artists — bei anderen Providern
+  // (400) bleibt die Liste leer und die Card wird nicht gerendert.
+  let artistResults = $state<Artist[]>([]);
+  let artistDl = $state<DownloadState | null>(null);
+  let artistOptsOpen = $state(false);
+  let artistInclSingles = $state(false);
+  let artistInclComps = $state(false);
   let searching = $state(false);
   let searchError = $state<string | null>(null);
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
@@ -404,6 +414,7 @@
     if (!query.trim()) {
       trackResults = [];
       albumResults = [];
+      artistResults = [];
       searchError = null;
       syncUrl();
       return;
@@ -419,6 +430,7 @@
       if (mode === 'tracks') {
         trackResults = await searchApi.tracks(query.trim(), provider || undefined, 20);
         albumResults = [];
+        artistResults = [];
         const first = trackResults[0];
         if (first?.album_art) {
           featured = {
@@ -431,6 +443,14 @@
       } else {
         albumResults = await searchApi.albums(query.trim(), provider || undefined, 20);
         trackResults = [];
+        // Top-Artist-Treffer für die "Download all"-Card. Fehler (z.B. Provider
+        // ohne Artist-Support → 400) schlucken, dann bleibt die Card aus.
+        artistDl = null;
+        try {
+          artistResults = await searchApi.artists(query.trim(), provider || undefined, 3);
+        } catch {
+          artistResults = [];
+        }
         const first = albumResults[0];
         if (first?.album_art) {
           featured = {
@@ -529,6 +549,29 @@
       });
     } catch (err) {
       handleDownloadError(album.id, err);
+    }
+  }
+
+  async function queueArtist(artist: Artist) {
+    artistDl = { kind: 'queued' };
+    try {
+      const r = await artistApi.download(artist.id, {
+        location: $defaultLocation,
+        provider: provider || undefined,
+        format: $defaultFormat || undefined,
+        quality: $defaultQuality || undefined,
+        include_singles: artistInclSingles,
+        include_compilations: artistInclComps
+      });
+      artistDl = { kind: 'done', message: `${r.album_count} release(s) queued` };
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        artistDl = { kind: 'exists', message: 'alles schon in der Library' };
+      } else if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        artistDl = null;
+      } else {
+        artistDl = { kind: 'error' };
+      }
     }
   }
 
@@ -786,6 +829,92 @@
 
   {#if searchError && (mode === 'tracks' || mode === 'albums')}
     <div class="text-sm mb-4" style="color: var(--color-status-error);">{searchError}</div>
+  {/if}
+
+  <!-- ─── Artist card (Mockup 1): top artist match + "Download all" ─── -->
+  {#if mode === 'albums' && artistResults.length > 0}
+    {@const artist = artistResults[0]}
+    <div class="mb-5">
+      <GlassCard padding="md" interactive>
+        <div class="flex items-center gap-4">
+          <div class="shrink-0 overflow-hidden rounded-full" style="width: 60px; height: 60px;">
+            <AlbumArt src={artist.picture} alt={artist.name} size="md" />
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-[11px] uppercase tracking-wider" style="color: var(--color-fg-tertiary);">
+              {$t('library.artist.label')}
+            </div>
+            <div class="font-semibold text-[16px] truncate" style="color: var(--color-fg-primary);">
+              {artist.name}
+            </div>
+            <div class="text-[13px]" style="color: var(--color-fg-secondary);">
+              {artist.nb_album}
+              {$t('library.artist.albums')}
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-1.5 shrink-0">
+            <button
+              onclick={() => queueArtist(artist)}
+              disabled={artistDl?.kind === 'queued' || artistDl?.kind === 'done'}
+              title={artistDl?.message ?? ''}
+              class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-[13px] font-medium transition-all disabled:cursor-default"
+              style="background: {artistDl?.kind === 'done'
+                ? 'var(--color-status-done)'
+                : artistDl?.kind === 'exists'
+                  ? 'var(--color-surface-3)'
+                  : artistDl?.kind === 'error'
+                    ? 'var(--color-status-error)'
+                    : artistDl?.kind === 'queued'
+                      ? 'var(--color-surface-3)'
+                      : accentSoft}; color: {artistDl?.kind === 'exists' || artistDl?.kind === 'queued'
+                ? 'var(--color-fg-secondary)'
+                : '#0a0a0c'}; min-width: 140px; justify-content: center;"
+            >
+              {#if artistDl?.kind === 'queued'}
+                <LoaderCircle size={14} class="animate-spin" />
+                {$t('common.queueing')}
+              {:else if artistDl?.kind === 'done'}
+                {$t('common.in_queue')}
+              {:else if artistDl?.kind === 'exists'}
+                {$t('common.exists')}
+              {:else if artistDl?.kind === 'error'}
+                {$t('common.error')}
+              {:else}
+                <Download size={14} strokeWidth={1.8} />
+                {$t('library.artist.downloadAll')}
+              {/if}
+            </button>
+            <button
+              onclick={() => (artistOptsOpen = !artistOptsOpen)}
+              class="text-[12px] underline"
+              style="color: var(--color-fg-tertiary);"
+            >
+              {$t('library.artist.options')}
+            </button>
+          </div>
+        </div>
+        {#if artistOptsOpen}
+          <div
+            class="mt-3 pt-3 flex flex-wrap gap-5 text-[13px]"
+            style="border-top: 1px solid var(--color-border-soft); color: var(--color-fg-secondary);"
+          >
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" bind:checked={artistInclSingles} />
+              {$t('library.artist.singles')}
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" bind:checked={artistInclComps} />
+              {$t('library.artist.compilations')}
+            </label>
+          </div>
+        {/if}
+        {#if artistDl?.message && artistDl.kind !== 'queued'}
+          <div class="mt-2 text-[12px]" style="color: var(--color-fg-tertiary);">
+            {artistDl.message}
+          </div>
+        {/if}
+      </GlassCard>
+    </div>
   {/if}
 
   <!-- ─── Album grid (Direction-B signature) ─── -->
