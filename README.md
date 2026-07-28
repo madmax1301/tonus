@@ -81,10 +81,12 @@ If your acquisition needs are already handled by a Lidarr-based stack and Soulse
 | **Library** — search across providers, download a single track or a full album with one click | **Onboarding** — pick your providers on first boot; everything else is configured later in *Settings → Verbindungen* |
 | ![Album detail](docs/screenshots/album.png) | ![Settings panel](docs/screenshots/settings.png) |
 | **Album view** — full track list with queue badge for in-flight downloads | **Settings** — runtime configuration: defaults, providers, users, API tokens, brute-force log |
+| ![Artist download](docs/screenshots/artist-download.png) | **Artist download** — search an artist, hit **Download all** to queue the whole discography (albums + EPs by default; singles / best-of optional). The fan-out runs in the background and dedups against your library first. |
 
 ## Features
 
 - **Multi-provider search** — Deezer (free, no key) or Spotify (catalog) for metadata; audio falls back across YouTube ↔ SoundCloud automatically based on score and availability
+- **Artist download** — search an artist and queue their whole discography with one click; albums + EPs by default, singles / compilations opt-in. Fans out in the background and dedups against your library first (Deezer)
 - **Bulk import (v0.3.0)** — three import paths share one pipeline:
   - **CSV-Bulk** — drag a TuneMyMusic / Soundiiz / hand-rolled CSV; Tonus parses Artist + Track Name (and an optional Playlist column) and matches against your Navidrome library before touching any provider
   - **Spotify Extended Streaming History** — drop the JSON files from your Spotify data export; tracks are aggregated and auto-grouped into per-year + per-month Subsonic playlists
