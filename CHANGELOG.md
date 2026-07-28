@@ -10,6 +10,20 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Spotify-Suche auf Markt `MX` festgenagelt** — jeder Spotify-Track-/Album-
+  Search war hart auf `market='MX'` (Mexiko) gesetzt, unabhängig von der Region
+  des Nutzers, und filterte so Ergebnisse nach mexikanischer Verfügbarkeit
+  ([#55](https://github.com/madmax1301/tonus/issues/55)). Markt ist jetzt über
+  `SPOTIFY_MARKET` (ISO-Ländercode) konfigurierbar und standardmäßig **kein**
+  Filter. Fehler-Logs zeigen nun die ausgehenden Params (`q`/`limit`/`market`),
+  damit missverständliche 400er (z.B. „Invalid limit") diagnostizierbar sind.
+
+---
+
 ## [0.6.1] — 2026-07-27
 
 ### Fixed

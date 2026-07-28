@@ -221,6 +221,7 @@ This means once you've configured a provider in the UI, the `.env` value for it 
 | `SPOTIFY_CLIENT_ID` | — | only with `spotify` | Spotify Web API Client ID. Get one at [developer.spotify.com](https://developer.spotify.com/dashboard). |
 | `SPOTIFY_CLIENT_SECRET` | — | only with `spotify` | Paired secret. Tonus uses Client-Credentials flow — no user OAuth. |
 | `SPOTIFY_REDIRECT_URI` | `http://localhost:8000/callback` | no | Reserved for future user-OAuth flow; not used by current builds. |
+| `SPOTIFY_MARKET` | — | no | Optional ISO country code (e.g. `DE`, `US`) to scope search results to a region's catalog. Leave unset to search without a market filter. |
 | **Navidrome integration** | | | |
 | `NAVIDROME_MUSIC_PATH` | `/music` (in container) | yes | Final destination for downloaded tracks. Inside the container; bind-mounted from your Navidrome library. |
 | `NAVIDROME_MUSIC_PATHS` | — | no | Comma- or newline-separated list of multiple library paths. Each appears as "Download to" in the UI. |
