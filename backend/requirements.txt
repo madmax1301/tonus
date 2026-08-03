@@ -1,5 +1,5 @@
-fastapi==0.139.0
-uvicorn[standard]==0.50.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
 spotipy==2.26.0
 yt-dlp>=2026.3.17
 mutagen==1.48.1
