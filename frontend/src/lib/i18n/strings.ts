@@ -557,7 +557,11 @@ export const strings = {
     'auth.onboarding.error_save': 'Konnte nicht speichern — Backend nicht erreichbar?',
 
     'auth.logout.button': 'Abmelden',
-    'auth.user_menu.signed_in_as': 'angemeldet als'
+    'auth.user_menu.signed_in_as': 'angemeldet als',
+
+    // ── PWA ─────────────────────────────────────────────
+    'pwa.update_available': 'Neue Version verfügbar',
+    'pwa.update_reload': 'Neu laden'
   },
   en: {
     // ── Common ──────────────────────────────────────────
@@ -1105,7 +1109,11 @@ export const strings = {
     'auth.onboarding.error_save': "Couldn't save — backend not reachable?",
 
     'auth.logout.button': 'Sign out',
-    'auth.user_menu.signed_in_as': 'signed in as'
+    'auth.user_menu.signed_in_as': 'signed in as',
+
+    // ── PWA ─────────────────────────────────────────────
+    'pwa.update_available': 'New version available',
+    'pwa.update_reload': 'Reload'
   }
 } as const;
 

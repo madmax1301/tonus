@@ -76,6 +76,15 @@ const CHECKS = [
       );
       return missing.length === 0 || `fehlt in: ${missing.join(', ')}`;
     }
+  },
+  {
+    name: 'Service Worker gebaut, /api ausgenommen',
+    run: () => {
+      const path = join(BUILD, 'service-worker.js');
+      if (!existsSync(path)) return 'build/service-worker.js fehlt';
+      const sw = readFileSync(path, 'utf8');
+      return sw.includes('/api/') || 'kein /api/-Ausschluss im Worker';
+    }
   }
 ];
 

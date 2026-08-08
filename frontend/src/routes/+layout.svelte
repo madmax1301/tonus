@@ -16,6 +16,7 @@
   import VinylPuck from '$lib/components/VinylPuck.svelte';
   import FlyingCover from '$lib/components/FlyingCover.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import UpdateToast from '$lib/components/UpdateToast.svelte';
   import { flyingCovers, setQueueCount } from '$lib/fly-to-queue';
   import { queueApi, authApi, ApiError } from '$lib/api';
   import { t } from '$lib/i18n';
@@ -281,6 +282,7 @@
 
   <TokenSheet />
   <ConfirmDialog />
+  <UpdateToast />
 </div>
 
 <style>
