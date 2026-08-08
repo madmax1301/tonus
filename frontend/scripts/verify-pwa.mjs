@@ -78,6 +78,18 @@ const CHECKS = [
     }
   },
   {
+    name: 'Mode-Strip scrollt statt das Dokument aufzuweiten',
+    run: () => {
+      // Fünf Tabs passen auf einem 390px-Viewport nicht nebeneinander. Ohne
+      // eigenen Scroller wächst das Dokument horizontal und iOS skaliert die
+      // ganze Seite herunter — die Bibliothek sieht dann "rausgezoomt" aus.
+      const src = readFileSync('src/routes/+page.svelte', 'utf8');
+      if (!src.includes('tonus-library-modes')) return 'Klasse .tonus-library-modes fehlt';
+      const block = (src.split('.tonus-library-modes {')[1] || '').slice(0, 500);
+      return block.includes('overflow-x: auto') || 'kein overflow-x: auto im Regelblock';
+    }
+  },
+  {
     name: 'Service Worker gebaut, /api ausgenommen',
     run: () => {
       const path = join(BUILD, 'service-worker.js');

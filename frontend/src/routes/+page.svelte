@@ -773,7 +773,7 @@
 
   <!-- Mode strip — underline tabs + provider info -->
   <div
-    class="flex items-center"
+    class="flex items-center tonus-library-modes"
     style="
       gap: 24px;
       font-size: 13px;
@@ -1257,6 +1257,31 @@
     .tonus-album-grid {
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
       gap: 12px !important;
+    }
+    /* Mode-Strip: fünf Tabs passen auf dem Phone nicht nebeneinander
+       (allein 4×24px Gap). Ohne Overflow-Behandlung wächst das Dokument
+       horizontal und iOS skaliert die ganze Seite herunter — die Seite
+       sieht "rausgezoomt" aus. Gleiches Scroller-Muster wie
+       .tonus-top-nav im Layout. */
+    .tonus-library-modes {
+      gap: 16px !important;
+      min-width: 0;
+      overflow-x: auto;
+      /* overflow-y: hidden verhindert, dass der Browser bei overflow-x:auto
+         die y-Achse implizit auf "scroll" setzt. Der negative margin-bottom
+         der Tabs ragt in die padding-box und wird davon nicht geclippt,
+         die aktive Unterstreichung bleibt sichtbar. */
+      overflow-y: hidden;
+      touch-action: pan-x;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none; /* IE/Edge */
+    }
+    .tonus-library-modes::-webkit-scrollbar {
+      display: none; /* Chrome/Safari */
+    }
+    .tonus-library-modes > button {
+      flex-shrink: 0;
     }
   }
 </style>
