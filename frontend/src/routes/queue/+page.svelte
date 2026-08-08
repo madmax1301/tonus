@@ -57,10 +57,10 @@
   function classifyError(message: string | null | undefined): ErrorKind {
     const m = (message ?? '').toLowerCase();
     if (!m) return 'unknown';
-    // "Interrupted — server restarted" entsteht wenn der Backend-Container
-    // beim Boot stehengebliebene processing-Jobs auf error setzt. Eigene
-    // Kategorie weil hier der User-Hinweis "einfach Retry" ist und nicht
-    // auf Provider-Probleme verweist.
+    // Restart-Abbrüche landen seit dem Requeue-on-Boot nicht mehr auf error —
+    // reset_stale_inflight_jobs() legt sie direkt zurück auf 'queued'. Die
+    // Kategorie bleibt für Alt-Jobs und für worker-seitige "Interrupted"-
+    // Meldungen: User-Hinweis ist "einfach Retry", kein Provider-Problem.
     if (/(interrupted|server restart|boot|stale.?process)/.test(m)) return 'interrupted';
     if (/(rate.?limit|429|too many requests|throttl)/.test(m)) return 'rate_limited';
     if (/(geo|region|country|not available in your)/.test(m)) return 'geo';
