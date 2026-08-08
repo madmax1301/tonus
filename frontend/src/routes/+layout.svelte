@@ -131,6 +131,7 @@
       transform: translateZ(0);
       will-change: transform;
       contain: layout paint;
+      padding-top: var(--safe-top);
     "
   >
     <div class="tonus-header-inner mx-auto max-w-[1180px] h-[54px] flex items-center">

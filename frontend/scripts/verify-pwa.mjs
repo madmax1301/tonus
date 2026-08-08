@@ -51,6 +51,19 @@ const CHECKS = [
       );
       return missing.length === 0 || `fehlt: ${missing.join(', ')}`;
     }
+  },
+  {
+    name: 'Safe-Area aktiviert',
+    run: () => {
+      const doc = html();
+      const sheet = css();
+      const problems = [];
+      if (!doc.includes('viewport-fit=cover')) problems.push('viewport-fit=cover fehlt');
+      if (!doc.includes('apple-mobile-web-app-status-bar-style'))
+        problems.push('status-bar-style fehlt');
+      if (!sheet.includes('safe-area-inset-top')) problems.push('safe-area-inset-top ungenutzt');
+      return problems.length === 0 || problems.join(', ');
+    }
   }
 ];
 

@@ -52,6 +52,12 @@
 :root {
   --blur-card: 24px;
   --blur-modal: 40px;
+
+  /* Gerätekanten. Fallback 0px greift überall außerhalb iOS-Standalone. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -76,6 +82,11 @@ body {
 
 body {
   min-height: 100vh;
+  /* Inhalt endet oberhalb des Home-Indicators und respektiert die
+     Rundungen im Querformat. */
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
   background-image:
     radial-gradient(ellipse 80% 50% at 50% -10%, rgba(200, 169, 106, 0.05), transparent),
     radial-gradient(ellipse 60% 40% at 100% 100%, rgba(90, 200, 250, 0.04), transparent);
