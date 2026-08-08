@@ -91,7 +91,18 @@
   // Polling-Intervall: 5 s — der Puck ist Status-Indikator, nicht der
   // Queue-Page mit Live-Updates. Längeres Intervall spart Roundtrips.
   // Bei Token-Fehler: Polling stoppen statt 401-Loop.
+  const QUEUE_POLL_MS = 5000;
+  /** Nach einem Auth-Fehler seltener weiterfragen statt aufzugeben. */
+  const QUEUE_POLL_BACKOFF_MS = 15000;
   let queuePollTimer: ReturnType<typeof setInterval> | null = null;
+  let queuePollMs = QUEUE_POLL_MS;
+
+  function scheduleQueuePoll(ms: number) {
+    if (queuePollTimer) clearInterval(queuePollTimer);
+    queuePollMs = ms;
+    queuePollTimer = setInterval(refreshQueueCount, ms);
+  }
+
   async function refreshQueueCount() {
     try {
       const r = await queueApi.list();
@@ -103,17 +114,24 @@
         (r.status_counts?.processing ?? 0) +
         (r.status_counts?.error ?? 0);
       setQueueCount(total);
+      if (queuePollMs !== QUEUE_POLL_MS) scheduleQueuePoll(QUEUE_POLL_MS);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-        if (queuePollTimer) clearInterval(queuePollTimer);
-        queuePollTimer = null;
+        // Früher wurde hier das Polling endgültig gestoppt. Ein einzelner
+        // 401 — etwa ein Race zwischen Mount und Token-Restore nach einem
+        // Service-Worker-Reload — fror den Puck damit bis zum nächsten
+        // App-Start auf 0 ein. Backoff verhindert den 401-Sturm, den der
+        // Stopp vermeiden sollte, und erholt sich trotzdem von selbst.
+        if (queuePollMs !== QUEUE_POLL_BACKOFF_MS) {
+          scheduleQueuePoll(QUEUE_POLL_BACKOFF_MS);
+        }
       }
     }
   }
   onMount(() => {
     guardSession();
     refreshQueueCount();
-    queuePollTimer = setInterval(refreshQueueCount, 5000);
+    scheduleQueuePoll(QUEUE_POLL_MS);
   });
   onDestroy(() => {
     if (queuePollTimer) clearInterval(queuePollTimer);
