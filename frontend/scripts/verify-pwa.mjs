@@ -64,6 +64,18 @@ const CHECKS = [
       if (!sheet.includes('safe-area-inset-top')) problems.push('safe-area-inset-top ungenutzt');
       return problems.length === 0 || problems.join(', ');
     }
+  },
+  {
+    name: 'snapshot in Listen-Routen',
+    run: () => {
+      // Liest ausnahmsweise Quelldateien: snapshot ist eine Compile-Zeit-
+      // Konvention von SvelteKit und taucht im Bundle nicht namentlich auf.
+      const routes = ['src/routes/queue/+page.svelte', 'src/routes/import/+page.svelte'];
+      const missing = routes.filter(
+        (r) => !readFileSync(r, 'utf8').includes('export const snapshot')
+      );
+      return missing.length === 0 || `fehlt in: ${missing.join(', ')}`;
+    }
   }
 ];
 

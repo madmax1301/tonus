@@ -155,6 +155,20 @@
    *  einen Fetch pro Sekunde zu brauchen. */
   let nowMs = $state<number>(Date.now());
 
+  /** Überlebt den Wechsel in eine andere App: ohne das springt eine lange
+   *  Queue bei jeder Rückkehr an den Anfang, was sich wie ein Reload
+   *  anfühlt statt wie eine App, die ihre Ansicht behält. */
+  export const snapshot = {
+    capture: () => ({ scrollY: window.scrollY, filterText, activeFilter }),
+    restore: (value: { scrollY: number; filterText: string; activeFilter: Filter }) => {
+      filterText = value.filterText;
+      activeFilter = value.activeFilter;
+      // Beim Restore ist die Liste noch nicht gerendert — ein sofortiges
+      // scrollTo liefe ins Leere.
+      requestAnimationFrame(() => window.scrollTo(0, value.scrollY));
+    }
+  };
+
   let busy = $state<{
     retryAll: boolean;
     cleanup: boolean;

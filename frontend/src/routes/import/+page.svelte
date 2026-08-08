@@ -847,6 +847,15 @@
   const accentSoft = $derived(tint(DEFAULT_HUE, 0.95));
 
   const lineCount = $derived(csvText.split(/\r?\n/).filter((l) => l.trim()).length);
+
+  /** Scroll-Position über App-Wechsel hinweg halten — bei langen
+   *  Ergebnislisten sonst jedes Mal zurück an den Anfang. */
+  export const snapshot = {
+    capture: () => ({ scrollY: window.scrollY }),
+    restore: (value: { scrollY: number }) => {
+      requestAnimationFrame(() => window.scrollTo(0, value.scrollY));
+    }
+  };
 </script>
 
 <CinemaBackdrop hue={DEFAULT_HUE} />
