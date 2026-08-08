@@ -90,6 +90,21 @@ const CHECKS = [
     }
   },
   {
+    name: 'Lane-Strip begrenzt Grid-Items auf 0',
+    run: () => {
+      // `1fr` ist minmax(auto, 1fr) — die Mindestbreite ist min-content, also
+      // sprengt eine Lane-Karte mit langem Track-Titel den Viewport und das
+      // truncate darunter greift nie. Muss minmax(0, 1fr) bleiben.
+      const src = readFileSync('src/routes/queue/+page.svelte', 'utf8');
+      const block = (src.split('.tonus-lane-strip {')[1] || '').slice(0, 600);
+      if (!block) return '.tonus-lane-strip-Regel nicht gefunden';
+      return (
+        block.includes('minmax(0, 1fr)') ||
+        'grid-template-columns muss minmax(0, 1fr) sein, nicht 1fr'
+      );
+    }
+  },
+  {
     name: 'Service Worker gebaut, /api ausgenommen',
     run: () => {
       const path = join(BUILD, 'service-worker.js');

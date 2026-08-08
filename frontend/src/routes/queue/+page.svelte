@@ -1286,7 +1286,13 @@
      den dynamisch generierten Inline-style mit repeat(N, ...). */
   @media (max-width: 640px) {
     .tonus-lane-strip {
-      grid-template-columns: 1fr !important;
+      /* minmax(0, 1fr), nicht 1fr: `1fr` ist die Kurzform für
+         minmax(auto, 1fr), und `auto` heißt hier min-content. Eine Lane-
+         Karte mit langem Track-Titel sprengt damit den Viewport — das
+         truncate darunter greift nie, weil dem Item nie der Platz ausgeht.
+         Der Inline-Style nutzt bereits minmax(0, 1fr); diese Regel darf
+         das beim Überschreiben nicht verlieren. */
+      grid-template-columns: minmax(0, 1fr) !important;
       gap: 10px !important;
     }
     .tonus-lane-strip > div {
