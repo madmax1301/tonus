@@ -117,6 +117,18 @@ label {
   user-select: none;
 }
 
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    /* iOS zoomt beim Fokus auf jedes Formularfeld, dessen Schrift kleiner
+       als 16px ist — feste Safari-Regel, kein unvermeidbares Web-Verhalten.
+       Ab 16px bleibt der Zoom aus. Nur auf Touch-Zeigern, damit die
+       kompakteren Desktop-Größen unangetastet bleiben. */
+    font-size: 16px;
+  }
+}
+
 ::selection {
   background: var(--color-accent-soft);
   color: var(--color-fg-primary);
