@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/static/repo-icon.png" alt="Tonus" width="520" />
+  <img src="docs/repo-icon.png" alt="Tonus" width="520" />
 </p>
 
 <p align="center">
