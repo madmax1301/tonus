@@ -82,6 +82,30 @@ body {
   background-attachment: fixed;
 }
 
+/* ─── App-Verhalten statt Web-Verhalten ──────────────────────
+   Details, die eine Seite als Browser-Inhalt verraten. Nicht
+   dupliziert: -webkit-tap-highlight-color setzt Tailwinds
+   Preflight bereits auf transparent.
+   ─────────────────────────────────────────────────────────── */
+html,
+body {
+  /* Kein Gummiband am Seitenrand — Listen scrollen, die Seite nicht. */
+  overscroll-behavior: none;
+}
+
+button,
+a,
+[role='button'],
+nav,
+label {
+  /* Kein Kontextmenü bei langem Tippen, keine Textauswahl auf
+     Bedienelementen. Bewusst NICHT global: Track- und Künstlernamen
+     müssen markierbar bleiben, sonst ist es ein Funktionsverlust. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 ::selection {
   background: var(--color-accent-soft);
   color: var(--color-fg-primary);

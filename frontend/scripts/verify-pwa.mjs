@@ -35,6 +35,22 @@ const CHECKS = [
       );
       return hits.length === 0 || `gefunden: ${hits.join(', ')}`;
     }
+  },
+  {
+    name: 'Web-Defaults abgeräumt',
+    run: () => {
+      // Whitespace normalisieren — der Build minifiziert die Deklarationen.
+      // Auf exakte Werte prüfen, nicht nur auf den Property-Namen:
+      // overscroll-behavior-x: contain (Nav-Scroller im Layout) darf hier
+      // nicht als Treffer durchgehen.
+      // -webkit-tap-highlight-color liefert bereits Tailwinds Preflight,
+      // deshalb hier bewusst ungeprüft und im CSS nicht dupliziert.
+      const sheet = css().replace(/\s+/g, '');
+      const missing = ['-webkit-touch-callout:none', 'overscroll-behavior:none'].filter(
+        (decl) => !sheet.includes(decl)
+      );
+      return missing.length === 0 || `fehlt: ${missing.join(', ')}`;
+    }
   }
 ];
 
