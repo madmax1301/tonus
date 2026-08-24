@@ -10,6 +10,74 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [0.8.0] — 2026-08-24
+
+### Added
+
+- **Tonus als Homescreen-App auf dem iPhone** — die Web-Oberfläche verhält sich
+  jetzt wie eine App statt wie eine Website im Vollbild. Layout läuft randlos
+  bis unter Statusleiste und Home-Indicator (`viewport-fit=cover` plus
+  Safe-Area-Insets), Scroll-Position und Filter überleben den Wechsel in eine
+  andere App (SvelteKit `snapshot`), und ein Service Worker cacht die App-Shell
+  für einen Start ohne Netzwerk-Roundtrip. `/api/*` wird dabei nie gecacht —
+  Queue-Status und Fortschritt müssen live bleiben.
+- **Update-Hinweis für neue Versionen** — ein aktiver Service Worker behält die
+  Kontrolle, bis alle Tabs geschlossen sind, was bei einer Homescreen-App
+  praktisch nie passiert. Statt still auf einer alten Version einzufrieren,
+  meldet die App eine neue Fassung und lädt sie auf Tap.
+- **Neues App-Icon** — das Stimmgabel-Artwork aus dem README, quadratisch
+  zugeschnitten, dazu eine eigene maskable-Variante mit Sicherheitsrand.
+
+### Changed
+
+- **Queue-Zähler pollt `/api/queue/stats`** statt die volle Job-Liste. Der
+  Puck braucht drei Zahlen; vorher kamen dafür bis zu 500 serialisierte Jobs
+  samt `payload_json` — alle fünf Sekunden.
+- **Fonts werden lokal ausgeliefert** statt vom Google-CDN. Der Start hing
+  vorher an einem externen Host, obwohl der Server im selben Netz steht.
+- **Vorgeladene Bild-Assets von ~2,5 MB auf ~400 KB** — das 2 MB große
+  README-Banner lag in `static/` und landete dadurch im Service-Worker-Cache
+  jedes Geräts, obwohl die App es nie anzeigt.
+
+### Fixed
+
+- **Abgerissene Downloads landen nach einem Neustart wieder in der Queue.**
+  `reset_stale_inflight_jobs()` markierte sie als Fehler — ein Relikt aus der
+  Zeit, als Downloads als FastAPI-BackgroundTasks liefen und ein Neustart sie
+  unwiederbringlich tötete. Mit dem persistenten Worker sind sie
+  wiederherstellbar: `payload_json` enthält alles für einen neuen Versuch.
+  Echte Fehler bleiben Fehler, sonst würde jeder Neustart unauffindbare Tracks
+  endlos wiederholen.
+- **Altersbeschränkte Videos werden nicht mehr als Bot-Check behandelt.** Die
+  Erkennung matchte auf `"sign in to confirm you"` — ein Präfix von YouTubes
+  `"Sign in to confirm your age"`. Betroffene Tracks liefen dadurch in fünf
+  Wiederholungen mit verlängertem Lane-Cooldown, obwohl eine Altersfreigabe
+  ohne Account-Cookies nie gelingen kann.
+- **Bibliothek und Queue sprengten auf dem Handy den Viewport.** Die
+  Modus-Leiste der Bibliothek lief ohne Overflow-Behandlung über die
+  Bildschirmbreite; die Lane-Karten wuchsen bei laufendem Job auf die
+  min-content-Breite ihres Track-Titels, weil die mobile Regel
+  `grid-template-columns: 1fr` das `minmax(0, …)` des Inline-Styles verlor. In
+  beiden Fällen skalierte iOS die ganze Seite herunter.
+- **Der Queue-Zähler erholt sich wieder von einem Auth-Fehler.** Ein einzelner
+  401 stoppte das Polling endgültig; die Anzeige blieb bis zum nächsten
+  App-Start auf 0. Jetzt gilt ein Backoff statt endgültigem Aufgeben.
+- **iOS zoomt beim Tippen nicht mehr in Eingabefelder.** Safari vergrößert
+  jedes Feld unter 16px Schriftgröße — auf Touch-Geräten gilt jetzt 16px,
+  die kompakteren Desktop-Größen bleiben unangetastet.
+
+### Security
+
+- **cryptography 49.0.0 → 50.0.0** — CVE-2026-69247 / PYSEC-2026-3552:
+  PKCS#7-EnvelopedData-Entschlüsselung gibt über unterscheidbare Fehler und
+  Timing ein Bleichenbacher-Orakel preis. Tonus nutzt nur Fernet, der
+  verwundbare Pfad ist nicht erreichbar; der Bump erfolgt trotzdem, weil
+  Audits die installierte Version messen.
+- **nanoid → 3.3.18** — GHSA-2v37-7h3g-55p8, Endlosschleife in Custom-
+  Generatoren bei `size = 0`. Transitive Build-Abhängigkeit.
+
+---
+
 ## [0.7.0] — 2026-07-28
 
 ### Added
