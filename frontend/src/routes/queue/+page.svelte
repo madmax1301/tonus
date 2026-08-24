@@ -57,10 +57,10 @@
   function classifyError(message: string | null | undefined): ErrorKind {
     const m = (message ?? '').toLowerCase();
     if (!m) return 'unknown';
-    // "Interrupted — server restarted" entsteht wenn der Backend-Container
-    // beim Boot stehengebliebene processing-Jobs auf error setzt. Eigene
-    // Kategorie weil hier der User-Hinweis "einfach Retry" ist und nicht
-    // auf Provider-Probleme verweist.
+    // Restart-Abbrüche landen seit dem Requeue-on-Boot nicht mehr auf error —
+    // reset_stale_inflight_jobs() legt sie direkt zurück auf 'queued'. Die
+    // Kategorie bleibt für Alt-Jobs und für worker-seitige "Interrupted"-
+    // Meldungen: User-Hinweis ist "einfach Retry", kein Provider-Problem.
     if (/(interrupted|server restart|boot|stale.?process)/.test(m)) return 'interrupted';
     if (/(rate.?limit|429|too many requests|throttl)/.test(m)) return 'rate_limited';
     if (/(geo|region|country|not available in your)/.test(m)) return 'geo';
@@ -154,6 +154,20 @@
   /** "Tick" im 1 s-Takt damit der Lane-Countdown live runterzählt ohne
    *  einen Fetch pro Sekunde zu brauchen. */
   let nowMs = $state<number>(Date.now());
+
+  /** Überlebt den Wechsel in eine andere App: ohne das springt eine lange
+   *  Queue bei jeder Rückkehr an den Anfang, was sich wie ein Reload
+   *  anfühlt statt wie eine App, die ihre Ansicht behält. */
+  export const snapshot = {
+    capture: () => ({ scrollY: window.scrollY, filterText, activeFilter }),
+    restore: (value: { scrollY: number; filterText: string; activeFilter: Filter }) => {
+      filterText = value.filterText;
+      activeFilter = value.activeFilter;
+      // Beim Restore ist die Liste noch nicht gerendert — ein sofortiges
+      // scrollTo liefe ins Leere.
+      requestAnimationFrame(() => window.scrollTo(0, value.scrollY));
+    }
+  };
 
   let busy = $state<{
     retryAll: boolean;
@@ -1272,7 +1286,13 @@
      den dynamisch generierten Inline-style mit repeat(N, ...). */
   @media (max-width: 640px) {
     .tonus-lane-strip {
-      grid-template-columns: 1fr !important;
+      /* minmax(0, 1fr), nicht 1fr: `1fr` ist die Kurzform für
+         minmax(auto, 1fr), und `auto` heißt hier min-content. Eine Lane-
+         Karte mit langem Track-Titel sprengt damit den Viewport — das
+         truncate darunter greift nie, weil dem Item nie der Platz ausgeht.
+         Der Inline-Style nutzt bereits minmax(0, 1fr); diese Regel darf
+         das beim Überschreiben nicht verlieren. */
+      grid-template-columns: minmax(0, 1fr) !important;
       gap: 10px !important;
     }
     .tonus-lane-strip > div {

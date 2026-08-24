@@ -288,22 +288,43 @@ def init_jobs_db() -> None:
 
 def reset_stale_inflight_jobs() -> int:
     """
-    After a process restart, no BackgroundTasks are running. Rows still marked
-    queued/processing would block new downloads (duplicate check). Mark them error.
+    After a process restart the worker thread is gone, but its jobs are not
+    lost: payload_json carries everything a fresh attempt needs. Put them back
+    into the queue so JobWorker picks them up in its next
+    _poll_next_queued_download instead of failing them.
+
+    Two cases are recovered:
+      - status='processing' — torn off mid-download by the restart.
+      - status='error' carrying the legacy restart message — rows that earlier
+        versions failed on boot. After this change no new rows enter that
+        state, so this clause only drains the backlog.
+
+    'queued' rows are left alone: they are already in the right state and
+    rewriting them would only churn updated_at_ms.
+
+    Progress fields are cleared for a clean slate, while payload_json and
+    created_at_ms survive — the retry runs with the same parameters and keeps
+    its place in the queue order instead of jumping to the end. retry_count is
+    deliberately untouched: a restart is an infrastructure event, not a failed
+    attempt at the track, and must not consume the transient-error budget.
     """
     now = _now_ms()
-    msg = "Interrupted — server restarted. Retry the download."
+    msg = "Re-queued after server restart"
     conn = _db()
     try:
         cur = conn.execute(
             """
             UPDATE download_jobs
-            SET status = 'error',
+            SET status = 'queued',
                 message = ?,
                 stage = NULL,
-                progress = 0,
+                progress = NULL,
+                error = NULL,
+                file_path = NULL,
+                download_url = NULL,
                 updated_at_ms = ?
-            WHERE status IN ('queued', 'processing')
+            WHERE status = 'processing'
+               OR (status = 'error' AND message LIKE 'Interrupted — server restarted%')
             """,
             (msg, now),
         )

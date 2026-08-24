@@ -243,7 +243,7 @@ _migrate_legacy_jobs_db()
 init_jobs_db()
 _stale = reset_stale_inflight_jobs()
 if _stale:
-    print(f"Reset {_stale} stale download job(s) (queued/processing) after server start")
+    print(f"Re-queued {_stale} interrupted download job(s) after server start")
 _csv_stale = reset_stale_import_jobs()
 if _csv_stale.get("jobs_reset") or _csv_stale.get("rows_purged"):
     print(

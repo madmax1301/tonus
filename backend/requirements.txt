@@ -1,7 +1,7 @@
-fastapi==0.139.0
-uvicorn[standard]==0.50.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
 spotipy==2.26.0
-yt-dlp>=2026.3.17
+yt-dlp>=2026.7.4
 mutagen==1.48.1
 # python-multipart 0.0.6 → 0.0.26: CVE-2024-24762 (HIGH, ReDoS),
 # CVE-2024-53981 (DoS), CVE-2026-24486 (Path-Traversal), CVE-2026-40347 (DoS)
@@ -36,4 +36,10 @@ PyJWT==2.13.0
 # CVE-2024-12797 (OpenSSL RFC7250), CVE-2026-34073 (security bypass),
 # bundled-OpenSSL vulns (GHSA-h4gh-qq45-vh27)
 # → 48.0.1: GHSA-537c-gmf6-5ccf (vulnerable OpenSSL in den Wheels)
-cryptography==49.0.0
+# → 50.0.0: CVE-2026-69247 / PYSEC-2026-3552 (PKCS#7-EnvelopedData-Decryption
+#   gibt über unterscheidbare Fehler + Timing ein Bleichenbacher-Oracle preis).
+#   Tonus nutzt nur Fernet (utils/app_settings.py, utils/auth_users.py), der
+#   verwundbare Pfad ist nicht erreichbar — Bump trotzdem, weil der Audit die
+#   installierte Version misst, nicht die erreichbaren Codepfade. Fernet-API
+#   ist in 50.0.0 unverändert, die Breaking Changes betreffen X.509-Verify.
+cryptography==50.0.0

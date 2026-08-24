@@ -16,6 +16,7 @@
   import VinylPuck from '$lib/components/VinylPuck.svelte';
   import FlyingCover from '$lib/components/FlyingCover.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import UpdateToast from '$lib/components/UpdateToast.svelte';
   import { flyingCovers, setQueueCount } from '$lib/fly-to-queue';
   import { queueApi, authApi, ApiError } from '$lib/api';
   import { t } from '$lib/i18n';
@@ -90,29 +91,50 @@
   // Polling-Intervall: 5 s — der Puck ist Status-Indikator, nicht der
   // Queue-Page mit Live-Updates. Längeres Intervall spart Roundtrips.
   // Bei Token-Fehler: Polling stoppen statt 401-Loop.
+  const QUEUE_POLL_MS = 5000;
+  /** Nach einem Auth-Fehler seltener weiterfragen statt aufzugeben. */
+  const QUEUE_POLL_BACKOFF_MS = 15000;
   let queuePollTimer: ReturnType<typeof setInterval> | null = null;
+  let queuePollMs = QUEUE_POLL_MS;
+
+  function scheduleQueuePoll(ms: number) {
+    if (queuePollTimer) clearInterval(queuePollTimer);
+    queuePollMs = ms;
+    queuePollTimer = setInterval(refreshQueueCount, ms);
+  }
+
   async function refreshQueueCount() {
     try {
-      const r = await queueApi.list();
+      // /api/queue/stats statt /api/queue: der Puck braucht drei Zahlen,
+      // nicht die Job-Liste. list() liefert bis zu 500 serialisierte Items
+      // samt payload_json — bei einer Queue mit ~28k Jobs alle 5s spuerbar.
+      const r = await queueApi.stats();
       // Aktive Jobs = noch nicht durch (queued/processing) + error (User
       // sieht im Puck "noch nicht erledigt"). Completed werden NICHT
       // gezählt, sonst würde der Counter unendlich wachsen.
       const total =
-        (r.status_counts?.queued ?? 0) +
-        (r.status_counts?.processing ?? 0) +
-        (r.status_counts?.error ?? 0);
+        (r.by_status?.queued ?? 0) +
+        (r.by_status?.processing ?? 0) +
+        (r.by_status?.error ?? 0);
       setQueueCount(total);
+      if (queuePollMs !== QUEUE_POLL_MS) scheduleQueuePoll(QUEUE_POLL_MS);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-        if (queuePollTimer) clearInterval(queuePollTimer);
-        queuePollTimer = null;
+        // Früher wurde hier das Polling endgültig gestoppt. Ein einzelner
+        // 401 — etwa ein Race zwischen Mount und Token-Restore nach einem
+        // Service-Worker-Reload — fror den Puck damit bis zum nächsten
+        // App-Start auf 0 ein. Backoff verhindert den 401-Sturm, den der
+        // Stopp vermeiden sollte, und erholt sich trotzdem von selbst.
+        if (queuePollMs !== QUEUE_POLL_BACKOFF_MS) {
+          scheduleQueuePoll(QUEUE_POLL_BACKOFF_MS);
+        }
       }
     }
   }
   onMount(() => {
     guardSession();
     refreshQueueCount();
-    queuePollTimer = setInterval(refreshQueueCount, 5000);
+    scheduleQueuePoll(QUEUE_POLL_MS);
   });
   onDestroy(() => {
     if (queuePollTimer) clearInterval(queuePollTimer);
@@ -131,6 +153,7 @@
       transform: translateZ(0);
       will-change: transform;
       contain: layout paint;
+      padding-top: var(--safe-top);
     "
   >
     <div class="tonus-header-inner mx-auto max-w-[1180px] h-[54px] flex items-center">
@@ -280,6 +303,7 @@
 
   <TokenSheet />
   <ConfirmDialog />
+  <UpdateToast />
 </div>
 
 <style>

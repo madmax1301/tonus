@@ -388,11 +388,24 @@ export interface LaneStatusResponse {
   };
 }
 
+/** Antwort von /api/queue/stats — Aggregat ohne Items. */
+export interface QueueStatsResponse {
+  total: number;
+  by_status: Partial<Record<QueueJob['status'], number>>;
+  oldest_queued_age_s: number;
+  avg_created_to_completed_s: number;
+  last_completed_ms: number | null;
+  last_error_ms: number | null;
+  now_ms: number;
+}
+
 export const queueApi = {
   list: (status?: string) => {
     const q = status ? `?status=${encodeURIComponent(status)}` : '';
     return api.get<QueueResponse>(`/api/queue${q}`);
   },
+  /** Nur Zaehlungen — COUNT(*) GROUP BY statt bis zu 500 serialisierter Items. */
+  stats: () => api.get<QueueStatsResponse>('/api/queue/stats'),
   lanes: () => api.get<LaneStatusResponse>('/api/queue/lanes'),
   retryAll: () => api.post<{ ok: boolean; retried: number }>('/api/queue/retry-all-errors'),
   clear: (status: 'completed' | 'error' | 'queued' | 'all' = 'completed') =>
