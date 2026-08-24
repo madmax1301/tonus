@@ -105,14 +105,17 @@
 
   async function refreshQueueCount() {
     try {
-      const r = await queueApi.list();
+      // /api/queue/stats statt /api/queue: der Puck braucht drei Zahlen,
+      // nicht die Job-Liste. list() liefert bis zu 500 serialisierte Items
+      // samt payload_json — bei einer Queue mit ~28k Jobs alle 5s spuerbar.
+      const r = await queueApi.stats();
       // Aktive Jobs = noch nicht durch (queued/processing) + error (User
       // sieht im Puck "noch nicht erledigt"). Completed werden NICHT
       // gezählt, sonst würde der Counter unendlich wachsen.
       const total =
-        (r.status_counts?.queued ?? 0) +
-        (r.status_counts?.processing ?? 0) +
-        (r.status_counts?.error ?? 0);
+        (r.by_status?.queued ?? 0) +
+        (r.by_status?.processing ?? 0) +
+        (r.by_status?.error ?? 0);
       setQueueCount(total);
       if (queuePollMs !== QUEUE_POLL_MS) scheduleQueuePoll(QUEUE_POLL_MS);
     } catch (err) {
