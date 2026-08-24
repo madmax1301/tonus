@@ -1,5 +1,5 @@
 fastapi==0.141.1
-uvicorn[standard]==0.52.0
+uvicorn[standard]==0.52.4
 spotipy==2.26.0
 yt-dlp>=2026.7.4
 mutagen==1.48.1
@@ -12,8 +12,8 @@ requests==2.34.2
 aiofiles==25.1.0
 pydantic==2.13.4
 # python-dotenv 1.0.0 → 1.2.2: CVE-2026-28684 (arbitrary file overwrite via symlink)
-python-dotenv==1.2.2
-ytmusicapi==1.12.1
+python-dotenv==1.2.3
+ytmusicapi==1.12.2
 yt-dlp-get-pot-rustypipe==0.2.0
 # curl-cffi: aktiviert yt-dlp's impersonate-Option (TLS-Handshake-Spoofing
 # via libcurl-impersonate) für robustere Anti-Bot-Detection.
