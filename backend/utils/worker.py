@@ -109,6 +109,24 @@ def _looks_like_429(message: str, error: str) -> bool:
     return any(n in blob for n in needles)
 
 
+def _looks_like_age_restriction(message: str, error: str) -> bool:
+    """Altersbeschränktes Video — anders als der Bot-Check nicht durch Warten
+    oder IP-Wechsel lösbar.
+
+    YouTube gibt den Stream nur gegen Cookies eines eingeloggten, volljährigen
+    Accounts frei. Ein Retry ändert daran nichts, blockiert aber die Lane für
+    die volle Bot-Check-Cooldown-Dauer — deshalb wird dieser Fall sofort
+    permanent."""
+    blob = f"{message or ''} {error or ''}".lower()
+    needles = (
+        "confirm your age",
+        "inappropriate for some users",
+        "age-restricted",
+        "age restricted",
+    )
+    return any(n in blob for n in needles)
+
+
 def _looks_like_bot_check(message: str, error: str) -> bool:
     """Heuristik: hat yt-dlp einen YouTube-Bot-Check abbekommen?
 
@@ -120,6 +138,11 @@ def _looks_like_bot_check(message: str, error: str) -> bool:
     (IP-Wechsel-Window im dual-lane Setup). Nach _BOT_CHECK_MAX_RETRIES
     bleibt der Job permanent error — User muss Cookies setzen oder VPN
     wechseln."""
+    # Zuerst ausschliessen: "Sign in to confirm your age" matcht sonst die
+    # bewusst breite Needle "sign in to confirm you" und laeuft in fuenf
+    # sinnlose Retries mit langem Lane-Cooldown.
+    if _looks_like_age_restriction(message, error):
+        return False
     blob = f"{message or ''} {error or ''}".lower()
     needles = (
         "sign in to confirm you're not a bot",
@@ -1415,6 +1438,23 @@ class JobWorker(threading.Thread):
             # Reputation reset hat. Cap bei _BOT_CHECK_MAX_RETRIES — danach
             # bleibt's permanent.
             if (finished.get("status") == "error"
+                    and _looks_like_age_restriction(finished_msg, finished_err)):
+                # Kein Retry: Altersfreigabe braucht Account-Cookies. Weder
+                # Warten noch ein IP-Wechsel ändert daran etwas, also auch
+                # kein verlängerter Lane-Cooldown.
+                upsert_job(
+                    track_id,
+                    status="error",
+                    message="Altersbeschränkt — YouTube liefert den Stream nur mit Cookies eines volljährigen Accounts",
+                    error=finished_err or "age-restricted",
+                )
+                lo, hi = normal_range
+                cooldown = random.uniform(lo, hi)
+                print(
+                    f"[worker] AGE-RESTRICTED on '{track_id}' (lane {lane}) — "
+                    f"kein Retry, Cookies erforderlich"
+                )
+            elif (finished.get("status") == "error"
                     and _looks_like_bot_check(finished_msg, finished_err)):
                 retry_count = int(finished.get("retry_count") or 0)
                 if retry_count < _BOT_CHECK_MAX_RETRIES:
