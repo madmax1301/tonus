@@ -1,5 +1,5 @@
 fastapi==0.141.1
-uvicorn[standard]==0.52.0
+uvicorn[standard]==0.53.0
 spotipy==2.26.0
 yt-dlp>=2026.7.4
 mutagen==1.48.1
@@ -10,10 +10,10 @@ python-multipart==0.0.32
 # CVE-2024-47081 (.netrc credential leak), CVE-2026-25645 (security bypass)
 requests==2.34.2
 aiofiles==25.1.0
-pydantic==2.13.4
+pydantic==2.13.5
 # python-dotenv 1.0.0 → 1.2.2: CVE-2026-28684 (arbitrary file overwrite via symlink)
-python-dotenv==1.2.2
-ytmusicapi==1.12.1
+python-dotenv==1.2.3
+ytmusicapi==1.12.3
 yt-dlp-get-pot-rustypipe==0.2.0
 # curl-cffi: aktiviert yt-dlp's impersonate-Option (TLS-Handshake-Spoofing
 # via libcurl-impersonate) für robustere Anti-Bot-Detection.
@@ -31,7 +31,7 @@ pyotp==2.10.0
 qrcode==8.2
 # PyJWT 2.8.0 → 2.12.0: CVE-2026-32597 (HIGH, RFC8725 §3.10 violation —
 # accepts unknown crit header extensions)
-PyJWT==2.13.0
+PyJWT==2.14.0
 # cryptography 42.0.5 → 46.0.5: CVE-2026-26007 (subgroup-attack),
 # CVE-2024-12797 (OpenSSL RFC7250), CVE-2026-34073 (security bypass),
 # bundled-OpenSSL vulns (GHSA-h4gh-qq45-vh27)
@@ -42,4 +42,4 @@ PyJWT==2.13.0
 #   verwundbare Pfad ist nicht erreichbar — Bump trotzdem, weil der Audit die
 #   installierte Version misst, nicht die erreichbaren Codepfade. Fernet-API
 #   ist in 50.0.0 unverändert, die Breaking Changes betreffen X.509-Verify.
-cryptography==50.0.0
+cryptography==50.0.1
