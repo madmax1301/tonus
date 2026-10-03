@@ -100,6 +100,29 @@ async function request<T>(path: string, init: RequestInit = {}, _retry = false):
   return (await resp.json()) as T;
 }
 
+/** Öffnet einen langlebigen GET-Stream (Server-Sent Events) mit denselben
+ *  Auth-Regeln wie `request`. EventSource kann keinen Authorization-Header
+ *  setzen, deshalb fetch + ReadableStream. Wirft ApiError bei !ok. */
+export async function openStream(
+  path: string,
+  signal: AbortSignal,
+  _retry = false
+): Promise<Response> {
+  const headers = new Headers({ Accept: 'text/event-stream' });
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  const resp = await fetch(url, { headers, signal, cache: 'no-store' });
+  if (!resp.ok) {
+    if (resp.status === 401 && !_retry && get(accessToken) && get(refreshToken)) {
+      const ok = await tryRefresh();
+      if (ok) return openStream(path, signal, true);
+    }
+    throw new ApiError(resp.status, `${resp.status} ${resp.statusText}`);
+  }
+  return resp;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>

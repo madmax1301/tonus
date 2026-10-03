@@ -11,6 +11,11 @@
   import { tint, extractHue, DEFAULT_HUE } from '$lib/accent';
   import { t } from '$lib/i18n';
   import { showConfirm } from '$lib/confirm';
+  import {
+    queueStreamConnected,
+    subscribeQueueEvents,
+    type QueueEvent
+  } from '$lib/queue-events';
   import { get } from 'svelte/store';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import CoverArt from '$lib/components/CoverArt.svelte';
@@ -176,13 +181,22 @@
     feedback?: string;
   }>({ retryAll: false, cleanup: false, clearAll: false });
 
+  /** Fallback-Polling, solange der Queue-Stream nicht steht. */
   const POLL_MS = 3000;
+  /** Mit Stream nur noch ein seltenes Sicherheitsnetz. */
+  const STREAM_SAFETY_POLL_MS = 60000;
+  /** Status-Wechsel lösen einen vollen Reload aus — höchstens einer pro Sekunde. */
+  const REFETCH_THROTTLE_MS = 1000;
   const TICK_MS = 1000;
   let timer: ReturnType<typeof setInterval> | null = null;
   let tickTimer: ReturnType<typeof setInterval> | null = null;
+  let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastFetchAt = 0;
+  let unsubscribeEvents: (() => void) | null = null;
 
   async function fetchQueue(showSpinner = false) {
     if (showSpinner) initialLoading = true;
+    lastFetchAt = Date.now();
     try {
       const status = activeFilter === 'all' ? undefined : activeFilter;
       const [q, l] = await Promise.all([
@@ -201,9 +215,9 @@
     }
   }
 
-  function startPolling() {
+  function startPolling(ms: number) {
     if (timer) clearInterval(timer);
-    timer = setInterval(() => fetchQueue(false), POLL_MS);
+    timer = setInterval(() => fetchQueue(false), ms);
   }
 
   function stopPolling() {
@@ -215,15 +229,77 @@
       clearInterval(tickTimer);
       tickTimer = null;
     }
+    if (refetchTimer) {
+      clearTimeout(refetchTimer);
+      refetchTimer = null;
+    }
+    unsubscribeEvents?.();
+    unsubscribeEvents = null;
+  }
+
+  function scheduleRefetch() {
+    if (refetchTimer) return;
+    const wait = Math.max(0, lastFetchAt + REFETCH_THROTTLE_MS - Date.now());
+    refetchTimer = setTimeout(() => {
+      refetchTimer = null;
+      fetchQueue(false);
+    }, wait);
+  }
+
+  function sameCounts(a: Record<string, number | undefined>, b: Record<string, number | undefined>) {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const k of keys) if ((a[k] ?? 0) !== (b[k] ?? 0)) return false;
+    return true;
+  }
+
+  /** Ersetzt einen geänderten Job in allen Listen, in denen er steht.
+   *  false = Patch reicht nicht (Status oder Position geändert, oder ein
+   *  Job, der in die aktuelle Ansicht gehört, fehlt) → voller Reload. */
+  function patchJob(job: QueueJob): boolean {
+    if (!data) return false;
+    const lists = [data.items, data.live?.processing ?? [], data.live?.queued_head ?? []];
+    let found = false;
+    for (const list of lists) {
+      const i = list.findIndex((j) => j.job_id === job.job_id);
+      if (i < 0) continue;
+      const old = list[i];
+      if (old.status !== job.status || old.created_at_ms !== job.created_at_ms) return false;
+      list[i] = job;
+      found = true;
+    }
+    if (found) return true;
+    // Nicht geladen: nur relevant, wenn der Job in den aktuellen Filter fällt.
+    return activeFilter !== 'all' && activeFilter !== job.status;
+  }
+
+  function onQueueEvent(ev: QueueEvent) {
+    if (ev.lanes) lanes = ev.lanes;
+    if (!data) return;
+    let stale = !!ev.resync;
+    if (ev.status_counts && !sameCounts(ev.status_counts, data.status_counts)) stale = true;
+    for (const job of ev.jobs ?? []) {
+      if (!patchJob(job)) stale = true;
+    }
+    if (stale) scheduleRefetch();
   }
 
   onMount(async () => {
     await fetchQueue(true);
-    startPolling();
+    unsubscribeEvents = subscribeQueueEvents(onQueueEvent);
     tickTimer = setInterval(() => (nowMs = Date.now()), TICK_MS);
   });
 
   onDestroy(stopPolling);
+
+  // Steht der Stream, kommen Änderungen gepusht (#93); Polling bleibt als
+  // Fallback für ältere Backends und die Zeit bis zum Reconnect.
+  $effect(() => {
+    startPolling($queueStreamConnected ? STREAM_SAFETY_POLL_MS : POLL_MS);
+    return () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+  });
 
   $effect(() => {
     activeFilter; // dependency

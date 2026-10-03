@@ -19,6 +19,7 @@
   import UpdateToast from '$lib/components/UpdateToast.svelte';
   import { flyingCovers, setQueueCount } from '$lib/fly-to-queue';
   import { queueApi, authApi, ApiError } from '$lib/api';
+  import { queueStreamConnected, subscribeQueueEvents } from '$lib/queue-events';
   import { t } from '$lib/i18n';
   import type { StringKey } from '$lib/i18n/strings';
   import { KeyRound, LogOut } from 'lucide-svelte';
@@ -88,9 +89,10 @@
   }
 
   // Queue-Count im Vinyl-Puck unten rechts synchron mit dem Backend halten.
+  // Primär über den Queue-Stream (/api/queue/events, #93); Polling nur als
+  // Fallback, solange der Stream nicht steht (älteres Backend, Reconnect).
   // Polling-Intervall: 5 s — der Puck ist Status-Indikator, nicht der
   // Queue-Page mit Live-Updates. Längeres Intervall spart Roundtrips.
-  // Bei Token-Fehler: Polling stoppen statt 401-Loop.
   const QUEUE_POLL_MS = 5000;
   /** Nach einem Auth-Fehler seltener weiterfragen statt aufzugeben. */
   const QUEUE_POLL_BACKOFF_MS = 15000;
@@ -103,21 +105,27 @@
     queuePollTimer = setInterval(refreshQueueCount, ms);
   }
 
+  /** Aktive Jobs = noch nicht durch (queued/processing) + error (User
+   *  sieht im Puck "noch nicht erledigt"). Completed werden NICHT
+   *  gezählt, sonst würde der Counter unendlich wachsen. */
+  function openJobCount(by: Partial<Record<string, number>> | undefined): number {
+    return (by?.queued ?? 0) + (by?.processing ?? 0) + (by?.error ?? 0);
+  }
+
+  function stopQueuePoll() {
+    if (queuePollTimer) clearInterval(queuePollTimer);
+    queuePollTimer = null;
+  }
+
   async function refreshQueueCount() {
     try {
       // /api/queue/stats statt /api/queue: der Puck braucht drei Zahlen,
       // nicht die Job-Liste. list() liefert bis zu 500 serialisierte Items
       // samt payload_json — bei einer Queue mit ~28k Jobs alle 5s spuerbar.
       const r = await queueApi.stats();
-      // Aktive Jobs = noch nicht durch (queued/processing) + error (User
-      // sieht im Puck "noch nicht erledigt"). Completed werden NICHT
-      // gezählt, sonst würde der Counter unendlich wachsen.
-      const total =
-        (r.by_status?.queued ?? 0) +
-        (r.by_status?.processing ?? 0) +
-        (r.by_status?.error ?? 0);
-      setQueueCount(total);
-      if (queuePollMs !== QUEUE_POLL_MS) scheduleQueuePoll(QUEUE_POLL_MS);
+      setQueueCount(openJobCount(r.by_status));
+      // Timer weg = Stream hat übernommen; dann nicht wieder anwerfen.
+      if (queuePollTimer && queuePollMs !== QUEUE_POLL_MS) scheduleQueuePoll(QUEUE_POLL_MS);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         // Früher wurde hier das Polling endgültig gestoppt. Ein einzelner
@@ -125,7 +133,7 @@
         // Service-Worker-Reload — fror den Puck damit bis zum nächsten
         // App-Start auf 0 ein. Backoff verhindert den 401-Sturm, den der
         // Stopp vermeiden sollte, und erholt sich trotzdem von selbst.
-        if (queuePollMs !== QUEUE_POLL_BACKOFF_MS) {
+        if (queuePollTimer && queuePollMs !== QUEUE_POLL_BACKOFF_MS) {
           scheduleQueuePoll(QUEUE_POLL_BACKOFF_MS);
         }
       }
@@ -133,11 +141,25 @@
   }
   onMount(() => {
     guardSession();
-    refreshQueueCount();
-    scheduleQueuePoll(QUEUE_POLL_MS);
   });
-  onDestroy(() => {
-    if (queuePollTimer) clearInterval(queuePollTimer);
+  onDestroy(stopQueuePoll);
+
+  // Neu verbinden, wenn sich die Anmeldung ändert — sonst liefe der Stream
+  // nach einem Logout mit der alten Session weiter.
+  $effect(() => {
+    hasToken;
+    return subscribeQueueEvents((ev) => {
+      if (ev.status_counts) setQueueCount(openJobCount(ev.status_counts));
+    });
+  });
+
+  $effect(() => {
+    if ($queueStreamConnected) {
+      stopQueuePoll();
+    } else {
+      refreshQueueCount();
+      scheduleQueuePoll(QUEUE_POLL_MS);
+    }
   });
 </script>
 

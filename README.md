@@ -271,6 +271,8 @@ This means once you've configured a provider in the UI, the `.env` value for it 
 | `VPN_SPLIT_ENABLED` | `true` | no | Disable for hosts without two bindable interfaces. |
 | `VPN_SOURCE_A` | `192.168.1.200` | yes if `VPN_SPLIT_ENABLED=true` | Source-IP for download lane A. Must be locally bindable, otherwise boot aborts. |
 | `VPN_SOURCE_B` | `192.168.1.201` | yes if `VPN_SPLIT_ENABLED=true` | Source-IP for download lane B. |
+| **Downloads** | | | |
+| `DOWNLOAD_CONCURRENCY` | `1` | no | Parallel downloads per lane (1–4). Only the starting value: *Settings → Standard-Verhalten* overrides it at runtime. More parallel yt-dlp processes from one IP raise the bot-check risk. |
 
 ### Sensitive values — encryption at rest
 

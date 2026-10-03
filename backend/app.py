@@ -1381,6 +1381,157 @@ async def queue_stats(_: None = Depends(require_token)):
         conn.close()
 
 
+# Server-Sent Events statt Polling (#93): der Stream schickt nur, was sich
+# seit dem letzten Tick geändert hat. Fortschritts-Updates eines laufenden
+# Downloads kommen als einzelne Job-Zeilen; das Frontend lädt die volle
+# Liste nur neu, wenn sich Status-Zählungen oder die Reihenfolge ändern.
+_QUEUE_EVENTS_TICK_S = 1.0
+_QUEUE_EVENTS_KEEPALIVE_S = 15.0
+# Mehr geänderte Zeilen pro Tick (Bulk-Import, Clear) → statt Diff ein
+# resync-Signal; das Frontend holt dann einmal /api/queue.
+_QUEUE_EVENTS_MAX_ROWS = 200
+
+
+def _queue_snapshot_since(since_ms: int, seen: set) -> Dict[str, Any]:
+    """Geänderte Jobs seit `since_ms` plus Status-Zählungen.
+
+    `seen` enthält die job_ids, die bei exakt `since_ms` schon gemeldet
+    wurden — upsert_job schreibt Millisekunden, mehrere Updates können
+    denselben Zeitstempel tragen."""
+    import json as _json
+    from utils.job_store import _db as _events_db
+
+    conn = _events_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT job_id, status, stage, progress, message, download_url,
+                   created_at_ms, updated_at_ms, payload_json
+            FROM download_jobs
+            WHERE updated_at_ms >= ?
+            ORDER BY updated_at_ms ASC
+            LIMIT ?
+            """,
+            (since_ms, _QUEUE_EVENTS_MAX_ROWS + len(seen) + 1),
+        ).fetchall()
+        agg = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM download_jobs GROUP BY status"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    rows = [r for r in rows if not (r["updated_at_ms"] == since_ms and r["job_id"] in seen)]
+    resync = len(rows) > _QUEUE_EVENTS_MAX_ROWS
+    jobs = []
+    if not resync:
+        for r in rows:
+            payload = None
+            if r["payload_json"]:
+                try:
+                    payload = _json.loads(r["payload_json"])
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+            jobs.append({
+                "job_id": r["job_id"],
+                "status": r["status"],
+                "stage": r["stage"],
+                "progress": r["progress"],
+                "message": r["message"],
+                "download_url": r["download_url"],
+                "created_at_ms": r["created_at_ms"],
+                "updated_at_ms": r["updated_at_ms"],
+                "payload": payload,
+            })
+
+    if rows:
+        new_since = max(r["updated_at_ms"] for r in rows)
+        new_seen = {r["job_id"] for r in rows if r["updated_at_ms"] == new_since}
+        if new_since == since_ms:
+            new_seen |= seen
+    else:
+        new_since, new_seen = since_ms, seen
+    return {
+        "jobs": jobs,
+        "resync": resync,
+        "status_counts": {r["status"]: r["n"] for r in agg},
+        "since": new_since,
+        "seen": new_seen,
+    }
+
+
+def _lanes_fingerprint(lanes: Dict[str, Any]) -> Any:
+    """remaining_ms zählt jede Sekunde runter — das ist keine Änderung,
+    die der Client braucht (er zählt selbst). Verglichen wird der Rest."""
+    return (
+        tuple(
+            (l["name"], l["ready_at_ms"], l.get("current_job_id"))
+            for l in lanes.get("lanes", [])
+        ),
+        lanes.get("concurrency"),
+        tuple(lanes.get("cooldown", {}).get("normal_seconds", [])),
+        tuple(lanes.get("cooldown", {}).get("rate_limited_seconds", [])),
+    )
+
+
+@app.get("/api/queue/events")
+async def queue_events(request: Request, _: None = Depends(require_token)):
+    """Live-Stream der Queue als text/event-stream.
+
+    Jedes `queue`-Event trägt `status_counts`, geänderte `jobs`, `lanes`
+    (nur wenn sich die Lane-Belegung geändert hat) und `resync` (Client
+    soll /api/queue neu laden). Das erste Event kommt sofort und enthält
+    Zählungen und Lanes, damit der Client nichts separat pollen muss."""
+    import asyncio
+    import json as _json
+    from starlette.concurrency import run_in_threadpool
+    from starlette.responses import StreamingResponse
+
+    async def _stream():
+        since = _now_ms()
+        seen: set = set()
+        last_counts = None
+        last_lanes_fp = None
+        last_sent = 0.0
+        yield "retry: 3000\n\n"
+        while not await request.is_disconnected():
+            snap = await run_in_threadpool(_queue_snapshot_since, since, seen)
+            since, seen = snap["since"], snap["seen"]
+            lanes = _download_worker.lane_status()
+            lanes_fp = _lanes_fingerprint(lanes)
+
+            event: Dict[str, Any] = {}
+            if snap["jobs"]:
+                event["jobs"] = snap["jobs"]
+            if snap["resync"]:
+                event["resync"] = True
+            if snap["status_counts"] != last_counts or event:
+                event["status_counts"] = snap["status_counts"]
+                last_counts = snap["status_counts"]
+            if lanes_fp != last_lanes_fp:
+                event["lanes"] = lanes
+                last_lanes_fp = lanes_fp
+
+            now = time.monotonic()
+            if event:
+                yield f"event: queue\ndata: {_json.dumps(event, separators=(',', ':'))}\n\n"
+                last_sent = now
+            elif now - last_sent >= _QUEUE_EVENTS_KEEPALIVE_S:
+                # Kommentarzeile hält Proxies und mobile Verbindungen offen.
+                yield ": keepalive\n\n"
+                last_sent = now
+            await asyncio.sleep(_QUEUE_EVENTS_TICK_S)
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # nginx/Traefik puffern sonst den Stream und liefern Events in Brocken.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 class QueueMoveRequest(BaseModel):
     track_id: str
     direction: str  # "up" | "down"
@@ -1439,13 +1590,16 @@ async def move_queue_item(req: QueueMoveRequest, _: None = Depends(require_token
             "UPDATE download_jobs SET created_at_ms = -1 WHERE job_id = ?",
             (req.track_id,),
         )
+        # updated_at_ms mitziehen, damit /api/queue/events die neue
+        # Reihenfolge an andere offene Tabs meldet.
+        moved_at = _now_ms()
         conn.execute(
-            "UPDATE download_jobs SET created_at_ms = ? WHERE job_id = ?",
-            (cur_ts, neighbor["job_id"]),
+            "UPDATE download_jobs SET created_at_ms = ?, updated_at_ms = ? WHERE job_id = ?",
+            (cur_ts, moved_at, neighbor["job_id"]),
         )
         conn.execute(
-            "UPDATE download_jobs SET created_at_ms = ? WHERE job_id = ?",
-            (nei_ts, req.track_id),
+            "UPDATE download_jobs SET created_at_ms = ?, updated_at_ms = ? WHERE job_id = ?",
+            (nei_ts, moved_at, req.track_id),
         )
         conn.commit()
         return {"ok": True}
