@@ -100,6 +100,29 @@ async function request<T>(path: string, init: RequestInit = {}, _retry = false):
   return (await resp.json()) as T;
 }
 
+/** Öffnet einen langlebigen GET-Stream (Server-Sent Events) mit denselben
+ *  Auth-Regeln wie `request`. EventSource kann keinen Authorization-Header
+ *  setzen, deshalb fetch + ReadableStream. Wirft ApiError bei !ok. */
+export async function openStream(
+  path: string,
+  signal: AbortSignal,
+  _retry = false
+): Promise<Response> {
+  const headers = new Headers({ Accept: 'text/event-stream' });
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  const resp = await fetch(url, { headers, signal, cache: 'no-store' });
+  if (!resp.ok) {
+    if (resp.status === 401 && !_retry && get(accessToken) && get(refreshToken)) {
+      const ok = await tryRefresh();
+      if (ok) return openStream(path, signal, true);
+    }
+    throw new ApiError(resp.status, `${resp.status} ${resp.statusText}`);
+  }
+  return resp;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
@@ -377,11 +400,15 @@ export interface LaneInfo {
    *  korrekt der visuellen Lane zuordnen kann (statt nach
    *  created_at_ms zu raten). */
   current_job_id?: string | null;
+  /** Anzeigename des Slots ("A", "B2", "1", …). Fehlt bei älteren Backends. */
+  label?: string;
 }
 
 export interface LaneStatusResponse {
   lanes: LaneInfo[];
   next_ready_in_ms: number;
+  /** Parallele Downloads pro Lane (#92). Fehlt bei älteren Backends. */
+  concurrency?: number;
   cooldown: {
     normal_seconds: [number, number];
     rate_limited_seconds: [number, number];
@@ -573,10 +600,13 @@ export interface CooldownValues {
   normal_max_s: number;
   rl_min_s: number;
   rl_max_s: number;
+  /** Parallele Downloads pro Lane, 1 = seriell wie bisher. */
+  download_concurrency?: number;
 }
 export interface CooldownConfigResponse {
   current: CooldownValues;
   defaults: CooldownValues;
+  max_download_concurrency?: number;
 }
 
 export const cooldownApi = {

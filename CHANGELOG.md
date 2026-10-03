@@ -10,6 +10,27 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Mehrere Downloads gleichzeitig** (#92) — unter Einstellungen →
+  Standard-Verhalten lässt sich festlegen, wie viele Downloads pro Lane
+  parallel laufen (1–4, Startwert auch per `DOWNLOAD_CONCURRENCY`). Jeder
+  Slot hat seinen eigenen Cooldown. Default bleibt 1, weil mehrere
+  yt-dlp-Prozesse von derselben IP das Bot-Check-Risiko erhöhen.
+- **Queue-Updates per Push statt Polling** (#93) — `/api/queue/events`
+  schickt als Server-Sent-Events nur, was sich geändert hat. Die Queue-Seite
+  aktualisiert Fortschritt und Meldungen in place und lädt die Liste nur bei
+  Statuswechseln neu; der Puck zählt über denselben Stream. Polling bleibt als
+  Fallback für ältere Backends und während eines Reconnects.
+
+### Fixed
+
+- **Worker fuhren beim Container-Stop nicht sauber herunter.** Das Attribut
+  `JobWorker._stop` überdeckte `Thread._stop()`, wodurch `join()` mit
+  „'Event' object is not callable“ abbrach, sobald der Thread beendet war.
+
 ## [0.8.0] — 2026-08-24
 
 ### Added

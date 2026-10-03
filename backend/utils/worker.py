@@ -94,12 +94,57 @@ _CSV_429_RETRY_DELAYS: Tuple[float, ...] = (1.5, 3.0)
 # Bei VPN_SPLIT_ENABLED=false fällt alles auf "default" zurück (kein Bind).
 _CSV_LANES: Tuple[str, str] = ("a", "b")
 
-# Download-Worker: zwei Lanes mit getrennten Cooldown-Timern. Single-threaded
-# bleibt der Worker (keine parallelen yt-dlp-Prozesse — YouTube-Bot-Detection!),
-# aber während Lane A im Cooldown wartet, kann Lane B sofort den nächsten Job
-# starten. Effektiv halbiert das die Idle-Zeit zwischen Downloads.
+# Download-Worker: zwei Lanes mit getrennten Cooldown-Timern. Während Lane A
+# im Cooldown wartet, kann Lane B sofort den nächsten Job starten. Effektiv
+# halbiert das die Idle-Zeit zwischen Downloads.
 # Bei VPN_SPLIT_ENABLED=false → eine "default"-Lane → 1:1 Verhalten wie zuvor.
 _DOWNLOAD_LANES: Tuple[str, ...] = ("a", "b") if _VPN_SPLIT_ENABLED else ("default",)
+
+# Parallele Downloads (#92): jede Lane hat bis zu _MAX_DOWNLOAD_CONCURRENCY
+# Slots, jeder Slot mit eigenem Cooldown-Timer. Default bleibt 1 — mehrere
+# yt-dlp-Prozesse von derselben IP erhöhen das Bot-Check-Risiko, deshalb ist
+# das ein bewusstes Opt-in (Settings → Standard-Verhalten, hot-reload).
+_MAX_DOWNLOAD_CONCURRENCY = 4
+_DEFAULT_DOWNLOAD_CONCURRENCY = 1
+
+
+def _slot_name(lane: str, idx: int) -> str:
+    """Slot 0 trägt den Lane-Namen selbst — bei Concurrency 1 sieht das UI
+    exakt die alten Lane-Namen ("default" bzw. "a"/"b")."""
+    return lane if idx == 0 else f"{lane}{idx + 1}"
+
+
+def _slot_label(lane: str, idx: int) -> str:
+    """Anzeigename fürs UI: "A", "B", "A2", … im Dual-Lane-Setup,
+    "1", "2", … bei einer einzelnen Lane."""
+    if lane == "default":
+        return str(idx + 1)
+    return lane.upper() if idx == 0 else f"{lane.upper()}{idx + 1}"
+
+
+# Reihenfolge slot-major (a, b, a2, b2, …): bei Concurrency 2 im Dual-Lane-
+# Setup verteilt der Round-Robin die Jobs erst über beide IPs.
+_DOWNLOAD_SLOTS: Tuple[Tuple[str, str, int], ...] = tuple(
+    (_slot_name(lane, i), lane, i)
+    for i in range(_MAX_DOWNLOAD_CONCURRENCY)
+    for lane in _DOWNLOAD_LANES
+)
+_SLOT_LANE: Dict[str, str] = {name: lane for name, lane, _ in _DOWNLOAD_SLOTS}
+
+
+def _load_download_concurrency() -> int:
+    """Parallele Downloads pro Lane aus app_settings, fallback auf die
+    DOWNLOAD_CONCURRENCY-Env bzw. 1. Wird bei jedem Pick live gelesen."""
+    from utils.app_settings import get_setting
+
+    raw = get_setting('download.concurrency')
+    if raw is None:
+        raw = os.environ.get("DOWNLOAD_CONCURRENCY")
+    try:
+        n = int(raw) if raw is not None else _DEFAULT_DOWNLOAD_CONCURRENCY
+    except (ValueError, TypeError):
+        n = _DEFAULT_DOWNLOAD_CONCURRENCY
+    return max(1, min(_MAX_DOWNLOAD_CONCURRENCY, n))
 
 
 def _looks_like_429(message: str, error: str) -> bool:
@@ -175,47 +220,63 @@ class JobWorker(threading.Thread):
         super().__init__(daemon=True, name=thread_name)
         self._job_type = job_type
         self._import_lane = import_lane
-        self._stop: threading.Event = threading.Event()
-        self._lock: threading.Lock = threading.Lock()
-        # Per-Lane "ready_at" (ms): wann ist die Lane wieder benutzbar (Cooldown vorbei)?
+        # Nicht `_stop` nennen: das überschreibt Thread._stop(), und join()
+        # wirft dann "Event object is not callable", sobald der Thread endet.
+        self._stop_event: threading.Event = threading.Event()
+        # Per-Slot "ready_at" (ms): wann ist der Slot wieder benutzbar (Cooldown vorbei)?
         # 0 = sofort nutzbar. Wird von _process_download nach jedem Job gesetzt.
-        self._lane_ready_at: Dict[str, int] = {l: 0 for l in _DOWNLOAD_LANES}
-        # Round-robin-Tiebreaker wenn beide Lanes gleichzeitig ready sind.
+        # Bei Concurrency 1 gibt es genau einen Slot pro Lane, Slot = Lane.
+        self._lane_ready_at: Dict[str, int] = {name: 0 for name, _, _ in _DOWNLOAD_SLOTS}
+        # Round-robin-Tiebreaker wenn mehrere Slots gleichzeitig ready sind.
         self._lane_rr_idx: int = 0
-        # Welcher Job läuft gerade auf welcher Lane? Nötig damit das UI
+        # Welcher Job läuft gerade auf welchem Slot? Nötig damit das UI
         # einen Processing-Job korrekt der visuellen Lane (a/b) zuordnen kann.
         # Vorher hat das Frontend die Reihenfolge nach created_at_ms erraten,
         # was falsch war wenn nur Lane B lief — der Job landete dann in
         # Slot[0] = Lane A, Lane B sah "Ready" obwohl sie aktiv war.
-        self._lane_current_job: Dict[str, Optional[str]] = {l: None for l in _DOWNLOAD_LANES}
+        self._lane_current_job: Dict[str, Optional[str]] = {name: None for name, _, _ in _DOWNLOAD_SLOTS}
+        # Laufende Download-Threads — shutdown() wartet auf sie.
+        self._download_threads: Set[threading.Thread] = set()
 
     # ------------------------------------------------------------------
     # Lane selection (Download-Worker, Dual-VPN)
     # ------------------------------------------------------------------
 
+    def _visible_slots(self, concurrency: int) -> List[Tuple[str, str, int]]:
+        """Aktive Slots plus solche, die nach einem Herunterregeln der
+        Concurrency noch einen Job zu Ende laufen lassen."""
+        return [
+            (name, lane, idx) for name, lane, idx in _DOWNLOAD_SLOTS
+            if idx < concurrency or self._lane_current_job.get(name)
+        ]
+
     def lane_status(self) -> Dict[str, Any]:
-        """UI-View auf den Lane-Cooldown-State.
+        """UI-View auf den Slot-Cooldown-State.
 
         Wird von /api/queue/lanes für die Live-Queue gepollt — die User-
         sichtbare "noch X:XX bis nächster Job"-Anzeige. Cooldown-Bereiche
         kommen ebenfalls mit, damit das Frontend Range-Hints zeigen kann.
         """
         now = _now_ms()
+        concurrency = _load_download_concurrency()
         lanes = []
-        for name in _DOWNLOAD_LANES:
+        for name, lane, idx in self._visible_slots(concurrency):
             ready_at = int(self._lane_ready_at.get(name, 0))
             lanes.append({
                 "name": name,
+                "label": _slot_label(lane, idx),
+                "lane": lane,
                 "ready_at_ms": ready_at,
                 "remaining_ms": max(0, ready_at - now),
                 "current_job_id": self._lane_current_job.get(name),
             })
-        # Wenn mind. eine Lane ready: 0 ms bis nächste Lane verfügbar.
+        # Wenn mind. ein Slot ready: 0 ms bis nächster Slot verfügbar.
         next_ready = min((l["remaining_ms"] for l in lanes), default=0)
         normal_range, rl_range = _load_cooldown_ranges()
         return {
             "lanes": lanes,
             "next_ready_in_ms": next_ready,
+            "concurrency": concurrency,
             "cooldown": {
                 "normal_seconds": list(normal_range),
                 "rate_limited_seconds": list(rl_range),
@@ -223,23 +284,29 @@ class JobWorker(threading.Thread):
         }
 
     def _pick_download_lane(self) -> Tuple[Optional[str], int]:
-        """Returns (lane_or_None, wait_ms_until_next_ready).
+        """Returns (slot_or_None, wait_ms_until_next_ready).
 
-        lane=None heißt: alle Lanes sind im Cooldown — der Caller soll
-        wait_ms warten und dann erneut versuchen. Bei nur einer Lane
-        ("default") ist das Verhalten 1:1 zum klassischen Single-Lane-Worker.
+        slot=None heißt: kein freier Slot — alle aktiven Slots sind im
+        Cooldown oder laden gerade. Der Caller soll wait_ms warten und dann
+        erneut versuchen. Bei einer Lane und Concurrency 1 ist das Verhalten
+        1:1 zum klassischen Single-Lane-Worker.
         """
         now = _now_ms()
-        ready = [l for l in _DOWNLOAD_LANES if self._lane_ready_at[l] <= now]
+        concurrency = _load_download_concurrency()
+        active = [name for name, _, idx in _DOWNLOAD_SLOTS if idx < concurrency]
+        free = [s for s in active if self._lane_current_job.get(s) is None]
+        ready = [s for s in free if self._lane_ready_at[s] <= now]
         if ready:
-            # Round-robin unter den ready Lanes — gibt fair-share, auch wenn beide
+            # Round-robin unter den ready Slots — gibt fair-share, auch wenn alle
             # immer ready sind (= keine Cooldowns aktiv, z.B. nach Worker-Start).
             chosen = ready[self._lane_rr_idx % len(ready)]
-            self._lane_rr_idx = (self._lane_rr_idx + 1) % max(1, len(_DOWNLOAD_LANES))
+            self._lane_rr_idx = (self._lane_rr_idx + 1) % max(1, len(active))
             return chosen, 0
-        # Alle Lanes im Cooldown → kürzeste Restwartezeit zurückgeben.
-        wait_ms = min(self._lane_ready_at[l] - now for l in _DOWNLOAD_LANES)
-        return None, max(0, wait_ms)
+        if free:
+            # Freie Slots im Cooldown → kürzeste Restwartezeit zurückgeben.
+            return None, max(0, min(self._lane_ready_at[s] - now for s in free))
+        # Alle Slots laden gerade — kurz warten, dann neu prüfen.
+        return None, 1000
 
     # ------------------------------------------------------------------
     # Main loop
@@ -251,18 +318,19 @@ class JobWorker(threading.Thread):
         lane_suffix = f":{self._import_lane}" if self._import_lane else ""
         print(f"[worker:{self._job_type}{lane_suffix}] loop started, polling for jobs", flush=True)
         consecutive_errors = 0
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 if self._job_type == "download":
                     lane, wait_ms = self._pick_download_lane()
                     if lane is None:
-                        # Alle Lanes im Cooldown — stoppable-sleep auf die kürzeste
-                        # Restwartezeit, dann erneut prüfen.
-                        self._stop.wait(timeout=max(0.5, wait_ms / 1000.0))
+                        # Kein freier Slot — stoppable-sleep auf die kürzeste
+                        # Restwartezeit, dann erneut prüfen. Gedeckelt auf 5 s,
+                        # damit eine hochgesetzte Concurrency zeitnah greift.
+                        self._stop_event.wait(timeout=min(5.0, max(0.5, wait_ms / 1000.0)))
                         continue
                     job = self._poll_next_queued_download(lane=lane)
                     if job:
-                        self._process_download(job, lane=lane)
+                        self._start_download(job, lane)
                         consecutive_errors = 0
                         continue
                 else:
@@ -271,7 +339,7 @@ class JobWorker(threading.Thread):
                         self._process_import_job(import_job)
                         consecutive_errors = 0
                         continue
-                self._stop.wait(timeout=2.0)
+                self._stop_event.wait(timeout=2.0)
             except Exception as e:
                 # Top-Level-Guard: ohne diesen catch killt jede ungefangene
                 # Exception (SQLite-OperationalError, ImportError, kaputter
@@ -290,18 +358,46 @@ class JobWorker(threading.Thread):
                     flush=True,
                 )
                 traceback.print_exc()
-                self._stop.wait(timeout=backoff)
+                self._stop_event.wait(timeout=backoff)
         print(f"[worker:{self._job_type}] loop exited (stop signal received)", flush=True)
 
     def shutdown(self, timeout: Optional[float] = None) -> None:
-        self._stop.set()
+        self._stop_event.set()
+        deadline = time.monotonic() + timeout if timeout is not None else None
         self.join(timeout=timeout)
+        for t in list(self._download_threads):
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            t.join(timeout=remaining)
+
+    def _start_download(self, job: Dict[str, Any], slot: str) -> None:
+        """Startet den Download in einem eigenen Thread, damit der Dispatcher
+        weitere Slots bedienen kann. Der Slot bleibt über _lane_current_job
+        belegt, bis _process_download im finally den Cooldown gesetzt hat."""
+        def _run() -> None:
+            try:
+                self._process_download(job, lane=slot)
+            except Exception as e:
+                import traceback
+                print(
+                    f"[worker:download] EXCEPTION in slot {slot}: {type(e).__name__}: {e}",
+                    flush=True,
+                )
+                traceback.print_exc()
+            finally:
+                self._download_threads.discard(threading.current_thread())
+
+        t = threading.Thread(target=_run, daemon=True, name=f"download:{slot}")
+        self._download_threads.add(t)
+        t.start()
 
     # ------------------------------------------------------------------
     # Download job polling
     # ------------------------------------------------------------------
 
     def _poll_next_queued_download(self, lane: str = "default") -> Optional[Dict[str, Any]]:
+        # Nur der Dispatcher-Thread pollt, trotzdem atomar claimen: ein
+        # paralleler /start- oder Cancel-Call darf den Job nicht doppelt
+        # in Bearbeitung schicken.
         conn = _db()
         try:
             row = conn.execute(
@@ -316,11 +412,14 @@ class JobWorker(threading.Thread):
             if not row:
                 return None
 
-            conn.execute(
-                "UPDATE download_jobs SET status='processing', updated_at_ms=? WHERE job_id=?",
+            cur = conn.execute(
+                "UPDATE download_jobs SET status='processing', updated_at_ms=? "
+                "WHERE job_id=? AND status='queued'",
                 (_now_ms(), row["job_id"]),
             )
             conn.commit()
+            if cur.rowcount != 1:
+                return None
             # Lane-Mapping IM SELBEN STACK-FRAME wie der COMMIT setzen — kein
             # Funktions-Call-Boundary mehr zwischen DB-Transition und In-
             # Memory-Update. Eliminiert das Race-Fenster wo /api/queue X als
@@ -980,7 +1079,7 @@ class JobWorker(threading.Thread):
                 futures = [pool.submit(_do_search, k, "default") for k in unique_keys]
             for fut in as_completed(futures):
                 # Bei Shutdown laufende Futures abrechen so weit möglich.
-                if self._stop.is_set():
+                if self._stop_event.is_set():
                     for f in futures:
                         f.cancel()
                     upsert_import_job(job_id, status="error", message="Interrupted")
@@ -1086,7 +1185,7 @@ class JobWorker(threading.Thread):
                 ),
             )
             for _ in range(fast_cooldown_s):
-                if self._stop.is_set():
+                if self._stop_event.is_set():
                     upsert_import_job(job_id, status="error", message="Interrupted")
                     return
                 if _check_user_cancel(phase2_end):
@@ -1106,7 +1205,7 @@ class JobWorker(threading.Thread):
                         for k in initial_recovery_keys
                     ]
                 for fut in as_completed(futures):
-                    if self._stop.is_set():
+                    if self._stop_event.is_set():
                         for f in futures:
                             f.cancel()
                         upsert_import_job(job_id, status="error", message="Interrupted")
@@ -1160,7 +1259,7 @@ class JobWorker(threading.Thread):
                     ),
                 )
                 for _ in range(slow_cooldown_s):
-                    if self._stop.is_set():
+                    if self._stop_event.is_set():
                         upsert_import_job(job_id, status="error", message="Interrupted")
                         return
                     if _check_user_cancel(fast_recovery_end):
@@ -1169,7 +1268,7 @@ class JobWorker(threading.Thread):
 
                 # Sequenziell, default lane, 0.4s zwischen Calls.
                 for idx, k in enumerate(slow_recovery_keys):
-                    if self._stop.is_set():
+                    if self._stop_event.is_set():
                         upsert_import_job(job_id, status="error", message="Interrupted")
                         return
                     if _check_user_cancel(fast_recovery_end + idx):
@@ -1363,54 +1462,55 @@ class JobWorker(threading.Thread):
         track_id: str = job["job_id"]
         params: Dict[str, Any] = job.get("params", {})
 
-        # source_lane an download_and_process: "a"/"b" → yt-dlp source_address +
-        # Deezer source-bind. "default" → kein Bind (Status-quo-Verhalten).
-        propagated_lane = lane if lane in ("a", "b") else None
+        # `lane` ist hier der Slot-Name ("a2" etc.); gebunden wird die IP der
+        # zugehörigen Lane. source_lane an download_and_process: "a"/"b" →
+        # yt-dlp source_address + Deezer source-bind. "default" → kein Bind.
+        ip_lane = _SLOT_LANE.get(lane, lane)
+        propagated_lane = ip_lane if ip_lane in ("a", "b") else None
 
         # Lane-Tracking für die UI: _lane_current_job[lane] wurde bereits
         # in _poll_next_queued_download direkt nach dem SQL-COMMIT gesetzt
         # (gleicher Stack-Frame, kein Race-Window). Wir geben es erst nach
         # dem Setzen der Cooldown wieder frei — siehe Reorder-Block unten.
         try:
-            with self._lock:
-                if params.get("kind") == "url" and params.get("url"):
-                    # URL-Job (v0.5.0, Playlist-Expand): kein Deezer/Spotify-
-                    # Match — direkt via yt-dlp von der Quell-URL laden.
-                    # Läuft hier im Worker statt als BackgroundTask, damit
-                    # Lane-Cooldowns + Bot-Check-Re-Queue (finally-Block
-                    # unten) greifen. Single-URL-Submits aus dem Frontend
-                    # behalten ihren BackgroundTask-Pfad (status='processing'
-                    # ab Anlage — die sieht dieser Poll nie).
-                    from app import url_download_and_process
+            if params.get("kind") == "url" and params.get("url"):
+                # URL-Job (v0.5.0, Playlist-Expand): kein Deezer/Spotify-
+                # Match — direkt via yt-dlp von der Quell-URL laden.
+                # Läuft hier im Worker statt als BackgroundTask, damit
+                # Lane-Cooldowns + Bot-Check-Re-Queue (finally-Block
+                # unten) greifen. Single-URL-Submits aus dem Frontend
+                # behalten ihren BackgroundTask-Pfad (status='processing'
+                # ab Anlage — die sieht dieser Poll nie).
+                from app import url_download_and_process
 
-                    # track_hint bewusst NICHT aus payload["track"] — das sind
-                    # flat-extract-Daten (Queue-UI-Anzeige); der Full-Extract
-                    # in url_download_and_process liefert die kanonischen Tags.
-                    url_download_and_process(
-                        track_id,
-                        params["url"],
-                        params.get("location", "local"),
-                        params.get("output_format"),
-                        params.get("audio_quality"),
-                        params.get("navidrome_library_path"),
-                        track_hint=None,
-                        import_playlist_names=params.get("import_playlist_names"),
-                        source_lane=propagated_lane,
-                    )
-                else:
-                    from app import download_and_process
+                # track_hint bewusst NICHT aus payload["track"] — das sind
+                # flat-extract-Daten (Queue-UI-Anzeige); der Full-Extract
+                # in url_download_and_process liefert die kanonischen Tags.
+                url_download_and_process(
+                    track_id,
+                    params["url"],
+                    params.get("location", "local"),
+                    params.get("output_format"),
+                    params.get("audio_quality"),
+                    params.get("navidrome_library_path"),
+                    track_hint=None,
+                    import_playlist_names=params.get("import_playlist_names"),
+                    source_lane=propagated_lane,
+                )
+            else:
+                from app import download_and_process
 
-                    download_and_process(
-                        track_id=track_id,
-                        location=params.get("location", "local"),
-                        video_id=params.get("video_id"),
-                        output_format=params.get("output_format"),
-                        audio_quality=params.get("audio_quality"),
-                        metadata_provider=params.get("metadata_provider", "deezer"),
-                        max_retries=params.get("max_retries", 0),
-                        navidrome_library_path=params.get("navidrome_library_path"),
-                        source_lane=propagated_lane,
-                    )
+                download_and_process(
+                    track_id=track_id,
+                    location=params.get("location", "local"),
+                    video_id=params.get("video_id"),
+                    output_format=params.get("output_format"),
+                    audio_quality=params.get("audio_quality"),
+                    metadata_provider=params.get("metadata_provider", "deezer"),
+                    max_retries=params.get("max_retries", 0),
+                    navidrome_library_path=params.get("navidrome_library_path"),
+                    source_lane=propagated_lane,
+                )
         finally:
             # ----- Per-Lane-Cooldown -----
             # Greift IMMER, egal ob success oder error. Bei 429 wird's deutlich
@@ -1504,4 +1604,4 @@ class JobWorker(threading.Thread):
 
         # Kurze Yield-Pause, damit run() in einem stoppable-sleep landet wenn
         # beide Lanes Cooldown haben (sonst busy-Loop).
-        self._stop.wait(timeout=0.1)
+        self._stop_event.wait(timeout=0.1)
