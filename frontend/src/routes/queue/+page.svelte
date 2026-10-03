@@ -275,6 +275,7 @@
    */
   type LaneSlot = {
     laneName: string;
+    label: string;
     remainingMs: number;
     job: QueueJob | null;
     upNext: QueueJob | null;
@@ -290,6 +291,7 @@
     for (const j of data?.items ?? []) jobsById.set(j.job_id, j);
     const slots: LaneSlot[] = lanesArr.map((l) => ({
       laneName: l.name,
+      label: l.label ?? l.name.toUpperCase(),
       remainingMs: l.remaining_ms,
       job: l.current_job_id ? (jobsById.get(l.current_job_id) ?? null) : null,
       upNext: null
@@ -437,6 +439,7 @@
 
   type LaneLive = {
     name: string;
+    label?: string;
     remaining_ms: number;
     current_job_id: string | null;
   };
@@ -445,6 +448,7 @@
     const elapsed = nowMs - lanesAnchor;
     return lanes.lanes.map((l) => ({
       name: l.name,
+      label: l.label,
       remaining_ms: Math.max(0, l.remaining_ms - elapsed),
       current_job_id: l.current_job_id ?? null
     }));
@@ -737,7 +741,7 @@
             >
               {#if isDualLane}
                 <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.1em;">
-                  {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+                  {$t('queue.lane.label', { name: slot.label })}
                 </span>
                 <span style="color: var(--color-fg-tertiary);">·</span>
               {/if}
@@ -846,7 +850,7 @@
             >
               {#if isDualLane}
                 <span style="font-family: var(--font-mono); letter-spacing: 0.1em;">
-                  {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+                  {$t('queue.lane.label', { name: slot.label })}
                 </span>
                 <span>·</span>
               {/if}
@@ -950,7 +954,7 @@
               "
             >
               {#if isDualLane}
-                {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+                {$t('queue.lane.label', { name: slot.label })}
               {:else}
                 {$t('queue.eyebrow.idle')}
               {/if}

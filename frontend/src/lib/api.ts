@@ -377,11 +377,15 @@ export interface LaneInfo {
    *  korrekt der visuellen Lane zuordnen kann (statt nach
    *  created_at_ms zu raten). */
   current_job_id?: string | null;
+  /** Anzeigename des Slots ("A", "B2", "1", …). Fehlt bei älteren Backends. */
+  label?: string;
 }
 
 export interface LaneStatusResponse {
   lanes: LaneInfo[];
   next_ready_in_ms: number;
+  /** Parallele Downloads pro Lane (#92). Fehlt bei älteren Backends. */
+  concurrency?: number;
   cooldown: {
     normal_seconds: [number, number];
     rate_limited_seconds: [number, number];
@@ -573,10 +577,13 @@ export interface CooldownValues {
   normal_max_s: number;
   rl_min_s: number;
   rl_max_s: number;
+  /** Parallele Downloads pro Lane, 1 = seriell wie bisher. */
+  download_concurrency?: number;
 }
 export interface CooldownConfigResponse {
   current: CooldownValues;
   defaults: CooldownValues;
+  max_download_concurrency?: number;
 }
 
 export const cooldownApi = {

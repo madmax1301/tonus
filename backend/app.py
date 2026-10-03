@@ -754,7 +754,7 @@ def download_and_process(
     navidrome_library_path: Optional[str] = None,
     source_lane: Optional[str] = None,
 ):
-    """Background task to download and process a track (called by JobWorker under its lock).
+    """Background task to download and process a track (called by JobWorker, one thread per slot).
 
     navidrome_library_path: resolved absolute root when location is navidrome (must be allowlisted).
     source_lane: "a"|"b"|None → bei aktivem Dual-VPN-Splitting wird die Source-IP
@@ -4852,6 +4852,8 @@ class CooldownUpdateRequest(BaseModel):
     normal_max_s: int
     rl_min_s: int
     rl_max_s: int
+    # Optional, damit ältere Frontends (ohne das Feld) weiter speichern können.
+    download_concurrency: Optional[int] = None
 
 
 @app.get("/api/settings/cooldown")
@@ -4859,13 +4861,20 @@ async def settings_cooldown_get(_: None = Depends(require_token),
                                   __: None = Depends(require_admin)):
     """Liefert aktuelle Cooldown-Werte + Defaults (für Reset-Buttons)."""
     from utils.app_settings import get_setting
-    from utils.worker import _COOLDOWN_NORMAL, _COOLDOWN_429
+    from utils.worker import (
+        _COOLDOWN_NORMAL,
+        _COOLDOWN_429,
+        _DEFAULT_DOWNLOAD_CONCURRENCY,
+        _MAX_DOWNLOAD_CONCURRENCY,
+        _load_download_concurrency,
+    )
 
     defaults = {
         'normal_min_s': _COOLDOWN_NORMAL[0],
         'normal_max_s': _COOLDOWN_NORMAL[1],
         'rl_min_s': _COOLDOWN_429[0],
         'rl_max_s': _COOLDOWN_429[1],
+        'download_concurrency': _DEFAULT_DOWNLOAD_CONCURRENCY,
     }
     current = {}
     for k in _COOLDOWN_KEYS:
@@ -4874,7 +4883,12 @@ async def settings_cooldown_get(_: None = Depends(require_token),
             current[k] = int(v) if v is not None else defaults[k]
         except (ValueError, TypeError):
             current[k] = defaults[k]
-    return {'current': current, 'defaults': defaults}
+    current['download_concurrency'] = _load_download_concurrency()
+    return {
+        'current': current,
+        'defaults': defaults,
+        'max_download_concurrency': _MAX_DOWNLOAD_CONCURRENCY,
+    }
 
 
 @app.put("/api/settings/cooldown")
@@ -4892,11 +4906,21 @@ async def settings_cooldown_put(req: CooldownUpdateRequest,
         raise HTTPException(status_code=400, detail='Normal-Min darf nicht größer als Normal-Max sein.')
     if req.rl_min_s > req.rl_max_s:
         raise HTTPException(status_code=400, detail='Rate-Limit-Min darf nicht größer als Rate-Limit-Max sein.')
+    from utils.worker import _MAX_DOWNLOAD_CONCURRENCY
+    if req.download_concurrency is not None and not (
+        1 <= req.download_concurrency <= _MAX_DOWNLOAD_CONCURRENCY
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f'Parallele Downloads müssen zwischen 1 und {_MAX_DOWNLOAD_CONCURRENCY} liegen.',
+        )
 
     set_setting('cooldown.normal_min_s', str(req.normal_min_s))
     set_setting('cooldown.normal_max_s', str(req.normal_max_s))
     set_setting('cooldown.rl_min_s', str(req.rl_min_s))
     set_setting('cooldown.rl_max_s', str(req.rl_max_s))
+    if req.download_concurrency is not None:
+        set_setting('download.concurrency', str(req.download_concurrency))
     return {'ok': True}
 
 
