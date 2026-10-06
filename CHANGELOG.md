@@ -24,6 +24,12 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
   aktualisiert Fortschritt und Meldungen in place und lädt die Liste nur bei
   Statuswechseln neu; der Puck zählt über denselben Stream. Polling bleibt als
   Fallback für ältere Backends und während eines Reconnects.
+- **Fresh Releases für das Navidrome-Plugin** — neuer Endpoint
+  `POST /api/plugin/lbfresh/discovery`. Holt die persönlichen
+  ListenBrainz-Fresh-Releases (`/1/user/<name>/fresh_releases`, nur
+  erschienene, nach `confidence`), nimmt pro Release die populärsten Tracks
+  laut Deezer und queued fehlende mit denselben Sync-Markern wie der
+  LB-Weekly-Mirror. Compilations und Live-Releases werden übersprungen.
 
 ### Fixed
 
