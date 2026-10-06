@@ -12,6 +12,8 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-06
+
 ### Added
 
 - **Mehrere Downloads gleichzeitig** (#92) — unter Einstellungen →
@@ -24,7 +26,7 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
   aktualisiert Fortschritt und Meldungen in place und lädt die Liste nur bei
   Statuswechseln neu; der Puck zählt über denselben Stream. Polling bleibt als
   Fallback für ältere Backends und während eines Reconnects.
-- **Fresh Releases für das Navidrome-Plugin** — neuer Endpoint
+- **Fresh Releases für das Navidrome-Plugin** (#97) — neuer Endpoint
   `POST /api/plugin/lbfresh/discovery`. Holt die persönlichen
   ListenBrainz-Fresh-Releases (`/1/user/<name>/fresh_releases`, nur
   erschienene, nach `confidence`), nimmt pro Release die populärsten Tracks
@@ -36,6 +38,12 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 - **Worker fuhren beim Container-Stop nicht sauber herunter.** Das Attribut
   `JobWorker._stop` überdeckte `Thread._stop()`, wodurch `join()` mit
   „'Event' object is not callable“ abbrach, sobald der Thread beendet war.
+
+### Security
+
+- `PyJWT` 2.13.0 → 2.15.1 (8 Advisories), `devalue` 5.8.1 → 5.9.4 und
+  `source-map-js` 1.2.1 → 1.2.2 (GHSA-68fv-2mgg-jv7q, transitive
+  Build-Abhängigkeit) (#98). Damit ist der Dependency Audit wieder grün.
 
 ## [0.8.0] — 2026-08-24
 
