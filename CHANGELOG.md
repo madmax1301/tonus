@@ -26,6 +26,10 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
   aktualisiert Fortschritt und Meldungen in place und lädt die Liste nur bei
   Statuswechseln neu; der Puck zählt über denselben Stream. Polling bleibt als
   Fallback für ältere Backends und während eines Reconnects.
+- **Queue lädt seitenweise beim Scrollen** (#93) — die Queue-Seite holt
+  anfangs 100 statt bis zu 500 Jobs und lädt die nächsten 100 nach, sobald
+  das Listenende in Sichtweite kommt. Reloads holen genau so viele Jobs, wie
+  schon geladen sind (#103).
 - **Fresh Releases für das Navidrome-Plugin** (#97) — neuer Endpoint
   `POST /api/plugin/lbfresh/discovery`. Holt die persönlichen
   ListenBrainz-Fresh-Releases (`/1/user/<name>/fresh_releases`, nur
