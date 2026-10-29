@@ -427,9 +427,13 @@ export interface QueueStatsResponse {
 }
 
 export const queueApi = {
-  list: (status?: string) => {
-    const q = status ? `?status=${encodeURIComponent(status)}` : '';
-    return api.get<QueueResponse>(`/api/queue${q}`);
+  list: (status?: string, page?: { limit?: number; offset?: number }) => {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (page?.limit != null) params.set('limit', String(page.limit));
+    if (page?.offset) params.set('offset', String(page.offset));
+    const q = params.toString();
+    return api.get<QueueResponse>(`/api/queue${q ? `?${q}` : ''}`);
   },
   /** Nur Zaehlungen — COUNT(*) GROUP BY statt bis zu 500 serialisierter Items. */
   stats: () => api.get<QueueStatsResponse>('/api/queue/stats'),
