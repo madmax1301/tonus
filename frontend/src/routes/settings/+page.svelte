@@ -275,6 +275,7 @@
   let cooldownBusy = $state(false);
   let cooldownSaved = $state(false);
   let cooldownError = $state<string | null>(null);
+  let cooldownMaxConcurrency = $state(4);
 
   async function loadCooldown() {
     cooldownError = null;
@@ -282,6 +283,7 @@
       const res = await cooldownApi.get();
       cooldownCurrent = { ...res.current };
       cooldownDefaults = res.defaults;
+      if (res.max_download_concurrency) cooldownMaxConcurrency = res.max_download_concurrency;
       cooldownLoaded = true;
     } catch {
       cooldownLoaded = true;
@@ -1119,6 +1121,28 @@
               </p>
             </div>
           </div>
+
+          {#if cooldownCurrent.download_concurrency !== undefined}
+            <label class="flex flex-col mt-4" style="gap: 8px; max-width: 270px;">
+              <span
+                class="uppercase"
+                style="font-size: 10.5px; letter-spacing: 0.18em; color: var(--color-fg-tertiary);"
+              >
+                {$t('settings.defaults.cooldown.concurrency_label')}
+              </span>
+              <input
+                type="number"
+                min="1"
+                max={cooldownMaxConcurrency}
+                bind:value={cooldownCurrent.download_concurrency}
+                class="outline-none"
+                style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--color-border-soft); border-radius: 12px; color: var(--color-fg-primary); font-family: var(--font-mono); font-size: 13px; padding: 10px 14px; letter-spacing: 0.04em;"
+              />
+              <span style="font-size: 10.5px; color: var(--color-fg-tertiary); line-height: 1.4;">
+                {$t('settings.defaults.cooldown.concurrency_hint')}
+              </span>
+            </label>
+          {/if}
 
           {#if cooldownError}
             <p class="mt-3" style="font-size: 12px; color: #f87171;">{cooldownError}</p>

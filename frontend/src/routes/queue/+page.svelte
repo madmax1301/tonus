@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { base } from '$app/paths';
   import {
     queueApi,
@@ -11,6 +11,11 @@
   import { tint, extractHue, DEFAULT_HUE } from '$lib/accent';
   import { t } from '$lib/i18n';
   import { showConfirm } from '$lib/confirm';
+  import {
+    queueStreamConnected,
+    subscribeQueueEvents,
+    type QueueEvent
+  } from '$lib/queue-events';
   import { get } from 'svelte/store';
   import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
   import CoverArt from '$lib/components/CoverArt.svelte';
@@ -142,6 +147,10 @@
 
   type Filter = 'all' | 'queued' | 'processing' | 'completed' | 'error';
 
+  /** Jobs pro Seite. Die Liste lädt weitere Seiten erst beim Scrollen
+   *  statt bei jedem Reload bis zu 500 Jobs zu übertragen (#93). */
+  const PAGE_SIZE = 100;
+
   let activeFilter = $state<Filter>('all');
   let data = $state<QueueResponse | null>(null);
   let lanes = $state<LaneStatusResponse | null>(null);
@@ -149,6 +158,11 @@
   /** Spinner zeigen wir nur beim **ersten** Load + bei Filter-Wechsel.
    *  Während des Pollings nicht — sonst flackert die Page alle 3 s. */
   let initialLoading = $state(true);
+  /** Wie viele Jobs der aktuelle Filter geladen hat. Startet bei einer Seite
+   *  und wächst beim Scrollen (#93); Reloads holen genau so viele, damit
+   *  die Liste beim Nachladen nicht wieder auf eine Seite schrumpft. */
+  let loadedLimit = $state(PAGE_SIZE);
+  let loadingMore = $state(false);
   let filterText = $state('');
   let featuredHue: number = $state(DEFAULT_HUE);
   /** "Tick" im 1 s-Takt damit der Lane-Countdown live runterzählt ohne
@@ -159,10 +173,17 @@
    *  Queue bei jeder Rückkehr an den Anfang, was sich wie ein Reload
    *  anfühlt statt wie eine App, die ihre Ansicht behält. */
   export const snapshot = {
-    capture: () => ({ scrollY: window.scrollY, filterText, activeFilter }),
-    restore: (value: { scrollY: number; filterText: string; activeFilter: Filter }) => {
+    capture: () => ({ scrollY: window.scrollY, filterText, activeFilter, loadedLimit }),
+    restore: (value: {
+      scrollY: number;
+      filterText: string;
+      activeFilter: Filter;
+      loadedLimit?: number;
+    }) => {
       filterText = value.filterText;
       activeFilter = value.activeFilter;
+      // Genug Seiten laden, damit die alte Scroll-Position existiert.
+      loadedLimit = Math.max(PAGE_SIZE, value.loadedLimit ?? PAGE_SIZE);
       // Beim Restore ist die Liste noch nicht gerendert — ein sofortiges
       // scrollTo liefe ins Leere.
       requestAnimationFrame(() => window.scrollTo(0, value.scrollY));
@@ -176,17 +197,26 @@
     feedback?: string;
   }>({ retryAll: false, cleanup: false, clearAll: false });
 
+  /** Fallback-Polling, solange der Queue-Stream nicht steht. */
   const POLL_MS = 3000;
+  /** Mit Stream nur noch ein seltenes Sicherheitsnetz. */
+  const STREAM_SAFETY_POLL_MS = 60000;
+  /** Status-Wechsel lösen einen vollen Reload aus — höchstens einer pro Sekunde. */
+  const REFETCH_THROTTLE_MS = 1000;
   const TICK_MS = 1000;
   let timer: ReturnType<typeof setInterval> | null = null;
   let tickTimer: ReturnType<typeof setInterval> | null = null;
+  let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastFetchAt = 0;
+  let unsubscribeEvents: (() => void) | null = null;
 
   async function fetchQueue(showSpinner = false) {
     if (showSpinner) initialLoading = true;
+    lastFetchAt = Date.now();
     try {
       const status = activeFilter === 'all' ? undefined : activeFilter;
       const [q, l] = await Promise.all([
-        queueApi.list(status),
+        queueApi.list(status, { limit: loadedLimit }),
         queueApi.lanes().catch(() => null) // optional — älteres backend hat den endpoint nicht
       ]);
       data = q;
@@ -201,9 +231,61 @@
     }
   }
 
-  function startPolling() {
+  /** Nächste Seite anhängen. Dubletten (ein Job ist zwischen zwei Seiten
+   *  nach oben gerutscht) fliegen raus; der nächste Reload richtet die
+   *  Reihenfolge ohnehin wieder gerade. */
+  async function loadMore() {
+    if (!data || loadingMore || data.items.length >= data.total) return;
+    loadingMore = true;
+    const filterAtStart = activeFilter;
+    try {
+      const status = activeFilter === 'all' ? undefined : activeFilter;
+      const offset = data.items.length;
+      const page = await queueApi.list(status, { limit: PAGE_SIZE, offset });
+      if (!data || activeFilter !== filterAtStart) return;
+      const seen = new Set(data.items.map((j) => j.job_id));
+      const fresh = page.items.filter((j) => !seen.has(j.job_id));
+      const items = [...data.items, ...fresh];
+      loadedLimit = Math.max(loadedLimit, offset + PAGE_SIZE);
+      data = {
+        ...data,
+        items,
+        shown: items.length,
+        total: page.total,
+        status_counts: page.status_counts,
+        live: page.live
+      };
+    } catch {
+      // Nächster Scroll oder Reload versucht es erneut.
+    } finally {
+      loadingMore = false;
+    }
+  }
+
+  /** Lädt nach, solange das Ende der Liste (fast) im Bild ist. Nach jeder
+   *  Seite prüfen wir erneut, weil der Observer nur bei Wechseln feuert —
+   *  bei kurzen Seiten oder aktiver Textsuche bliebe die Liste sonst stehen. */
+  function infiniteScroll(node: HTMLElement) {
+    let visible = false;
+    const observer = new IntersectionObserver(
+      async (entries) => {
+        visible = entries.some((e) => e.isIntersecting);
+        while (visible && data && data.items.length < data.total && !loadingMore) {
+          const before = data.items.length;
+          await loadMore();
+          if (!data || data.items.length === before) break;
+          await new Promise((r) => requestAnimationFrame(r));
+        }
+      },
+      { rootMargin: '800px 0px' }
+    );
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
+
+  function startPolling(ms: number) {
     if (timer) clearInterval(timer);
-    timer = setInterval(() => fetchQueue(false), POLL_MS);
+    timer = setInterval(() => fetchQueue(false), ms);
   }
 
   function stopPolling() {
@@ -215,19 +297,87 @@
       clearInterval(tickTimer);
       tickTimer = null;
     }
+    if (refetchTimer) {
+      clearTimeout(refetchTimer);
+      refetchTimer = null;
+    }
+    unsubscribeEvents?.();
+    unsubscribeEvents = null;
+  }
+
+  function scheduleRefetch() {
+    if (refetchTimer) return;
+    const wait = Math.max(0, lastFetchAt + REFETCH_THROTTLE_MS - Date.now());
+    refetchTimer = setTimeout(() => {
+      refetchTimer = null;
+      fetchQueue(false);
+    }, wait);
+  }
+
+  function sameCounts(a: Record<string, number | undefined>, b: Record<string, number | undefined>) {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const k of keys) if ((a[k] ?? 0) !== (b[k] ?? 0)) return false;
+    return true;
+  }
+
+  /** Ersetzt einen geänderten Job in allen Listen, in denen er steht.
+   *  false = Patch reicht nicht (Status oder Position geändert, oder ein
+   *  Job, der in die aktuelle Ansicht gehört, fehlt) → voller Reload. */
+  function patchJob(job: QueueJob): boolean {
+    if (!data) return false;
+    const lists = [data.items, data.live?.processing ?? [], data.live?.queued_head ?? []];
+    let found = false;
+    for (const list of lists) {
+      const i = list.findIndex((j) => j.job_id === job.job_id);
+      if (i < 0) continue;
+      const old = list[i];
+      if (old.status !== job.status || old.created_at_ms !== job.created_at_ms) return false;
+      list[i] = job;
+      found = true;
+    }
+    if (found) return true;
+    // Nicht geladen: nur relevant, wenn der Job in den aktuellen Filter fällt
+    // und die Liste vollständig ist. Bei einer nur teilweise geladenen Liste
+    // liegt er meist einfach hinter der letzten Seite; neue oder fertige Jobs
+    // fallen über die Status-Counts trotzdem auf.
+    if (activeFilter !== 'all' && activeFilter !== job.status) return true;
+    return data.items.length < data.total;
+  }
+
+  function onQueueEvent(ev: QueueEvent) {
+    if (ev.lanes) lanes = ev.lanes;
+    if (!data) return;
+    let stale = !!ev.resync;
+    if (ev.status_counts && !sameCounts(ev.status_counts, data.status_counts)) stale = true;
+    for (const job of ev.jobs ?? []) {
+      if (!patchJob(job)) stale = true;
+    }
+    if (stale) scheduleRefetch();
   }
 
   onMount(async () => {
     await fetchQueue(true);
-    startPolling();
+    unsubscribeEvents = subscribeQueueEvents(onQueueEvent);
     tickTimer = setInterval(() => (nowMs = Date.now()), TICK_MS);
   });
 
   onDestroy(stopPolling);
 
+  // Steht der Stream, kommen Änderungen gepusht (#93); Polling bleibt als
+  // Fallback für ältere Backends und die Zeit bis zum Reconnect.
+  $effect(() => {
+    startPolling($queueStreamConnected ? STREAM_SAFETY_POLL_MS : POLL_MS);
+    return () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+  });
+
   $effect(() => {
     activeFilter; // dependency
-    fetchQueue(true);
+    // untrack: fetchQueue liest loadedLimit, jede nachgeladene Seite löste
+    // sonst einen zweiten, vollen Reload aus.
+    untrack(() => fetchQueue(true));
   });
 
   /** Lane-Strip-Quelle: data.live wird vom Backend IMMER mitgeliefert,
@@ -275,6 +425,7 @@
    */
   type LaneSlot = {
     laneName: string;
+    label: string;
     remainingMs: number;
     job: QueueJob | null;
     upNext: QueueJob | null;
@@ -290,6 +441,7 @@
     for (const j of data?.items ?? []) jobsById.set(j.job_id, j);
     const slots: LaneSlot[] = lanesArr.map((l) => ({
       laneName: l.name,
+      label: l.label ?? l.name.toUpperCase(),
       remainingMs: l.remaining_ms,
       job: l.current_job_id ? (jobsById.get(l.current_job_id) ?? null) : null,
       upNext: null
@@ -437,6 +589,7 @@
 
   type LaneLive = {
     name: string;
+    label?: string;
     remaining_ms: number;
     current_job_id: string | null;
   };
@@ -445,6 +598,7 @@
     const elapsed = nowMs - lanesAnchor;
     return lanes.lanes.map((l) => ({
       name: l.name,
+      label: l.label,
       remaining_ms: Math.max(0, l.remaining_ms - elapsed),
       current_job_id: l.current_job_id ?? null
     }));
@@ -636,7 +790,10 @@
     {#each filterDefs as f}
       {@const on = activeFilter === f.id}
       <button
-        onclick={() => (activeFilter = f.id)}
+        onclick={() => {
+          if (activeFilter !== f.id) loadedLimit = PAGE_SIZE;
+          activeFilter = f.id;
+        }}
         class="inline-flex items-center gap-2 transition-colors"
         style="
           padding: 6px 14px;
@@ -737,7 +894,7 @@
             >
               {#if isDualLane}
                 <span style="color: var(--color-fg-tertiary); font-family: var(--font-mono); letter-spacing: 0.1em;">
-                  {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+                  {$t('queue.lane.label', { name: slot.label })}
                 </span>
                 <span style="color: var(--color-fg-tertiary);">·</span>
               {/if}
@@ -846,7 +1003,7 @@
             >
               {#if isDualLane}
                 <span style="font-family: var(--font-mono); letter-spacing: 0.1em;">
-                  {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+                  {$t('queue.lane.label', { name: slot.label })}
                 </span>
                 <span>·</span>
               {/if}
@@ -950,7 +1107,7 @@
               "
             >
               {#if isDualLane}
-                {$t('queue.lane.label', { name: slot.laneName.toUpperCase() })}
+                {$t('queue.lane.label', { name: slot.label })}
               {:else}
                 {$t('queue.eyebrow.idle')}
               {/if}
@@ -1268,6 +1425,27 @@
         </div>
       {/each}
     </div>
+    {#if data && data.items.length < data.total}
+      <div
+        use:infiniteScroll
+        class="flex items-center justify-center gap-2"
+        style="padding: 18px 0; font-size: 12px; color: var(--color-fg-tertiary); font-family: var(--font-mono);"
+      >
+        {#if loadingMore}
+          <LoaderCircle size={13} strokeWidth={1.5} class="animate-spin" />
+        {/if}
+        <button
+          type="button"
+          onclick={loadMore}
+          disabled={loadingMore}
+          style="background: none; border: none; color: inherit; cursor: pointer; font: inherit;"
+        >
+          {$t('queue.load_more', {
+            count: (data.total - data.items.length).toLocaleString('de-DE')
+          })}
+        </button>
+      </div>
+    {/if}
   {/if}
 </section>
 

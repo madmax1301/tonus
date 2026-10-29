@@ -170,6 +170,120 @@ def lb_playlist_tracks(user: str, slug_or_mbid: str, occurrence: int = 0) -> Lis
     return out
 
 
+# Release-Gruppen-Sekundärtypen, die nicht als "neue Musik" zählen.
+_FRESH_SKIP_SECONDARY = {"Compilation", "Live", "DJ-mix", "Mixtape/Street"}
+
+
+def lb_fresh_releases(
+    user: str, days: int = 7, token: Optional[str] = None
+) -> List[Dict]:
+    """Persönliche LB-Fresh-Releases (bereits erschienen, letzte `days` Tage),
+    nach confidence absteigend. Token ist optional — wird mitgeschickt, wenn
+    gesetzt."""
+    headers = {"User-Agent": USER_AGENT}
+    if token:
+        headers["Authorization"] = f"Token {token}"
+    try:
+        r = requests.get(
+            f"{LB_API}/user/{user}/fresh_releases",
+            params={"days": max(1, min(int(days), 90)), "past": "true",
+                    "future": "false", "sort": "confidence"},
+            timeout=20,
+            headers=headers,
+        )
+        if not r.ok:
+            return []
+        data = r.json()
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        payload = data.get("payload", data)
+        releases = payload.get("releases") if isinstance(payload, dict) else payload
+    else:
+        releases = data
+    out = [
+        rel for rel in (releases or [])
+        if isinstance(rel, dict)
+        and rel.get("artist_credit_name") and rel.get("release_name")
+        and rel.get("release_group_secondary_type") not in _FRESH_SKIP_SECONDARY
+    ]
+    out.sort(key=lambda rel: (rel.get("confidence") or 0,
+                              rel.get("release_date") or ""), reverse=True)
+    return out
+
+
+def deezer_album_top_tracks(artist: str, album: str, limit: int = 2) -> List[Dict]:
+    """Sucht ein Album bei Deezer und liefert dessen `limit` populärste Tracks
+    (nach Deezer-rank) als {artist, title}. Leer, wenn kein Treffer."""
+    try:
+        r = requests.get(
+            f"{DEEZER_BASE}/search/album",
+            params={"q": f'artist:"{artist}" album:"{album}"', "limit": 1},
+            timeout=15,
+            headers={"User-Agent": USER_AGENT},
+        )
+        r.raise_for_status()
+        hits = r.json().get("data") or []
+        if not hits:
+            return []
+        tr = requests.get(
+            f"{DEEZER_BASE}/album/{hits[0]['id']}/tracks",
+            params={"limit": 100},
+            timeout=15,
+            headers={"User-Agent": USER_AGENT},
+        )
+        tr.raise_for_status()
+        tracks = tr.json().get("data") or []
+    except Exception:
+        return []
+    tracks.sort(key=lambda t: t.get("rank") or 0, reverse=True)
+    out: List[Dict] = []
+    for t in tracks[:limit]:
+        title = t.get("title", "")
+        t_artist = (t.get("artist") or {}).get("name") or artist
+        if title:
+            out.append({"artist": t_artist, "title": title})
+    return out
+
+
+_FRESH_CACHE: Dict[tuple, tuple] = {}
+_FRESH_CACHE_TTL_S = 3600
+
+
+def lb_fresh_release_tracks(
+    user: str,
+    days: int = 7,
+    token: Optional[str] = None,
+    max_releases: int = 25,
+    tracks_per_release: int = 2,
+) -> List[Dict]:
+    """Fresh Releases eines LB-Users als Trackliste ({artist, title}): pro
+    Release die populärsten `tracks_per_release` Tracks laut Deezer.
+
+    Kurzer Inproc-Cache, weil der Plugin-Call das Ergebnis zweimal braucht
+    (synchroner Library-Check + Background-Queueing) und jede Auflösung
+    zwei Deezer-Calls pro Release kostet."""
+    import time as _time
+    key = (user, days, max_releases, tracks_per_release)
+    hit = _FRESH_CACHE.get(key)
+    if hit and _time.time() - hit[0] < _FRESH_CACHE_TTL_S:
+        return list(hit[1])
+
+    out: List[Dict] = []
+    seen = set()
+    for rel in lb_fresh_releases(user, days, token)[:max_releases]:
+        for t in deezer_album_top_tracks(
+            rel["artist_credit_name"], rel["release_name"], tracks_per_release
+        ):
+            k = (t["artist"].lower(), t["title"].lower())
+            if k not in seen:
+                seen.add(k)
+                out.append(t)
+    if out:
+        _FRESH_CACHE[key] = (_time.time(), out)
+    return list(out)
+
+
 # ---------------------------------------------------------------------------
 # MusicBrainz MBID lookup
 # ---------------------------------------------------------------------------

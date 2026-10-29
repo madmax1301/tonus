@@ -723,6 +723,23 @@ class PluginLbWeeklyDiscoveryRequest(BaseModel):
     max_tracks: int = 60
 
 
+class PluginLbFreshDiscoveryRequest(BaseModel):
+    """Trigger-Body für /api/plugin/lbfresh/discovery — die persönlichen
+    LB-Fresh-Releases eines Users als Playlist. Pro Release werden die
+    populärsten `tracks_per_release` Tracks (Deezer-rank) genommen.
+
+    Gequeute Tracks tragen dieselben sync-Marker wie bei lbweekly."""
+    navidrome_user: str
+    listenbrainz_user: str
+    listenbrainz_token: Optional[str] = None
+    playlist_name: str = "Fresh Releases"
+    days: int = 7
+    max_releases: int = 15
+    tracks_per_release: int = 2
+    location: str = "navidrome"
+    max_tracks: int = 60
+
+
 # Response models
 class TrackResponse(BaseModel):
     id: str
@@ -754,7 +771,7 @@ def download_and_process(
     navidrome_library_path: Optional[str] = None,
     source_lane: Optional[str] = None,
 ):
-    """Background task to download and process a track (called by JobWorker under its lock).
+    """Background task to download and process a track (called by JobWorker, one thread per slot).
 
     navidrome_library_path: resolved absolute root when location is navidrome (must be allowlisted).
     source_lane: "a"|"b"|None → bei aktivem Dual-VPN-Splitting wird die Source-IP
@@ -1381,6 +1398,157 @@ async def queue_stats(_: None = Depends(require_token)):
         conn.close()
 
 
+# Server-Sent Events statt Polling (#93): der Stream schickt nur, was sich
+# seit dem letzten Tick geändert hat. Fortschritts-Updates eines laufenden
+# Downloads kommen als einzelne Job-Zeilen; das Frontend lädt die volle
+# Liste nur neu, wenn sich Status-Zählungen oder die Reihenfolge ändern.
+_QUEUE_EVENTS_TICK_S = 1.0
+_QUEUE_EVENTS_KEEPALIVE_S = 15.0
+# Mehr geänderte Zeilen pro Tick (Bulk-Import, Clear) → statt Diff ein
+# resync-Signal; das Frontend holt dann einmal /api/queue.
+_QUEUE_EVENTS_MAX_ROWS = 200
+
+
+def _queue_snapshot_since(since_ms: int, seen: set) -> Dict[str, Any]:
+    """Geänderte Jobs seit `since_ms` plus Status-Zählungen.
+
+    `seen` enthält die job_ids, die bei exakt `since_ms` schon gemeldet
+    wurden — upsert_job schreibt Millisekunden, mehrere Updates können
+    denselben Zeitstempel tragen."""
+    import json as _json
+    from utils.job_store import _db as _events_db
+
+    conn = _events_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT job_id, status, stage, progress, message, download_url,
+                   created_at_ms, updated_at_ms, payload_json
+            FROM download_jobs
+            WHERE updated_at_ms >= ?
+            ORDER BY updated_at_ms ASC
+            LIMIT ?
+            """,
+            (since_ms, _QUEUE_EVENTS_MAX_ROWS + len(seen) + 1),
+        ).fetchall()
+        agg = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM download_jobs GROUP BY status"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    rows = [r for r in rows if not (r["updated_at_ms"] == since_ms and r["job_id"] in seen)]
+    resync = len(rows) > _QUEUE_EVENTS_MAX_ROWS
+    jobs = []
+    if not resync:
+        for r in rows:
+            payload = None
+            if r["payload_json"]:
+                try:
+                    payload = _json.loads(r["payload_json"])
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+            jobs.append({
+                "job_id": r["job_id"],
+                "status": r["status"],
+                "stage": r["stage"],
+                "progress": r["progress"],
+                "message": r["message"],
+                "download_url": r["download_url"],
+                "created_at_ms": r["created_at_ms"],
+                "updated_at_ms": r["updated_at_ms"],
+                "payload": payload,
+            })
+
+    if rows:
+        new_since = max(r["updated_at_ms"] for r in rows)
+        new_seen = {r["job_id"] for r in rows if r["updated_at_ms"] == new_since}
+        if new_since == since_ms:
+            new_seen |= seen
+    else:
+        new_since, new_seen = since_ms, seen
+    return {
+        "jobs": jobs,
+        "resync": resync,
+        "status_counts": {r["status"]: r["n"] for r in agg},
+        "since": new_since,
+        "seen": new_seen,
+    }
+
+
+def _lanes_fingerprint(lanes: Dict[str, Any]) -> Any:
+    """remaining_ms zählt jede Sekunde runter — das ist keine Änderung,
+    die der Client braucht (er zählt selbst). Verglichen wird der Rest."""
+    return (
+        tuple(
+            (l["name"], l["ready_at_ms"], l.get("current_job_id"))
+            for l in lanes.get("lanes", [])
+        ),
+        lanes.get("concurrency"),
+        tuple(lanes.get("cooldown", {}).get("normal_seconds", [])),
+        tuple(lanes.get("cooldown", {}).get("rate_limited_seconds", [])),
+    )
+
+
+@app.get("/api/queue/events")
+async def queue_events(request: Request, _: None = Depends(require_token)):
+    """Live-Stream der Queue als text/event-stream.
+
+    Jedes `queue`-Event trägt `status_counts`, geänderte `jobs`, `lanes`
+    (nur wenn sich die Lane-Belegung geändert hat) und `resync` (Client
+    soll /api/queue neu laden). Das erste Event kommt sofort und enthält
+    Zählungen und Lanes, damit der Client nichts separat pollen muss."""
+    import asyncio
+    import json as _json
+    from starlette.concurrency import run_in_threadpool
+    from starlette.responses import StreamingResponse
+
+    async def _stream():
+        since = _now_ms()
+        seen: set = set()
+        last_counts = None
+        last_lanes_fp = None
+        last_sent = 0.0
+        yield "retry: 3000\n\n"
+        while not await request.is_disconnected():
+            snap = await run_in_threadpool(_queue_snapshot_since, since, seen)
+            since, seen = snap["since"], snap["seen"]
+            lanes = _download_worker.lane_status()
+            lanes_fp = _lanes_fingerprint(lanes)
+
+            event: Dict[str, Any] = {}
+            if snap["jobs"]:
+                event["jobs"] = snap["jobs"]
+            if snap["resync"]:
+                event["resync"] = True
+            if snap["status_counts"] != last_counts or event:
+                event["status_counts"] = snap["status_counts"]
+                last_counts = snap["status_counts"]
+            if lanes_fp != last_lanes_fp:
+                event["lanes"] = lanes
+                last_lanes_fp = lanes_fp
+
+            now = time.monotonic()
+            if event:
+                yield f"event: queue\ndata: {_json.dumps(event, separators=(',', ':'))}\n\n"
+                last_sent = now
+            elif now - last_sent >= _QUEUE_EVENTS_KEEPALIVE_S:
+                # Kommentarzeile hält Proxies und mobile Verbindungen offen.
+                yield ": keepalive\n\n"
+                last_sent = now
+            await asyncio.sleep(_QUEUE_EVENTS_TICK_S)
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # nginx/Traefik puffern sonst den Stream und liefern Events in Brocken.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 class QueueMoveRequest(BaseModel):
     track_id: str
     direction: str  # "up" | "down"
@@ -1439,13 +1607,16 @@ async def move_queue_item(req: QueueMoveRequest, _: None = Depends(require_token
             "UPDATE download_jobs SET created_at_ms = -1 WHERE job_id = ?",
             (req.track_id,),
         )
+        # updated_at_ms mitziehen, damit /api/queue/events die neue
+        # Reihenfolge an andere offene Tabs meldet.
+        moved_at = _now_ms()
         conn.execute(
-            "UPDATE download_jobs SET created_at_ms = ? WHERE job_id = ?",
-            (cur_ts, neighbor["job_id"]),
+            "UPDATE download_jobs SET created_at_ms = ?, updated_at_ms = ? WHERE job_id = ?",
+            (cur_ts, moved_at, neighbor["job_id"]),
         )
         conn.execute(
-            "UPDATE download_jobs SET created_at_ms = ? WHERE job_id = ?",
-            (nei_ts, req.track_id),
+            "UPDATE download_jobs SET created_at_ms = ?, updated_at_ms = ? WHERE job_id = ?",
+            (nei_ts, moved_at, req.track_id),
         )
         conn.commit()
         return {"ok": True}
@@ -4089,16 +4260,12 @@ def _run_plugin_mix_discovery(req: PluginMixDiscoveryRequest) -> None:
     )
 
 
-def _check_lbweekly_tracks_in_library(
-    req: "PluginLbWeeklyDiscoveryRequest",
-) -> List[Dict[str, str]]:
-    """Synchroner Library-Lookup für die existing-Liste eines LB-Weekly-Calls.
-    Liefert die schon vorhandenen Tracks mit Subsonic-ID (Plugin persistiert
-    sie im KVStore für die Build-Phase)."""
-    from services.discovery import lb_playlist_tracks
-    items = lb_playlist_tracks(req.listenbrainz_user, req.source_patch, req.occurrence)
+def _existing_in_library(items: List[Dict], max_tracks: int) -> List[Dict[str, str]]:
+    """Library-Lookup für eine Plugin-Trackliste ({artist, title}). Liefert die
+    schon vorhandenen Tracks mit Subsonic-ID (Plugin persistiert sie im
+    KVStore für die Build-Phase)."""
     existing: List[Dict[str, str]] = []
-    for it in items[: req.max_tracks]:
+    for it in items[:max_tracks]:
         try:
             sid = navidrome_service.find_track_id_by_artist_title(
                 it.get("artist", ""), it.get("title", "")
@@ -4114,34 +4281,43 @@ def _check_lbweekly_tracks_in_library(
     return existing
 
 
+def _check_lbweekly_tracks_in_library(
+    req: "PluginLbWeeklyDiscoveryRequest",
+) -> List[Dict[str, str]]:
+    """Synchroner Library-Lookup für die existing-Liste eines LB-Weekly-Calls."""
+    from services.discovery import lb_playlist_tracks
+    items = lb_playlist_tracks(req.listenbrainz_user, req.source_patch, req.occurrence)
+    return _existing_in_library(items, req.max_tracks)
+
+
 def occ_tag(occurrence: int) -> str:
     return "cur" if occurrence == 0 else f"occ{occurrence}"
 
 
-def _run_plugin_lbweekly_discovery(req: "PluginLbWeeklyDiscoveryRequest") -> None:
-    """Background-Task hinter POST /api/plugin/lbweekly/discovery.
+def _queue_plugin_sync_items(
+    items: List[Dict],
+    *,
+    navidrome_user: str,
+    playlist_name: str,
+    location: str,
+    max_tracks: int,
+    run_id: str,
+    log_tag: str,
+) -> Dict[str, int]:
+    """Dedupliziert eine Trackliste ({artist, title}) gegen die Library und
+    queued fehlende Tracks als download_jobs mit den BESTEHENDEN sync-Markern
+    (plugin_sync_playlist_name + plugin_sync_navidrome_user), sodass
+    /api/plugin/finished-tracks + der Plugin-Reconcile sie unverändert der
+    user-owned Subsonic-Playlist zuordnen."""
+    from services.discovery import deezer_search_track
 
-    Zieht die LB-Playlist (source_patch+occurrence), dedupliziert gegen
-    Library, queued fehlende Tracks als download_jobs mit den BESTEHENDEN
-    sync-Markern (plugin_sync_playlist_name + plugin_sync_navidrome_user),
-    sodass /api/plugin/finished-tracks + der Plugin-Reconcile sie unverändert
-    der user-owned Subsonic-Playlist zuordnen."""
-    from services.discovery import lb_playlist_tracks, deezer_search_track
-
-    started = _now_ms()
-    items = lb_playlist_tracks(req.listenbrainz_user, req.source_patch, req.occurrence)
-    if not items:
-        print(f"[plugin-lbweekly] no LB tracks for {req.source_patch!r} occ={req.occurrence}")
-        return
-
-    location = req.location if req.location in ("local", "navidrome") else "navidrome"
+    location = location if location in ("local", "navidrome") else "navidrome"
     output_format = config.OUTPUT_FORMAT
     provider = "deezer"
     navidrome_path = resolve_navidrome_library_path_optional(None)
-    run_id = f"plugin-lbweekly-{req.navidrome_user}-{req.source_patch}-{occ_tag(req.occurrence)}-{started}"
 
     queued = skipped = failed = 0
-    for it in items[: req.max_tracks]:
+    for it in items[:max_tracks]:
         artist = (it.get("artist") or "").strip()
         title = (it.get("title") or "").strip()
         if not artist or not title:
@@ -4184,19 +4360,65 @@ def _run_plugin_lbweekly_discovery(req: "PluginLbWeeklyDiscoveryRequest") -> Non
                 "track": track_for_queue,
                 # BESTEHENDE sync-Marker — finished-tracks filtert exakt darauf.
                 "plugin_sync_run_id": run_id,
-                "plugin_sync_playlist_name": req.playlist_name,
-                "plugin_sync_navidrome_user": req.navidrome_user,
+                "plugin_sync_playlist_name": playlist_name,
+                "plugin_sync_navidrome_user": navidrome_user,
             }
             upsert_job(track_id, status="queued",
-                       message=f"Download queued (lbweekly={req.playlist_name})",
+                       message=f"Download queued ({log_tag}={playlist_name})",
                        progress=0, stage="queued", payload=payload_extra)
             queued += 1
         except Exception as e:
             failed += 1
-            print(f"[plugin-lbweekly] queue fail {track_id}: {e}")
+            print(f"[plugin-{log_tag}] queue fail {track_id}: {e}")
+    return {"queued": queued, "skipped": skipped, "failed": failed}
 
+
+def _run_plugin_lbweekly_discovery(req: "PluginLbWeeklyDiscoveryRequest") -> None:
+    """Background-Task hinter POST /api/plugin/lbweekly/discovery: zieht die
+    LB-Playlist (source_patch+occurrence) und queued fehlende Tracks."""
+    from services.discovery import lb_playlist_tracks
+
+    started = _now_ms()
+    items = lb_playlist_tracks(req.listenbrainz_user, req.source_patch, req.occurrence)
+    if not items:
+        print(f"[plugin-lbweekly] no LB tracks for {req.source_patch!r} occ={req.occurrence}")
+        return
+
+    run_id = f"plugin-lbweekly-{req.navidrome_user}-{req.source_patch}-{occ_tag(req.occurrence)}-{started}"
+    c = _queue_plugin_sync_items(
+        items, navidrome_user=req.navidrome_user, playlist_name=req.playlist_name,
+        location=req.location, max_tracks=req.max_tracks, run_id=run_id,
+        log_tag="lbweekly",
+    )
     print(f"[plugin-lbweekly] {req.playlist_name!r} done in {_now_ms()-started}ms — "
-          f"pool={len(items)} queued={queued} skipped={skipped} failed={failed}")
+          f"pool={len(items)} queued={c['queued']} skipped={c['skipped']} failed={c['failed']}")
+
+
+def _lbfresh_items(req: "PluginLbFreshDiscoveryRequest") -> List[Dict]:
+    from services.discovery import lb_fresh_release_tracks
+    return lb_fresh_release_tracks(
+        req.listenbrainz_user, days=req.days, token=req.listenbrainz_token,
+        max_releases=req.max_releases, tracks_per_release=req.tracks_per_release,
+    )
+
+
+def _run_plugin_lbfresh_discovery(req: "PluginLbFreshDiscoveryRequest") -> None:
+    """Background-Task hinter POST /api/plugin/lbfresh/discovery: löst die
+    LB-Fresh-Releases zu Tracks auf und queued fehlende."""
+    started = _now_ms()
+    items = _lbfresh_items(req)
+    if not items:
+        print(f"[plugin-lbfresh] no fresh releases for {req.listenbrainz_user!r}")
+        return
+
+    run_id = f"plugin-lbfresh-{req.navidrome_user}-{started}"
+    c = _queue_plugin_sync_items(
+        items, navidrome_user=req.navidrome_user, playlist_name=req.playlist_name,
+        location=req.location, max_tracks=req.max_tracks, run_id=run_id,
+        log_tag="lbfresh",
+    )
+    print(f"[plugin-lbfresh] {req.playlist_name!r} done in {_now_ms()-started}ms — "
+          f"pool={len(items)} queued={c['queued']} skipped={c['skipped']} failed={c['failed']}")
 
 
 @app.post("/api/plugin/mix/discovery")
@@ -4243,6 +4465,31 @@ async def plugin_lbweekly_discovery(
     existing = _check_lbweekly_tracks_in_library(req)
     return {"started": True,
             "message": "lbweekly discovery + queueing missing tracks in background",
+            "existing": existing}
+
+
+@app.post("/api/plugin/lbfresh/discovery")
+async def plugin_lbfresh_discovery(
+    req: PluginLbFreshDiscoveryRequest,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(require_token),
+):
+    """Plugin-Trigger für die LB-Fresh-Releases eines Users. Queued fehlende
+    Tracks im Hintergrund (mit sync-Markern) und liefert synchron die
+    bereits-in-Library-Liste für die Plugin-Build-Phase.
+
+    Die Release→Track-Auflösung kostet Deezer-Calls pro Release, deshalb
+    läuft der synchrone Teil im Threadpool; das Ergebnis ist in
+    services.discovery gecached, der Background-Task rechnet nicht neu."""
+    from starlette.concurrency import run_in_threadpool
+
+    def _existing() -> List[Dict[str, str]]:
+        return _existing_in_library(_lbfresh_items(req), req.max_tracks)
+
+    existing = await run_in_threadpool(_existing)
+    background_tasks.add_task(_run_plugin_lbfresh_discovery, req)
+    return {"started": True,
+            "message": "lbfresh discovery + queueing missing tracks in background",
             "existing": existing}
 
 
@@ -4852,6 +5099,8 @@ class CooldownUpdateRequest(BaseModel):
     normal_max_s: int
     rl_min_s: int
     rl_max_s: int
+    # Optional, damit ältere Frontends (ohne das Feld) weiter speichern können.
+    download_concurrency: Optional[int] = None
 
 
 @app.get("/api/settings/cooldown")
@@ -4859,13 +5108,20 @@ async def settings_cooldown_get(_: None = Depends(require_token),
                                   __: None = Depends(require_admin)):
     """Liefert aktuelle Cooldown-Werte + Defaults (für Reset-Buttons)."""
     from utils.app_settings import get_setting
-    from utils.worker import _COOLDOWN_NORMAL, _COOLDOWN_429
+    from utils.worker import (
+        _COOLDOWN_NORMAL,
+        _COOLDOWN_429,
+        _DEFAULT_DOWNLOAD_CONCURRENCY,
+        _MAX_DOWNLOAD_CONCURRENCY,
+        _load_download_concurrency,
+    )
 
     defaults = {
         'normal_min_s': _COOLDOWN_NORMAL[0],
         'normal_max_s': _COOLDOWN_NORMAL[1],
         'rl_min_s': _COOLDOWN_429[0],
         'rl_max_s': _COOLDOWN_429[1],
+        'download_concurrency': _DEFAULT_DOWNLOAD_CONCURRENCY,
     }
     current = {}
     for k in _COOLDOWN_KEYS:
@@ -4874,7 +5130,12 @@ async def settings_cooldown_get(_: None = Depends(require_token),
             current[k] = int(v) if v is not None else defaults[k]
         except (ValueError, TypeError):
             current[k] = defaults[k]
-    return {'current': current, 'defaults': defaults}
+    current['download_concurrency'] = _load_download_concurrency()
+    return {
+        'current': current,
+        'defaults': defaults,
+        'max_download_concurrency': _MAX_DOWNLOAD_CONCURRENCY,
+    }
 
 
 @app.put("/api/settings/cooldown")
@@ -4892,11 +5153,21 @@ async def settings_cooldown_put(req: CooldownUpdateRequest,
         raise HTTPException(status_code=400, detail='Normal-Min darf nicht größer als Normal-Max sein.')
     if req.rl_min_s > req.rl_max_s:
         raise HTTPException(status_code=400, detail='Rate-Limit-Min darf nicht größer als Rate-Limit-Max sein.')
+    from utils.worker import _MAX_DOWNLOAD_CONCURRENCY
+    if req.download_concurrency is not None and not (
+        1 <= req.download_concurrency <= _MAX_DOWNLOAD_CONCURRENCY
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f'Parallele Downloads müssen zwischen 1 und {_MAX_DOWNLOAD_CONCURRENCY} liegen.',
+        )
 
     set_setting('cooldown.normal_min_s', str(req.normal_min_s))
     set_setting('cooldown.normal_max_s', str(req.normal_max_s))
     set_setting('cooldown.rl_min_s', str(req.rl_min_s))
     set_setting('cooldown.rl_max_s', str(req.rl_max_s))
+    if req.download_concurrency is not None:
+        set_setting('download.concurrency', str(req.download_concurrency))
     return {'ok': True}
 
 

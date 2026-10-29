@@ -10,6 +10,47 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ---
 
+## [Unreleased]
+
+## [0.9.0] — 2026-10-29
+
+### Added
+
+- **Mehrere Downloads gleichzeitig** (#92) — unter Einstellungen →
+  Standard-Verhalten lässt sich festlegen, wie viele Downloads pro Lane
+  parallel laufen (1–4, Startwert auch per `DOWNLOAD_CONCURRENCY`). Jeder
+  Slot hat seinen eigenen Cooldown. Default bleibt 1, weil mehrere
+  yt-dlp-Prozesse von derselben IP das Bot-Check-Risiko erhöhen.
+- **Queue-Updates per Push statt Polling** (#93) — `/api/queue/events`
+  schickt als Server-Sent-Events nur, was sich geändert hat. Die Queue-Seite
+  aktualisiert Fortschritt und Meldungen in place und lädt die Liste nur bei
+  Statuswechseln neu; der Puck zählt über denselben Stream. Polling bleibt als
+  Fallback für ältere Backends und während eines Reconnects.
+- **Queue lädt seitenweise beim Scrollen** (#93) — die Queue-Seite holt
+  anfangs 100 statt bis zu 500 Jobs und lädt die nächsten 100 nach, sobald
+  das Listenende in Sichtweite kommt. Reloads holen genau so viele Jobs, wie
+  schon geladen sind (#103).
+- **Fresh Releases für das Navidrome-Plugin** (#97) — neuer Endpoint
+  `POST /api/plugin/lbfresh/discovery`. Holt die persönlichen
+  ListenBrainz-Fresh-Releases (`/1/user/<name>/fresh_releases`, nur
+  erschienene, nach `confidence`), nimmt pro Release die populärsten Tracks
+  laut Deezer und queued fehlende mit denselben Sync-Markern wie der
+  LB-Weekly-Mirror. Compilations und Live-Releases werden übersprungen.
+
+### Fixed
+
+- **Worker fuhren beim Container-Stop nicht sauber herunter.** Das Attribut
+  `JobWorker._stop` überdeckte `Thread._stop()`, wodurch `join()` mit
+  „'Event' object is not callable“ abbrach, sobald der Thread beendet war.
+
+### Security
+
+- `PyJWT` 2.13.0 → 2.15.1 (8 Advisories), `devalue` 5.8.1 → 5.9.4 und
+  `source-map-js` 1.2.1 → 1.2.2 (GHSA-68fv-2mgg-jv7q, transitive
+  Build-Abhängigkeit) (#98). Damit ist der Dependency Audit wieder grün.
+- `vite` 8.2.0 → 8.3.5 (GHSA-9jrq-w75r-8gcw, GHSA-rq7h-c2jc-7f22 u. a.), nur
+  Build- und Dev-Server-Abhängigkeit.
+
 ## [0.8.0] — 2026-08-24
 
 ### Added
