@@ -12,7 +12,7 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ## [Unreleased]
 
-## [0.9.0] — 2026-10-06
+## [0.9.0] — 2026-10-29
 
 ### Added
 
