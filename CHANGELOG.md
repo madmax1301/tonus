@@ -12,7 +12,7 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 
 ## [Unreleased]
 
-## [0.9.0] — 2026-10-06
+## [0.9.0] — 2026-10-29
 
 ### Added
 
@@ -44,6 +44,8 @@ On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
 - `PyJWT` 2.13.0 → 2.15.1 (8 Advisories), `devalue` 5.8.1 → 5.9.4 und
   `source-map-js` 1.2.1 → 1.2.2 (GHSA-68fv-2mgg-jv7q, transitive
   Build-Abhängigkeit) (#98). Damit ist der Dependency Audit wieder grün.
+- `vite` 8.2.0 → 8.3.5 (GHSA-9jrq-w75r-8gcw, GHSA-rq7h-c2jc-7f22 u. a.), nur
+  Build- und Dev-Server-Abhängigkeit.
 
 ## [0.8.0] — 2026-08-24
 
