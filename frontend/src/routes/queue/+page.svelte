@@ -607,6 +607,11 @@
     liveLanes.length === 0 ? 0 : Math.min(...liveLanes.map((l) => l.remaining_ms))
   );
 
+  /** Bot-Check-Quote der letzten 24 h und laufende Drossel (worker.py
+   *  _throttle_after_bot_check). Fehlt bei älteren Backends. */
+  const botCheck = $derived(lanes?.bot_check ?? null);
+  const botThrottled = $derived(!!botCheck && botCheck.throttled_until_ms > nowMs);
+
   function fmtMs(ms: number): string {
     const totalSec = Math.max(0, Math.round(ms / 1000));
     const m = Math.floor(totalSec / 60);
@@ -698,6 +703,24 @@
           {$t('queue.total_jobs', { count: totalAll.toLocaleString('de-DE') })}
           {#if shown < total}
             · {$t('queue.shown', { count: shown.toLocaleString('de-DE') })}
+          {/if}
+        </div>
+      {/if}
+      {#if botCheck && (botThrottled || botCheck.count > 0)}
+        <div
+          class="mt-1 tabular-nums inline-flex items-center gap-1.5"
+          style="font-size: 12px; font-family: var(--font-mono); letter-spacing: 0.02em; color: {botThrottled ? 'var(--color-status-error)' : 'var(--color-fg-secondary)'};"
+        >
+          {#if botThrottled}
+            {$t('queue.bot_check.throttled', {
+              time: new Date(botCheck.throttled_until_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            })}
+          {:else}
+            {$t('queue.bot_check.rate', {
+              count: botCheck.count,
+              finished: botCheck.finished,
+              hours: botCheck.window_hours
+            })}
           {/if}
         </div>
       {/if}

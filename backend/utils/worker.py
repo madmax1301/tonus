@@ -14,8 +14,9 @@ import os
 import random
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 import requests  # für HTTPError-Detection im 429-Failover (Dual-VPN-Splitting)
 
@@ -41,6 +42,17 @@ _COOLDOWN_BOT_CHECK = (600, 1200)   # 10–20 min nach Bot-Check (IP-Wechsel-Win
 # IP-Wechsel löst das typischerweise. Cap verhindert Endlosschleife wenn die
 # IP wirklich gebrandmarkt ist (User braucht Cookies / VPN-Wechsel).
 _BOT_CHECK_MAX_RETRIES = int(os.environ.get("BOT_CHECK_MAX_RETRIES", "5"))
+
+# Bot-Check-Drossel: YouTube markiert die IP, nicht den Slot. Ein Bot-Check
+# schickt deshalb alle Slots derselben Lane (= Source-IP) in den Cooldown und
+# hält die Lane danach noch BOT_CHECK_THROTTLE_S auf einem Slot, egal was
+# unter Einstellungen → Parallele Downloads steht. Jeder weitere Bot-Check
+# verlängert das Fenster. Bei Concurrency 1 ändert sich nichts.
+_BOT_CHECK_THROTTLE_S = int(os.environ.get("BOT_CHECK_THROTTLE_S", "3600"))
+
+# Fenster für die Bot-Check-Quote in der Queue-UI. Nur im Speicher — nach
+# einem Restart beginnt die Zählung neu.
+_OUTCOME_WINDOW_MS = 24 * 3600 * 1000
 
 
 def _load_cooldown_ranges() -> Tuple[Tuple[int, int], Tuple[int, int]]:
@@ -237,18 +249,74 @@ class JobWorker(threading.Thread):
         self._lane_current_job: Dict[str, Optional[str]] = {name: None for name, _, _ in _DOWNLOAD_SLOTS}
         # Laufende Download-Threads — shutdown() wartet auf sie.
         self._download_threads: Set[threading.Thread] = set()
+        # Bot-Check-Drossel pro Lane (= Source-IP), siehe _BOT_CHECK_THROTTLE_S.
+        # ip_ready_at sperrt alle Slots der Lane, throttled_until begrenzt sie
+        # danach auf einen Slot.
+        self._ip_ready_at: Dict[str, int] = {lane: 0 for lane in _DOWNLOAD_LANES}
+        self._throttled_until: Dict[str, int] = {lane: 0 for lane in _DOWNLOAD_LANES}
+        # (finished_at_ms, "ok" | "bot_check" | "error") der letzten 24 h.
+        self._outcomes: Deque[Tuple[int, str]] = deque()
+        self._outcomes_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Lane selection (Download-Worker, Dual-VPN)
     # ------------------------------------------------------------------
 
-    def _visible_slots(self, concurrency: int) -> List[Tuple[str, str, int]]:
-        """Aktive Slots plus solche, die nach einem Herunterregeln der
-        Concurrency noch einen Job zu Ende laufen lassen."""
+    def _lane_concurrency(self, lane: str, concurrency: int, now: int) -> int:
+        """Effektive Slots einer Lane: 1, solange die Bot-Check-Drossel greift."""
+        return 1 if self._throttled_until.get(lane, 0) > now else concurrency
+
+    def _slot_ready_at(self, name: str) -> int:
+        """Ein Slot ist erst frei, wenn sein eigener Cooldown UND der seiner
+        Lane (Bot-Check auf derselben IP) abgelaufen sind."""
+        return max(self._lane_ready_at.get(name, 0),
+                   self._ip_ready_at.get(_SLOT_LANE.get(name, name), 0))
+
+    def _active_slots(self, concurrency: int, now: int) -> List[Tuple[str, str, int]]:
         return [
             (name, lane, idx) for name, lane, idx in _DOWNLOAD_SLOTS
-            if idx < concurrency or self._lane_current_job.get(name)
+            if idx < self._lane_concurrency(lane, concurrency, now)
         ]
+
+    def _visible_slots(self, concurrency: int, now: int) -> List[Tuple[str, str, int]]:
+        """Aktive Slots plus solche, die nach einem Herunterregeln der
+        Concurrency (oder durch die Bot-Check-Drossel) noch einen Job zu Ende
+        laufen lassen."""
+        active = {name for name, _, _ in self._active_slots(concurrency, now)}
+        return [
+            (name, lane, idx) for name, lane, idx in _DOWNLOAD_SLOTS
+            if name in active or self._lane_current_job.get(name)
+        ]
+
+    def _record_outcome(self, kind: str) -> None:
+        now = _now_ms()
+        with self._outcomes_lock:
+            self._outcomes.append((now, kind))
+            while self._outcomes and self._outcomes[0][0] < now - _OUTCOME_WINDOW_MS:
+                self._outcomes.popleft()
+
+    def _throttle_after_bot_check(self, ip_lane: str, cooldown_s: float) -> None:
+        """Bot-Check auf `ip_lane`: alle Slots dieser IP in den Cooldown,
+        danach für _BOT_CHECK_THROTTLE_S nur noch ein Slot."""
+        now = _now_ms()
+        blocked_until = now + int(cooldown_s * 1000)
+        self._ip_ready_at[ip_lane] = max(self._ip_ready_at.get(ip_lane, 0), blocked_until)
+        self._throttled_until[ip_lane] = blocked_until + _BOT_CHECK_THROTTLE_S * 1000
+        print(
+            f"[worker] lane {ip_lane} throttled to 1 slot for "
+            f"{(cooldown_s + _BOT_CHECK_THROTTLE_S) / 60:.0f} min after bot-check"
+        )
+
+    def _bot_check_status(self, now: int) -> Dict[str, Any]:
+        with self._outcomes_lock:
+            recent = [k for ts, k in self._outcomes if ts >= now - _OUTCOME_WINDOW_MS]
+        throttled = max(self._throttled_until.values(), default=0)
+        return {
+            "window_hours": _OUTCOME_WINDOW_MS // 3_600_000,
+            "count": recent.count("bot_check"),
+            "finished": len(recent),
+            "throttled_until_ms": throttled if throttled > now else 0,
+        }
 
     def lane_status(self) -> Dict[str, Any]:
         """UI-View auf den Slot-Cooldown-State.
@@ -260,8 +328,8 @@ class JobWorker(threading.Thread):
         now = _now_ms()
         concurrency = _load_download_concurrency()
         lanes = []
-        for name, lane, idx in self._visible_slots(concurrency):
-            ready_at = int(self._lane_ready_at.get(name, 0))
+        for name, lane, idx in self._visible_slots(concurrency, now):
+            ready_at = int(self._slot_ready_at(name))
             lanes.append({
                 "name": name,
                 "label": _slot_label(lane, idx),
@@ -281,6 +349,7 @@ class JobWorker(threading.Thread):
                 "normal_seconds": list(normal_range),
                 "rate_limited_seconds": list(rl_range),
             },
+            "bot_check": self._bot_check_status(now),
         }
 
     def _pick_download_lane(self) -> Tuple[Optional[str], int]:
@@ -293,9 +362,9 @@ class JobWorker(threading.Thread):
         """
         now = _now_ms()
         concurrency = _load_download_concurrency()
-        active = [name for name, _, idx in _DOWNLOAD_SLOTS if idx < concurrency]
+        active = [name for name, _, _ in self._active_slots(concurrency, now)]
         free = [s for s in active if self._lane_current_job.get(s) is None]
-        ready = [s for s in free if self._lane_ready_at[s] <= now]
+        ready = [s for s in free if self._slot_ready_at(s) <= now]
         if ready:
             # Round-robin unter den ready Slots — gibt fair-share, auch wenn alle
             # immer ready sind (= keine Cooldowns aktiv, z.B. nach Worker-Start).
@@ -304,7 +373,7 @@ class JobWorker(threading.Thread):
             return chosen, 0
         if free:
             # Freie Slots im Cooldown → kürzeste Restwartezeit zurückgeben.
-            return None, max(0, min(self._lane_ready_at[s] - now for s in free))
+            return None, max(0, min(self._slot_ready_at(s) - now for s in free))
         # Alle Slots laden gerade — kurz warten, dann neu prüfen.
         return None, 1000
 
@@ -1550,6 +1619,7 @@ class JobWorker(threading.Thread):
                 )
                 lo, hi = normal_range
                 cooldown = random.uniform(lo, hi)
+                outcome = "error"
                 print(
                     f"[worker] AGE-RESTRICTED on '{track_id}' (lane {lane}) — "
                     f"kein Retry, Cookies erforderlich"
@@ -1586,15 +1656,22 @@ class JobWorker(threading.Thread):
                         f"[worker] BOT-CHECK on '{track_id}' (lane {lane}) — "
                         f"max retries ({_BOT_CHECK_MAX_RETRIES}) reached, giving up"
                     )
+                self._throttle_after_bot_check(ip_lane, cooldown)
+                outcome = "bot_check"
             elif _looks_like_429(finished_msg, finished_err):
                 lo, hi = rl_range
                 cooldown = random.uniform(lo, hi)
+                outcome = "error"
                 print(f"[worker] 429 on '{track_id}' (lane {lane}) — extended cooldown {cooldown:.0f}s")
             else:
                 lo, hi = normal_range
                 cooldown = random.uniform(lo, hi)
                 tag = finished.get("status", "?")
+                # Abgebrochene oder noch laufende Jobs zählen nicht in die Quote.
+                outcome = {"completed": "ok", "error": "error"}.get(tag)
                 print(f"[worker] lane {lane} cooldown {cooldown:.0f}s (last status={tag})")
+            if outcome:
+                self._record_outcome(outcome)
 
             self._lane_ready_at[lane] = _now_ms() + int(cooldown * 1000)
             # ATOMIC für die UI: ready_at ist gesetzt, JETZT erst current_job_id

@@ -137,3 +137,70 @@ def test_job_is_claimed_only_once(concurrency):
     first = w._poll_next_queued_download(lane="default")
     assert first is not None and first["job_id"] == "claim-1"
     assert w._poll_next_queued_download(lane="default2") is None
+
+
+def test_bot_check_pauses_every_slot_of_the_lane(concurrency):
+    """Ein Bot-Check trifft die IP: auch die anderen Slots derselben Lane
+    dürfen nicht weiterladen."""
+    concurrency["n"] = 3
+    w = JobWorker(job_type="download")
+    w._throttle_after_bot_check("default", cooldown_s=600)
+    slot, wait = w._pick_download_lane()
+    assert slot is None
+    assert wait > 500_000
+    status = w.lane_status()
+    assert all(l["remaining_ms"] > 500_000 for l in status["lanes"])
+
+
+def test_bot_check_throttles_lane_to_one_slot(concurrency, monkeypatch):
+    concurrency["n"] = 3
+    w = JobWorker(job_type="download")
+    w._throttle_after_bot_check("default", cooldown_s=0)
+    assert w._pick_download_lane()[0] == "default"
+    w._lane_current_job["default"] = "job-1"
+    assert w._pick_download_lane()[0] is None
+    status = w.lane_status()
+    assert [l["name"] for l in status["lanes"]] == ["default"]
+    assert status["bot_check"]["throttled_until_ms"] > worker_mod._now_ms()
+
+    # Nach Ablauf der Drossel gilt wieder die eingestellte Concurrency.
+    monkeypatch.setattr(worker_mod, "_now_ms", lambda: w._throttled_until["default"] + 1)
+    assert w._pick_download_lane()[0] in ("default2", "default3")
+    assert w.lane_status()["bot_check"]["throttled_until_ms"] == 0
+
+
+def test_bot_check_rate_counts_recent_outcomes(concurrency, monkeypatch):
+    w = JobWorker(job_type="download")
+    for kind in ("ok", "ok", "bot_check", "error"):
+        w._record_outcome(kind)
+    stats = w.lane_status()["bot_check"]
+    assert stats["count"] == 1
+    assert stats["finished"] == 4
+
+    later = worker_mod._now_ms() + worker_mod._OUTCOME_WINDOW_MS + 1
+    monkeypatch.setattr(worker_mod, "_now_ms", lambda: later)
+    stats = w.lane_status()["bot_check"]
+    assert stats["count"] == 0
+    assert stats["finished"] == 0
+
+
+def test_bot_check_in_finished_job_throttles_lane(concurrency, monkeypatch):
+    """Ende-zu-Ende über _process_download: ein Bot-Check-Fehler wird
+    re-queued, sperrt die ganze Lane und landet in der Quote."""
+    concurrency["n"] = 2
+    upsert_job("bot-1", status="processing", message="", payload={})
+
+    import app as app_mod
+
+    def fake_download(track_id, **_):
+        upsert_job(track_id, status="error", message="Download failed",
+                   error="Sign in to confirm you're not a bot")
+
+    monkeypatch.setattr(app_mod, "download_and_process", fake_download)
+    w = JobWorker(job_type="download")
+    w._lane_current_job["default2"] = "bot-1"
+    w._process_download({"job_id": "bot-1", "params": {}}, lane="default2")
+
+    assert get_job("bot-1")["status"] == "queued"
+    assert w._pick_download_lane()[0] is None
+    assert w.lane_status()["bot_check"]["count"] == 1

@@ -275,6 +275,7 @@ This means once you've configured a provider in the UI, the `.env` value for it 
 | `VPN_SOURCE_B` | `192.168.1.201` | yes if `VPN_SPLIT_ENABLED=true` | Source-IP for download lane B. |
 | **Downloads** | | | |
 | `DOWNLOAD_CONCURRENCY` | `1` | no | Parallel downloads per lane (1–4). Only the starting value: *Settings → Standard-Verhalten* overrides it at runtime. More parallel yt-dlp processes from one IP raise the bot-check risk. |
+| `BOT_CHECK_THROTTLE_S` | `3600` | no | After a YouTube bot-check, all slots of that lane pause for the bot-check cooldown and the lane then runs only one download at a time for this many seconds. Each further bot-check restarts the window. No effect at concurrency 1. |
 
 ### Sensitive values — encryption at rest
 
