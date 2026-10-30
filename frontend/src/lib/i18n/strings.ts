@@ -504,6 +504,19 @@ export const strings = {
     'settings.backend.field.available_formats': 'Verfügbare Formate',
     'settings.backend.field.navidrome_path': 'Navidrome-Pfad',
     'settings.backend.libraries.title': 'Navidrome-Bibliotheken · {count}',
+    'settings.backend.backup.title': 'Datenbank-Backups',
+    'settings.backend.backup.hint':
+      'Tonus sichert jobs.db bei jedem Start (vor Updates) und alle {hours} h, je Art die letzten {keep}. Die Datei enthält Passwort-Hashes, 2FA-Secrets und das JWT-Secret, also sicher aufbewahren.',
+    'settings.backend.backup.hint_no_daily':
+      'Tonus sichert jobs.db bei jedem Start (vor Updates), die letzten {keep}. Tägliche Backups sind aus (BACKUP_INTERVAL_H=0). Die Datei enthält Passwort-Hashes, 2FA-Secrets und das JWT-Secret, also sicher aufbewahren.',
+    'settings.backend.backup.create': 'Jetzt sichern',
+    'settings.backend.backup.creating': 'Sichere …',
+    'settings.backend.backup.empty': 'Noch keine Backups.',
+    'settings.backend.backup.download': 'Herunterladen',
+    'settings.backend.backup.error': 'Backup fehlgeschlagen.',
+    'settings.backend.backup.kind.startup': 'Start',
+    'settings.backend.backup.kind.daily': 'Täglich',
+    'settings.backend.backup.kind.manual': 'Manuell',
 
     // Language section
     'settings.language.eyebrow': 'Display',
@@ -1064,6 +1077,19 @@ export const strings = {
     'settings.backend.field.available_formats': 'Available formats',
     'settings.backend.field.navidrome_path': 'Navidrome path',
     'settings.backend.libraries.title': 'Navidrome libraries · {count}',
+    'settings.backend.backup.title': 'Database backups',
+    'settings.backend.backup.hint':
+      'Tonus backs up jobs.db on every start (before updates) and every {hours} h, keeping the last {keep} of each kind. The file holds password hashes, 2FA secrets and the JWT secret, so store it safely.',
+    'settings.backend.backup.hint_no_daily':
+      'Tonus backs up jobs.db on every start (before updates), keeping the last {keep}. Daily backups are off (BACKUP_INTERVAL_H=0). The file holds password hashes, 2FA secrets and the JWT secret, so store it safely.',
+    'settings.backend.backup.create': 'Back up now',
+    'settings.backend.backup.creating': 'Backing up …',
+    'settings.backend.backup.empty': 'No backups yet.',
+    'settings.backend.backup.download': 'Download',
+    'settings.backend.backup.error': 'Backup failed.',
+    'settings.backend.backup.kind.startup': 'Start',
+    'settings.backend.backup.kind.daily': 'Daily',
+    'settings.backend.backup.kind.manual': 'Manual',
 
     // Language section
     'settings.language.eyebrow': 'Display',

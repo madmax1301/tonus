@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 import time
 import random
+import asyncio
 import threading
 _csv_lock = threading.Lock()
 _worker: "Optional[JobWorker]" = None  # forward ref — JobWorker imported below
@@ -240,6 +241,15 @@ def _migrate_legacy_jobs_db() -> None:
 
 
 _migrate_legacy_jobs_db()
+# Snapshot VOR init_jobs_db(): hält den Stand vor einer Schema-Migration fest
+# (wichtig für :dev-Pulls). Fehler loggen, aber den Start nicht blockieren.
+from utils import backup as _backup
+try:
+    _startup_backup = _backup.snapshot("startup")
+    if _startup_backup:
+        print(f"[backup] {_startup_backup}", flush=True)
+except Exception as _e:
+    print(f"[backup] startup snapshot failed: {type(_e).__name__}: {_e}", flush=True)
 init_jobs_db()
 _stale = reset_stale_inflight_jobs()
 if _stale:
@@ -425,8 +435,12 @@ _prewarm_thread = threading.Thread(
 )
 _prewarm_thread.start()
 
+_backup_stop = threading.Event()
+_backup.start_scheduler(_backup_stop)
+
 @app.on_event("shutdown")
 def _shutdown_workers():
+    _backup_stop.set()
     print("Shutting down workers...")
     _download_worker.shutdown(timeout=60)
     _csv_worker.shutdown(timeout=300)
@@ -4972,6 +4986,52 @@ async def auth_pats_create(req: PatCreateRequest, request: Request,
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return pat
+
+
+def _require_real_admin(request: Request) -> None:
+    """Wie require_admin, aber ohne den Setup-Modus: solange noch kein User
+    existiert, gilt jeder Request als Admin. Backups enthalten das JWT-Secret
+    und sollen auch dann nicht anonym abrufbar sein."""
+    user = getattr(request.state, "user", None) or {}
+    if user.get("auth_method") == "setup":
+        raise HTTPException(status_code=403, detail="Erst einen Admin-Account anlegen.")
+
+
+@app.get("/api/admin/backups")
+async def admin_backups_list(_: None = Depends(require_token),
+                             __: None = Depends(require_admin),
+                             ___: None = Depends(_require_real_admin)):
+    """Vorhandene Snapshots von jobs.db, neueste zuerst."""
+    return {
+        "backups": _backup.list_backups(),
+        "keep": _backup.BACKUP_KEEP,
+        "interval_hours": _backup.BACKUP_INTERVAL_H,
+    }
+
+
+@app.post("/api/admin/backups")
+async def admin_backups_create(_: None = Depends(require_token),
+                               __: None = Depends(require_admin),
+                               ___: None = Depends(_require_real_admin)):
+    """Sofortiger Snapshot. Läuft im Threadpool — die Backup-API kopiert
+    seitenweise und soll den Event-Loop nicht blockieren."""
+    name = await asyncio.to_thread(_backup.snapshot, "manual")
+    if not name:
+        raise HTTPException(status_code=404, detail="Keine Datenbank gefunden.")
+    return {"name": name}
+
+
+@app.get("/api/admin/backups/{name}")
+async def admin_backups_download(name: str,
+                                 _: None = Depends(require_token),
+                                 __: None = Depends(require_admin),
+                                 ___: None = Depends(_require_real_admin)):
+    """Download eines Snapshots. Enthält Passwort-Hashes, 2FA-Secrets und
+    das JWT-Secret — deshalb admin-only und Dateiname strikt validiert."""
+    path = _backup.path_for(name)
+    if not path:
+        raise HTTPException(status_code=404, detail="Backup nicht gefunden.")
+    return FileResponse(path, media_type="application/vnd.sqlite3", filename=name)
 
 
 @app.get("/api/auth/pats")
