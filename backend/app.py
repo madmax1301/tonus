@@ -1228,7 +1228,7 @@ async def list_queue(
         rows = conn.execute(
             f"""
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json, rowid AS _rowid
+                   created_at_ms, updated_at_ms, finished_at_ms, payload_json, rowid AS _rowid
             FROM download_jobs
             WHERE status IN ({placeholders})
             ORDER BY
@@ -1267,6 +1267,7 @@ async def list_queue(
                     "download_url": row["download_url"],
                     "created_at_ms": row["created_at_ms"],
                     "updated_at_ms": row["updated_at_ms"],
+                    "finished_at_ms": row["finished_at_ms"],
                     "payload": payload,
                 }
             )
@@ -1300,13 +1301,14 @@ async def list_queue(
                 "download_url": r["download_url"],
                 "created_at_ms": r["created_at_ms"],
                 "updated_at_ms": r["updated_at_ms"],
+                "finished_at_ms": r["finished_at_ms"],
                 "payload": payload,
             }
 
         proc_rows = conn.execute(
             """
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json
+                   created_at_ms, updated_at_ms, finished_at_ms, payload_json
             FROM download_jobs
             WHERE status = 'processing'
             ORDER BY created_at_ms ASC, rowid ASC
@@ -1315,7 +1317,7 @@ async def list_queue(
         head_rows = conn.execute(
             """
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json
+                   created_at_ms, updated_at_ms, finished_at_ms, payload_json
             FROM download_jobs
             WHERE status = 'queued'
             ORDER BY created_at_ms ASC, rowid ASC
@@ -1423,7 +1425,7 @@ def _queue_snapshot_since(since_ms: int, seen: set) -> Dict[str, Any]:
         rows = conn.execute(
             """
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json
+                   created_at_ms, updated_at_ms, finished_at_ms, payload_json
             FROM download_jobs
             WHERE updated_at_ms >= ?
             ORDER BY updated_at_ms ASC
@@ -1457,6 +1459,7 @@ def _queue_snapshot_since(since_ms: int, seen: set) -> Dict[str, Any]:
                 "download_url": r["download_url"],
                 "created_at_ms": r["created_at_ms"],
                 "updated_at_ms": r["updated_at_ms"],
+                "finished_at_ms": r["finished_at_ms"],
                 "payload": payload,
             })
 
@@ -1970,7 +1973,7 @@ async def start_queued_job(job_id: str, _: None = Depends(require_token)):
     conn = _db()
     try:
         conn.execute(
-            "UPDATE download_jobs SET status='queued', updated_at_ms = ? WHERE job_id = ? AND status = 'error'",
+            "UPDATE download_jobs SET status='queued', finished_at_ms = NULL, updated_at_ms = ? WHERE job_id = ? AND status = 'error'",
             (_now_ms(), job_id),
         )
         conn.commit()
@@ -1989,7 +1992,7 @@ async def retry_all_errors(_: None = Depends(require_token)):
     conn = _db()
     try:
         cur = conn.execute(
-            "UPDATE download_jobs SET status='queued', updated_at_ms = ? WHERE status = 'error'",
+            "UPDATE download_jobs SET status='queued', finished_at_ms = NULL, updated_at_ms = ? WHERE status = 'error'",
             (_now_ms(),),
         )
         conn.commit()

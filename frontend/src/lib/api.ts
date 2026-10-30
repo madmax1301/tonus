@@ -328,6 +328,8 @@ export interface QueueJob {
   download_url?: string;
   created_at_ms?: number;
   updated_at_ms?: number;
+  /** Wann der Job completed/error wurde. Fehlt bei älteren Backends. */
+  finished_at_ms?: number | null;
   payload?: QueueJobPayload;
 }
 
