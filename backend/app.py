@@ -1487,6 +1487,7 @@ def _lanes_fingerprint(lanes: Dict[str, Any]) -> Any:
         lanes.get("concurrency"),
         tuple(lanes.get("cooldown", {}).get("normal_seconds", [])),
         tuple(lanes.get("cooldown", {}).get("rate_limited_seconds", [])),
+        tuple(sorted(lanes.get("bot_check", {}).items())),
     )
 
 

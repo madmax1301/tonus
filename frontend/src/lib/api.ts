@@ -413,6 +413,16 @@ export interface LaneStatusResponse {
     normal_seconds: [number, number];
     rate_limited_seconds: [number, number];
   };
+  /** Bot-Check-Quote und -Drossel. Fehlt bei älteren Backends. */
+  bot_check?: {
+    window_hours: number;
+    /** Bot-Checks im Fenster. */
+    count: number;
+    /** Abgeschlossene Downloads im Fenster (ok, Fehler, Bot-Check). */
+    finished: number;
+    /** Solange > jetzt, läuft mindestens eine Lane nur mit einem Slot. 0 = keine Drossel. */
+    throttled_until_ms: number;
+  };
 }
 
 /** Antwort von /api/queue/stats — Aggregat ohne Items. */

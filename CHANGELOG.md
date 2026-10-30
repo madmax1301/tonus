@@ -12,6 +12,24 @@ into a new dated section.
 
 ## [Unreleased]
 
+### Changed
+
+- **Bot-Check drosselt die ganze Lane** — YouTube markiert die IP, nicht den
+  Slot. Bisher ging nach einem Bot-Check nur der betroffene Slot in den
+  Cooldown, die übrigen Slots derselben IP luden weiter. Jetzt pausieren alle
+  Slots der Lane für den Bot-Check-Cooldown, danach läuft die Lane
+  `BOT_CHECK_THROTTLE_S` lang (Default 3600) nur mit einem Download, egal
+  welche Parallelität eingestellt ist. Jeder weitere Bot-Check startet das
+  Fenster neu. Bei Concurrency 1 ändert sich nichts.
+
+### Added
+
+- **Bot-Check-Quote in der Queue** — unter dem Titel steht, wie viele
+  Bot-Checks es in den letzten 24 h bei wie vielen Downloads gab, und
+  während einer Drossel, bis wann sie gilt. Gezählt wird im Speicher, nach
+  einem Neustart beginnt die Zählung neu. `/api/queue/lanes` und der
+  SSE-Stream liefern dafür das neue Feld `bot_check`.
+
 ## [0.9.0] — 2026-10-29
 
 ### Added
