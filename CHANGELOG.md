@@ -5,8 +5,8 @@ All notable changes to Tonus are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Until the first tagged release, everything below lives under `[Unreleased]`.
-On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
+New entries go under `[Unreleased]`. On a `git tag -a vX.Y.Z`, move them
+into a new dated section.
 
 ---
 
@@ -875,7 +875,9 @@ hardening release.
 
 ---
 
-## [Unreleased]
+## [0.1.0 – 0.3.3] — 2026-05-04 bis 2026-05-12
+
+Sammelabschnitt: diese Releases wurden nicht einzeln dokumentiert.
 
 ### Added
 

@@ -38,7 +38,7 @@ It's a single-tenant tool you self-host on a NAS (or any Docker host). All crede
 - Auth: multi-user with TOTP-2FA, Personal Access Tokens, brute-force lifetime ban
 - Encrypted-at-rest provider credentials and TOTP secrets (Fernet)
 - Persistent app data on a separate volume (auth + queue + settings survive image swaps)
-- Multi-arch image (amd64 + arm64), pin to `:0.3` for production
+- Multi-arch image (amd64 + arm64), pin to `:0.9` for production
 
 **Working but rough edges:**
 
@@ -86,8 +86,10 @@ If your acquisition needs are already handled by a Lidarr-based stack and Soulse
 ## Features
 
 - **Multi-provider search** — Deezer (free, no key) or Spotify (catalog) for metadata; audio falls back across YouTube ↔ SoundCloud automatically based on score and availability
+- **Parallel downloads with a live queue** — 1–4 downloads per lane (default 1, see `DOWNLOAD_CONCURRENCY`); the queue page and the counter update live via Server-Sent Events and load jobs page by page
+- **Installable web app** — add Tonus to the iPhone home screen; runs edge-to-edge, caches the app shell, and offers a reload when a new version is out
 - **Artist download** — search an artist and queue their whole discography with one click; albums + EPs by default, singles / compilations opt-in. Fans out in the background and dedups against your library first (Deezer)
-- **Bulk import (v0.3.0)** — three import paths share one pipeline:
+- **Bulk import** — three import paths share one pipeline:
   - **CSV-Bulk** — drag a TuneMyMusic / Soundiiz / hand-rolled CSV; Tonus parses Artist + Track Name (and an optional Playlist column) and matches against your Navidrome library before touching any provider
   - **Spotify Extended Streaming History** — drop the JSON files from your Spotify data export; tracks are aggregated and auto-grouped into per-year + per-month Subsonic playlists
   - **Playlist-Sync** — match-only mode for tracks already in your library; existing files are added to Subsonic playlists, missing tracks get tagged so they land in the right playlist after download
@@ -99,7 +101,7 @@ If your acquisition needs are already handled by a Lidarr-based stack and Soulse
 - **Hot-reloadable defaults** — change worker cooldowns, default provider, audio codec from the UI without a container restart
 - **Dual-VPN source-IP splitting** (optional, NAS-mode) — bind alternating download threads to two network interfaces for higher throughput on rate-limited APIs
 - **Persistent state on a separate volume** — auth DB and queue jobs live in `/app/data/`; clearing the audio download cache cannot wipe your users
-- **Navidrome plugin** — companion [tonus-navidrome-plugin](https://github.com/madmax1301/tonus-navidrome-plugin) (Extism/WASM) mirrors each user's ListenBrainz *Weekly Exploration/Jams* into Navidrome as personal playlists and queues the missing tracks through Tonus via PAT auth. Grab the `.ndp` from its [releases](https://github.com/madmax1301/tonus-navidrome-plugin/releases).
+- **Navidrome plugin** — companion [tonus-navidrome-plugin](https://github.com/madmax1301/tonus-navidrome-plugin) (Extism/WASM) mirrors each user's ListenBrainz *Weekly Exploration/Jams* and *Fresh Releases* into Navidrome as personal playlists and queues the missing tracks through Tonus via PAT auth. Grab the `.ndp` from its [releases](https://github.com/madmax1301/tonus-navidrome-plugin/releases).
 
 ## Quick Start
 
@@ -344,8 +346,8 @@ Tonus uses two release channels — bleeding-edge `:dev` for testing, and immuta
 |---|---|---|---|
 | `:dev` | dev (bleeding-edge) | Every push to `dev` | Latest commit on `dev` |
 | `:sha-abc1234` | dev (pinned) | Never (immutable) | A specific commit |
-| `:0.3.0` | stable (pinned) | Never (immutable) | A specific tagged release |
-| `:0.3` | stable (rolling within minor) | New patch tags `v0.3.x` | Latest patch in `0.3.x` |
+| `:0.9.0` | stable (pinned) | Never (immutable) | A specific tagged release |
+| `:0.9` | stable (rolling within minor) | New patch tags `v0.9.x` | Latest patch in `0.9.x` |
 | `:latest` | stable (rolling) | New semver tag `vX.Y.Z` | Most recent tagged release |
 
 For production, pin to a fixed minor:
@@ -353,10 +355,10 @@ For production, pin to a fixed minor:
 ```yaml
 services:
   tonus:
-    image: ghcr.io/madmax1301/tonus:0.3
+    image: ghcr.io/madmax1301/tonus:0.9
 ```
 
-You'll get every patch release automatically but stay locked out of `0.4.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
+You'll get every patch release automatically but stay locked out of `0.10.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
 
 ## FAQ
 
@@ -364,7 +366,7 @@ You'll get every patch release automatically but stay locked out of `0.4.x` unti
 For households that don't depend on Soulseek/slskd, yes. The acquisition flow (search a catalog → download from YouTube → tag → land in Navidrome) covers what most people use Lidarr+Deemix for, with one container instead of two and built-in multi-user auth. If Soulseek is your primary source, Tonus is not there yet — see [Discussions → Ideas](https://github.com/madmax1301/tonus/discussions) for the open thread.
 
 **Does Tonus need Navidrome to work?**
-The acquisition pipeline (search, download, tag) runs without Navidrome — files just land in whatever folder you configure. The optional bits — library-scan trigger, "already downloaded" deduplication, the upcoming Subsonic playlist generation — need a Navidrome instance Tonus can reach via API. Subsonic-direct (without Navidrome) is not on the roadmap.
+The acquisition pipeline (search, download, tag) runs without Navidrome — files just land in whatever folder you configure. The optional bits — library-scan trigger, "already downloaded" deduplication, Subsonic playlist generation (imports, playlist sync, plugin mirrors) — need a Navidrome instance Tonus can reach via API. Subsonic-direct (without Navidrome) is not on the roadmap.
 
 **Can I use Tonus without Spotify credentials?**
 Yes. Deezer is the default catalog, has no API key, and covers most western music. Spotify is opt-in for a richer catalog and album art. YouTube is the audio source either way.
