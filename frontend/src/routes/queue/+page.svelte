@@ -9,7 +9,7 @@
     type LaneStatusResponse
   } from '$lib/api';
   import { tint, extractHue, DEFAULT_HUE } from '$lib/accent';
-  import { t } from '$lib/i18n';
+  import { lang, t } from '$lib/i18n';
   import { showConfirm } from '$lib/confirm';
   import {
     queueStreamConnected,
@@ -611,6 +611,26 @@
    *  _throttle_after_bot_check). Fehlt bei älteren Backends. */
   const botCheck = $derived(lanes?.bot_check ?? null);
   const botThrottled = $derived(!!botCheck && botCheck.throttled_until_ms > nowMs);
+
+  /** Zeitpunkt, an dem ein Job fertig wurde (completed/error) — als
+   *  Datum + Uhrzeit für die Karte. Ältere Backends liefern kein
+   *  finished_at_ms, dann ist updated_at_ms die beste Näherung. */
+  const finishedFmt = $derived(
+    new Intl.DateTimeFormat($lang === 'en' ? 'en-GB' : 'de-DE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  );
+  // Im {#each} ist `t` vom Track überdeckt — Label deshalb hier auflösen.
+  const finishedLabel = $derived($t('queue.finished_at'));
+  function finishedAt(job: QueueJob): string | null {
+    if (job.status !== 'completed' && job.status !== 'error') return null;
+    const ms = job.finished_at_ms ?? job.updated_at_ms;
+    return ms ? finishedFmt.format(new Date(ms)) : null;
+  }
 
   function fmtMs(ms: number): string {
     const totalSec = Math.max(0, Math.round(ms / 1000));
@@ -1334,6 +1354,15 @@
               </span>
               {#if job.stage}
                 <span style="color: var(--color-fg-tertiary);">· {job.stage}</span>
+              {/if}
+              {#if finishedAt(job)}
+                <span
+                  class="tabular-nums"
+                  style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
+                  title={finishedLabel}
+                >
+                  · {finishedAt(job)}
+                </span>
               {/if}
             </div>
 

@@ -29,6 +29,11 @@ into a new dated section.
   während einer Drossel, bis wann sie gilt. Gezählt wird im Speicher, nach
   einem Neustart beginnt die Zählung neu. `/api/queue/lanes` und der
   SSE-Stream liefern dafür das neue Feld `bot_check`.
+- **Datum und Uhrzeit in jeder Queue-Karte** — fertige und fehlgeschlagene
+  Jobs zeigen, wann sie abgeschlossen wurden. Dafür gibt es die neue Spalte
+  `download_jobs.finished_at_ms`, weil `updated_at_ms` auch durch
+  Playlist-Tagging an fertigen Jobs wandert. Bestehende Jobs bekommen beim
+  Start `updated_at_ms` als Näherung, ein Retry setzt den Wert zurück.
 
 ## [0.9.0] — 2026-10-29
 
