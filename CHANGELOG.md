@@ -34,6 +34,12 @@ into a new dated section.
   `download_jobs.finished_at_ms`, weil `updated_at_ms` auch durch
   Playlist-Tagging an fertigen Jobs wandert. Bestehende Jobs bekommen beim
   Start `updated_at_ms` als Näherung, ein Retry setzt den Wert zurück.
+- **Backups der Datenbank** — Tonus sichert `jobs.db` bei jedem Start (vor
+  Migrationen, also vor jedem `:dev`-Update), alle 24 h und auf Knopfdruck
+  nach `tonus-data/backups/`, je Art die letzten 7. Unter Einstellungen →
+  Backend lassen sich Backups anlegen und herunterladen (nur Admins, im
+  Setup-Modus gesperrt). Restore-Anleitung im README. Neue Env-Variablen:
+  `BACKUP_DIR`, `BACKUP_INTERVAL_H`, `BACKUP_KEEP`.
 
 ## [0.9.0] — 2026-10-29
 

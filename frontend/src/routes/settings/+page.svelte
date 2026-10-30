@@ -7,7 +7,9 @@
     authApi,
     providersConfigApi,
     cooldownApi,
+    backupApi,
     ApiError,
+    type BackupListResponse,
     type MetadataProvidersResponse,
     type FormatsInfo,
     type HealthResponse,
@@ -40,7 +42,9 @@
     UserPlus,
     UserMinus,
     UserCog,
-    Plug
+    Plug,
+    DatabaseBackup,
+    Download
   } from 'lucide-svelte';
 
   type Section =
@@ -320,6 +324,68 @@
       loadCooldown();
     }
   });
+
+  // Backups (Settings → Backend). Lazy wie die anderen Admin-Sections.
+  let backups = $state<BackupListResponse | null>(null);
+  let backupBusy = $state(false);
+  let backupError = $state<string | null>(null);
+
+  async function loadBackups() {
+    try {
+      backups = await backupApi.list();
+    } catch {
+      backupError = $t('settings.backend.backup.error');
+    }
+  }
+
+  async function createBackup() {
+    if (backupBusy) return;
+    backupBusy = true;
+    backupError = null;
+    try {
+      await backupApi.create();
+      await loadBackups();
+    } catch {
+      backupError = $t('settings.backend.backup.error');
+    } finally {
+      backupBusy = false;
+    }
+  }
+
+  async function downloadBackup(name: string) {
+    try {
+      const blob = await backupApi.download(name);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      backupError = $t('settings.backend.backup.error');
+    }
+  }
+
+  $effect(() => {
+    if (section === 'backend' && backups === null && me?.is_admin) {
+      loadBackups();
+    }
+  });
+
+  const backupDateFmt = $derived(
+    new Intl.DateTimeFormat($lang === 'en' ? 'en-GB' : 'de-DE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  );
+
+  function fmtBytes(n: number): string {
+    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    return `${Math.max(1, Math.round(n / 1024))} KB`;
+  }
 
   /** Heuristik fürs Status-Pill: alle non-secret Felder mit Werten +
    *  alle secret Felder is_set ⇒ configured. Mind. eines gesetzt aber
@@ -1316,6 +1382,77 @@
               </div>
             {/each}
           </div>
+        </div>
+      {/if}
+
+      {#if me?.is_admin}
+        <div class="mt-6 pt-6" style="border-top: 1px solid var(--color-border-soft);">
+          <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+            <div class="flex items-center gap-2">
+              <DatabaseBackup size={14} strokeWidth={1.5} style="color: {accent};" />
+              <div
+                class="font-semibold uppercase"
+                style="font-size: 11px; letter-spacing: 0.2em; color: var(--color-fg-tertiary);"
+              >
+                {$t('settings.backend.backup.title')}
+              </div>
+            </div>
+            <button
+              type="button"
+              onclick={createBackup}
+              disabled={backupBusy}
+              class="inline-flex items-center transition-colors"
+              style="background: transparent; color: var(--color-fg-secondary); padding: 8px 16px; border-radius: 999px; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; border: 1px solid var(--color-border-soft); cursor: {backupBusy ? 'wait' : 'pointer'};"
+            >
+              {backupBusy ? $t('settings.backend.backup.creating') : $t('settings.backend.backup.create')}
+            </button>
+          </div>
+          {#if backups}
+            <p class="text-[12px] mb-3" style="color: var(--color-fg-tertiary); line-height: 1.5;">
+              {backups.interval_hours > 0
+                ? $t('settings.backend.backup.hint', { hours: backups.interval_hours, keep: backups.keep })
+                : $t('settings.backend.backup.hint_no_daily', { keep: backups.keep })}
+            </p>
+          {/if}
+          {#if backupError}
+            <div class="text-[12px] mb-3" style="color: var(--color-status-error);">{backupError}</div>
+          {/if}
+          {#if backups && backups.backups.length === 0}
+            <div class="text-[12px]" style="color: var(--color-fg-tertiary);">
+              {$t('settings.backend.backup.empty')}
+            </div>
+          {:else if backups}
+            <div class="space-y-1.5">
+              {#each backups.backups as b (b.name)}
+                <div
+                  class="flex items-center justify-between gap-3 px-4 py-2.5 rounded-md"
+                  style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--color-border-soft);"
+                >
+                  <div class="min-w-0">
+                    <div class="text-[13px] tabular-nums" style="color: var(--color-fg-primary);">
+                      {backupDateFmt.format(new Date(b.created_at_ms))}
+                    </div>
+                    <div
+                      class="text-[11px] truncate"
+                      style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
+                    >
+                      {$t(`settings.backend.backup.kind.${b.kind}`)} · {fmtBytes(b.size_bytes)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onclick={() => downloadBackup(b.name)}
+                    class="inline-flex items-center gap-1.5 shrink-0"
+                    style="color: var(--color-fg-secondary); font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--color-border-soft); background: transparent;"
+                    aria-label={$t('settings.backend.backup.download')}
+                  >
+                    <Download size={12} strokeWidth={1.6} />
+                    {$t('settings.backend.backup.download')}
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
     </div>

@@ -239,6 +239,9 @@ This means once you've configured a provider in the UI, the `.env` value for it 
 | `NAVIDROME_SYNC_API_DELAY_SEC` | `0.12` | no | Throttle between Navidrome API calls during sync. |
 | **Storage paths** | | | |
 | `JOBS_DB_PATH` | `/app/data/jobs.db` | no | Auth DB, job queue, app settings, banned IPs. Override only for non-Docker setups. |
+| `BACKUP_DIR` | `/app/data/backups` | no | Where database snapshots go (see [Backup & restore](#backup--restore)). Defaults to a `backups` folder next to `JOBS_DB_PATH`. |
+| `BACKUP_INTERVAL_H` | `24` | no | Hours between automatic snapshots. `0` turns the daily snapshot off; the snapshot on every start stays. |
+| `BACKUP_KEEP` | `7` | no | Snapshots kept per kind (start, daily, manual). |
 | `DOWNLOAD_DIR` | `./downloads` (`/app/downloads` in container) | no | In-flight working area for audio files. **Separate from `JOBS_DB_PATH`** — clearing this folder must not wipe auth state. |
 | **Audio output** | | | |
 | `OUTPUT_FORMAT` | `mp3` | no | Container/codec for the final file. |
@@ -336,6 +339,28 @@ docker compose up -d            # restart with the new image
 ```
 
 `/app/data/jobs.db` lives on a host bind-mount (the `./tonus-data` folder by default) and survives image swaps. **Do not skip the `mkdir tonus-data downloads` step on first install** — without those bind-mount targets, the DB dies on every container recreation.
+
+## Backup & restore
+
+Everything Tonus cannot rebuild lives in `jobs.db`: users, 2FA, API tokens, the JWT secret (which also encrypts the provider credentials you saved in the UI), settings and the queue. Tonus snapshots it to `tonus-data/backups/`:
+
+- on **every start**, before any schema migration runs, so each `docker compose pull` leaves you the state from before the update
+- every **24 h** (`BACKUP_INTERVAL_H`)
+- on demand under *Settings → Backend → Back up now*, where admins can also download any snapshot
+
+Each kind keeps its last 7 files (`BACKUP_KEEP`). The snapshots sit on the same disk as the database, so they protect you from a bad update or a broken DB, not from a dead disk. Include `tonus-data/` in your NAS backup for that. A snapshot contains password hashes, 2FA secrets and the JWT secret, so treat it like a password file.
+
+**Restore:**
+
+```bash
+docker compose stop tonus
+cp tonus-data/jobs.db tonus-data/jobs.db.before-restore   # keep the current state, just in case
+cp tonus-data/backups/jobs-20261030-221500-startup.db tonus-data/jobs.db
+rm -f tonus-data/jobs.db-wal tonus-data/jobs.db-shm         # stale WAL from the old DB must not be replayed
+docker compose start tonus
+```
+
+If you set `JWT_SECRET` in `.env`, keep it the same as when the snapshot was taken. Otherwise logins and stored credentials from the snapshot can't be decrypted. Restoring an older snapshot into a newer image is fine: migrations only add columns and run again on start. YouTube cookie files are separate files in `tonus-data/` and are not part of the snapshot.
 
 ## Container images
 
