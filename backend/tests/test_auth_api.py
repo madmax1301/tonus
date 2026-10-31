@@ -236,3 +236,18 @@ def test_banned_ip_list_and_unban(client):
     assert client.delete("/api/auth/banned-ips/203.0.113.7", headers=h).status_code == 404
     au.ban_ip("2001:db8::1", reason="test")
     assert client.delete("/api/auth/banned-ips/2001:db8::1", headers=h).status_code == 200
+
+
+def test_login_ignores_forwarded_for_from_untrusted_peer(client):
+    """Ein Client ohne Proxy-Vertrauen darf die protokollierte IP nicht per
+    X-Forwarded-For setzen — sonst ließe sich der Auto-Ban auf eine fremde
+    IP lenken (oder der eigene umgehen)."""
+    from utils import auth_users as au
+
+    _setup_admin(client)
+    spoof = {"X-Forwarded-For": "198.51.100.9"}
+    for _ in range(5):
+        client.post("/api/auth/login", json={"username": "admin", "password": "wrong"}, headers=spoof)
+    banned = {b["ip"] for b in au.list_banned_ips()}
+    assert "198.51.100.9" not in banned
+    assert "testclient" in banned
