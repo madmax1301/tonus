@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
 
 import requests
@@ -102,6 +103,57 @@ def lb_genre_top_recordings(genre: str, count: int = 50) -> List[Dict]:
     return out
 
 
+def _lb_createdfor_matches(user: str, slug_or_mbid: str) -> List[Dict]:
+    """Alle LB-'createdfor'-Playlists des Users mit passendem source_patch,
+    nach date absteigend sortiert (neueste zuerst). Wirft bei HTTP-Fehlern
+    nicht, sondern liefert eine leere Liste."""
+    r = requests.get(
+        f"{LB_API}/user/{user}/playlists/createdfor",
+        timeout=20,
+        headers={"User-Agent": USER_AGENT},
+    )
+    if not r.ok:
+        return []
+    playlists = (r.json().get("playlists") or [])
+    matches = []
+    for p in playlists:
+        pl = p.get("playlist") or {}
+        ext = pl.get("extension", {}).get(
+            "https://musicbrainz.org/doc/jspf#playlist", {}
+        )
+        algo = (
+            (ext.get("additional_metadata", {}) or {})
+            .get("algorithm_metadata", {})
+            .get("source_patch", "")
+        )
+        if slug_or_mbid in algo or slug_or_mbid in pl.get("identifier", ""):
+            matches.append(pl)
+    matches.sort(key=lambda pl: pl.get("date", ""), reverse=True)
+    return matches
+
+
+def lb_playlist_rotated_at_ms(user: str, slug_or_mbid: str) -> int:
+    """Zeitpunkt (ms) der letzten Wochen-Rotation eines source_patch = date
+    der neuesten matchenden LB-Playlist. Ab diesem Moment gehört jede
+    occurrence-Stufe zu einer neuen LB-Version: "Weekly Jams" ist die frische
+    Playlist, "Last Week's Jams" die bisherige. Tracks, die für einen
+    Playlist-Namen VOR diesem Zeitpunkt gequeued wurden, gehören zu einer
+    älteren Version. 0, wenn unbekannt (LB down, kein Match, kein date)."""
+    try:
+        matches = _lb_createdfor_matches(user, slug_or_mbid)
+        if not matches:
+            return 0
+        raw = (matches[0].get("date") or "").strip()
+        if not raw:
+            return 0
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1000)
+    except Exception:
+        return 0
+
+
 def lb_playlist_tracks(user: str, slug_or_mbid: str, occurrence: int = 0) -> List[Dict]:
     """Tracks einer LB-'createdfor'-Playlist (z.B. 'weekly-exploration').
 
@@ -111,31 +163,9 @@ def lb_playlist_tracks(user: str, slug_or_mbid: str, occurrence: int = 0) -> Lis
     """
     out: List[Dict] = []
     try:
-        r = requests.get(
-            f"{LB_API}/user/{user}/playlists/createdfor",
-            timeout=20,
-            headers={"User-Agent": USER_AGENT},
-        )
-        if not r.ok:
-            return out
-        playlists = (r.json().get("playlists") or [])
-        # Alle Playlists mit passendem source_patch sammeln, nach date desc sortieren.
-        matches = []
-        for p in playlists:
-            pl = p.get("playlist") or {}
-            ext = pl.get("extension", {}).get(
-                "https://musicbrainz.org/doc/jspf#playlist", {}
-            )
-            algo = (
-                (ext.get("additional_metadata", {}) or {})
-                .get("algorithm_metadata", {})
-                .get("source_patch", "")
-            )
-            if slug_or_mbid in algo or slug_or_mbid in pl.get("identifier", ""):
-                matches.append(pl)
+        matches = _lb_createdfor_matches(user, slug_or_mbid)
         if len(matches) <= occurrence:
             return out
-        matches.sort(key=lambda pl: pl.get("date", ""), reverse=True)
         target = matches[occurrence]
 
         # createdfor liefert nur Playlist-Metadaten — das `track`-Array ist

@@ -14,6 +14,12 @@ into a new dated section.
 
 ### Changed
 
+- **LB-Weekly-Playlists wachsen nicht mehr** — `POST /api/plugin/lbweekly/discovery`
+  liefert zusätzlich `rotated_at_ms` (Datum der neuesten LB-Version des
+  `source_patch`), und `/api/plugin/finished-tracks` kennt den neuen Filter
+  `since_ms`. Damit kann das Navidrome-Plugin (ab v0.7.0) Weekly Jams,
+  Weekly Exploration und die beiden „Last Week's“-Playlists auf den aktuellen
+  LB-Stand ersetzen, statt Tracks älterer Wochen weiter anzuhängen.
 - **Bot-Check drosselt die ganze Lane** — YouTube markiert die IP, nicht den
   Slot. Bisher ging nach einem Bot-Check nur der betroffene Slot in den
   Cooldown, die übrigen Slots derselben IP luden weiter. Jetzt pausieren alle

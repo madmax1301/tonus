@@ -4478,12 +4478,19 @@ async def plugin_lbweekly_discovery(
 ):
     """Plugin-Trigger für eine LB-'createdfor'-Playlist. Queued fehlende
     Tracks im Hintergrund (mit sync-Markern) und liefert synchron die
-    bereits-in-Library-Liste für die Plugin-Build-Phase."""
+    bereits-in-Library-Liste für die Plugin-Build-Phase.
+
+    ``rotated_at_ms`` ist der Zeitpunkt der letzten LB-Wochen-Rotation (0 =
+    unbekannt). Das Plugin fragt finished-tracks damit ab und ersetzt die
+    Playlist, statt Tracks älterer LB-Versionen weiter anzuhängen."""
+    from services.discovery import lb_playlist_rotated_at_ms
     background_tasks.add_task(_run_plugin_lbweekly_discovery, req)
     existing = _check_lbweekly_tracks_in_library(req)
+    rotated_at_ms = lb_playlist_rotated_at_ms(req.listenbrainz_user, req.source_patch)
     return {"started": True,
             "message": "lbweekly discovery + queueing missing tracks in background",
-            "existing": existing}
+            "existing": existing,
+            "rotated_at_ms": rotated_at_ms}
 
 
 @app.post("/api/plugin/lbfresh/discovery")
@@ -4517,6 +4524,7 @@ async def plugin_finished_tracks(
     since_days: int = Query(60, ge=1, le=365),
     playlist_name: Optional[str] = Query(None),
     limit: int = Query(25, ge=1, le=200),
+    since_ms: Optional[int] = Query(None, ge=0),
 ):
     """Liefert die heruntergeladenen Tracks eines Plugin-Sync-Runs für einen
     bestimmten Navidrome-User — wird vom Plugin im Reconcile-Task abgefragt
@@ -4526,7 +4534,9 @@ async def plugin_finished_tracks(
       - status='completed' (Worker hat den Track erfolgreich runtergeladen)
       - payload.plugin_sync_navidrome_user == ``navidrome_user``
       - optional: payload.plugin_sync_playlist_name == ``playlist_name``
-      - created_at_ms innerhalb der letzten ``since_days``
+      - created_at_ms innerhalb der letzten ``since_days`` und, falls
+        gesetzt, >= ``since_ms`` (LB-Weekly: nur Tracks, die seit der letzten
+        LB-Rotation für diese Playlist gequeued wurden)
       - max ``limit`` Tracks pro Call (Default 25), damit der Plugin-
         Reconcile-Task nicht im 30 s-Hostlimit hängt. Reconcile holt sich
         beim nächsten Cron-Trigger den Rest.
@@ -4541,6 +4551,8 @@ async def plugin_finished_tracks(
     import json as _json
 
     cutoff_ms = _now_ms() - since_days * 24 * 3600 * 1000
+    if since_ms:
+        cutoff_ms = max(cutoff_ms, since_ms)
     conn = _db()
     try:
         rows = conn.execute(
