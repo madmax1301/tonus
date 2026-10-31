@@ -12,7 +12,19 @@ into a new dated section.
 
 ## [Unreleased]
 
+### Security
+
+- **Login nimmt X-Forwarded-For nur noch von vertrauten Proxys an.** Der
+  Login-Endpoint hatte eine eigene IP-Ermittlung, die den Header von jedem
+  Client übernahm. Wer fünf Fehlversuche mit gefälschtem Header schickte,
+  konnte so eine fremde IP dauerhaft sperren lassen oder den eigenen Ban
+  umgehen. Jetzt gilt wie überall `TRUSTED_PROXIES` (Audit H-7).
+
 ### Changed
+
+- **Auth-Endpoints liegen in `backend/routers/auth.py`** statt in `app.py`.
+  Erster Schritt, die 5.400 Zeilen aufzuteilen. Pfade und Antworten bleiben
+  gleich, abgesichert durch neue HTTP-Tests für alle `/api/auth/*`-Routen.
 
 - **LB-Weekly-Playlists wachsen nicht mehr** — `POST /api/plugin/lbweekly/discovery`
   liefert zusätzlich `rotated_at_ms` (Datum der neuesten LB-Version des
