@@ -19,12 +19,20 @@ into a new dated section.
   Client übernahm. Wer fünf Fehlversuche mit gefälschtem Header schickte,
   konnte so eine fremde IP dauerhaft sperren lassen oder den eigenen Ban
   umgehen. Jetzt gilt wie überall `TRUSTED_PROXIES` (Audit H-7).
+- **Import-Status und -Ergebnis brauchen ein Token.** `GET
+  /api/import/jobs/{id}/status` und `/result` waren ohne Anmeldung abrufbar
+  und zeigten Tracks und Playlist-Namen eines Imports. Das Frontend schickt
+  das Token ohnehin mit, für die UI ändert sich nichts.
 
 ### Changed
 
 - **Auth-Endpoints liegen in `backend/routers/auth.py`** statt in `app.py`.
   Erster Schritt, die 5.400 Zeilen aufzuteilen. Pfade und Antworten bleiben
   gleich, abgesichert durch neue HTTP-Tests für alle `/api/auth/*`-Routen.
+- **HTTP-Tests für `/api/import/*`** (CSV-Parsing, Spotify-History, Status,
+  Abbruch, Löschen, queue-all). Neue Env-Variable `TONUS_START_WORKERS=0`
+  lässt die Worker beim Start aus; die Tests nutzen das, damit kein echter
+  Worker ihre Jobs abholt.
 
 - **LB-Weekly-Playlists wachsen nicht mehr** — `POST /api/plugin/lbweekly/discovery`
   liefert zusätzlich `rotated_at_ms` (Datum der neuesten LB-Version des

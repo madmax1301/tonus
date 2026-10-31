@@ -402,11 +402,14 @@ _download_worker = JobWorker(job_type="download")
 _csv_worker = JobWorker(job_type="import", import_lane="csv")
 _spotify_history_worker = JobWorker(job_type="import", import_lane="spotify_history")
 _playlist_sync_worker = JobWorker(job_type="import", import_lane="playlist_sync")
-_download_worker.start()
-_csv_worker.start()
-_spotify_history_worker.start()
-_playlist_sync_worker.start()
-print("Worker threads started (download + import:csv + import:spotify_history + import:playlist_sync)")
+# TONUS_START_WORKERS=0 lässt die Worker aus — für Tests, die Jobs in die DB
+# legen und nicht wollen, dass ein echter Worker sie nebenher abholt.
+if os.getenv("TONUS_START_WORKERS", "1") != "0":
+    _download_worker.start()
+    _csv_worker.start()
+    _spotify_history_worker.start()
+    _playlist_sync_worker.start()
+    print("Worker threads started (download + import:csv + import:spotify_history + import:playlist_sync)")
 
 # Phase 0 Pre-Warm: Library-Signature-Cache beim Container-Boot asynchron
 # aufbauen, damit der ERSTE CSV-Import nach Restart nicht 30-60s in Phase 0
@@ -2970,7 +2973,7 @@ async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Dep
 
 
 @app.get("/api/import/jobs/{job_id}/status")
-async def import_job_status(job_id: str):
+async def import_job_status(job_id: str, _: None = Depends(require_token)):
     """Poll CSV/JSON import progress (aus SQLite). Liefert:
     - library_match_count (Phase H) damit Frontend den "in library"-Counter live zeigen kann
     - recovery_total + recovery_recovered (Phase 2.5) damit Frontend rechecked-Stats anzeigt
@@ -3032,6 +3035,7 @@ async def import_job_result(
     job_id: str,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
+    _: None = Depends(require_token),
 ):
     """CSV-Import-Ergebnisse paginiert aus SQLite."""
     job = get_import_job(job_id)
