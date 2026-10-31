@@ -25,3 +25,6 @@ def pytest_configure(config) -> None:
     # diesen Override würde das auf "/app/data" fallen und in CI (non-
     # root, kein /app) mit PermissionError scheitern.
     os.environ["JOBS_DB_PATH"] = str(root / "data" / "jobs.db")
+    # Keine echten Worker beim `import app`: sie würden Jobs aus Tests
+    # abholen (und z. B. einen gerade angelegten Download-Job claimen).
+    os.environ["TONUS_START_WORKERS"] = "0"

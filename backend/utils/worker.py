@@ -433,7 +433,9 @@ class JobWorker(threading.Thread):
     def shutdown(self, timeout: Optional[float] = None) -> None:
         self._stop_event.set()
         deadline = time.monotonic() + timeout if timeout is not None else None
-        self.join(timeout=timeout)
+        # Nie gestartet (TONUS_START_WORKERS=0) → join() würde werfen.
+        if self.ident is not None:
+            self.join(timeout=timeout)
         for t in list(self._download_threads):
             remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
             t.join(timeout=remaining)
