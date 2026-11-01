@@ -23,6 +23,14 @@ into a new dated section.
   /api/import/jobs/{id}/status` und `/result` waren ohne Anmeldung abrufbar
   und zeigten Tracks und Playlist-Namen eines Imports. Das Frontend schickt
   das Token ohnehin mit, für die UI ändert sich nichts.
+- **Alle übrigen Endpoints brauchen ein Token, bis auf die Health-Checks.**
+  20 Endpoints waren ohne Anmeldung erreichbar, darunter der Datei-Download
+  `GET /api/download/file/{id}`, Suche, Album/Track, Download-Status,
+  Empfehlungen und `/api/plugin/finished-tracks` (zeigte Navidrome-User und
+  ihre Tracks). Offen bleiben nur `/api/health`, `/api/plugin/health` und der
+  Login-Flow. Frontend und Navidrome-Plugin schicken das Token schon mit.
+  Ein Test prüft jetzt jede `/api`-Route, damit kein neuer Endpoint ohne
+  Token durchrutscht.
 
 ### Changed
 

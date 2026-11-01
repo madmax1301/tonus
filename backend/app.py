@@ -1054,7 +1054,7 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-@app.get("/api/metadata/providers")
+@app.get("/api/metadata/providers", dependencies=[Depends(require_token)])
 async def metadata_providers():
     """Available metadata sources and server default."""
     return {
@@ -1070,7 +1070,7 @@ async def metadata_providers():
     }
 
 
-@app.post("/api/search", response_model=List[TrackResponse])
+@app.post("/api/search", dependencies=[Depends(require_token)], response_model=List[TrackResponse])
 async def search_tracks(request: SearchRequest):
     """Search for tracks using the selected catalog provider."""
     provider = resolve_metadata_provider(request.provider)
@@ -1081,7 +1081,7 @@ async def search_tracks(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-@app.post("/api/reverse/youtube")
+@app.post("/api/reverse/youtube", dependencies=[Depends(require_token)])
 async def reverse_lookup_youtube(request: ReverseLookupRequest):
     """Given a YouTube URL, extract title and search the selected catalog."""
     provider = resolve_metadata_provider(request.provider)
@@ -1110,7 +1110,7 @@ async def reverse_lookup_youtube(request: ReverseLookupRequest):
         raise HTTPException(status_code=500, detail=f"Reverse lookup failed: {str(e)}")
 
 
-@app.post("/api/search/tracks/top")
+@app.post("/api/search/tracks/top", dependencies=[Depends(require_token)])
 async def search_tracks_top(request: SearchRequest):
     """Search tracks with a small default limit (pick-lists)."""
     provider = resolve_metadata_provider(request.provider)
@@ -1123,7 +1123,7 @@ async def search_tracks_top(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-@app.post("/api/search/albums")
+@app.post("/api/search/albums", dependencies=[Depends(require_token)])
 async def search_albums(request: SearchRequest):
     """Search for albums."""
     provider = resolve_metadata_provider(request.provider)
@@ -1134,7 +1134,7 @@ async def search_albums(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Album search failed: {str(e)}")
 
 
-@app.post("/api/search/artists")
+@app.post("/api/search/artists", dependencies=[Depends(require_token)])
 async def search_artists(request: SearchRequest):
     """Search for artists (for the artist card / "download all" flow)."""
     provider = resolve_metadata_provider(request.provider)
@@ -1150,7 +1150,7 @@ async def search_artists(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Artist search failed: {str(e)}")
 
 
-@app.get("/api/album/{album_id}")
+@app.get("/api/album/{album_id}", dependencies=[Depends(require_token)])
 async def get_album(album_id: str, provider: Optional[str] = Query(None)):
     """Get album details including all tracks"""
     p = resolve_metadata_provider(provider)
@@ -1166,7 +1166,7 @@ async def get_album(album_id: str, provider: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail=f"Error fetching album: {str(e)}")
 
 
-@app.get("/api/track/{track_id}", response_model=TrackResponse)
+@app.get("/api/track/{track_id}", dependencies=[Depends(require_token)], response_model=TrackResponse)
 async def get_track(track_id: str, provider: Optional[str] = Query(None)):
     """Get details for a specific track"""
     p = resolve_metadata_provider(provider)
@@ -1949,7 +1949,7 @@ async def reverse_download(request: ReverseDownloadRequest, background_tasks: Ba
     }
 
 
-@app.get("/api/download/status/{track_id}")
+@app.get("/api/download/status/{track_id}", dependencies=[Depends(require_token)])
 async def get_download_status(track_id: str):
     job = get_job(track_id)
     if not job:
@@ -2219,7 +2219,7 @@ def download_album_track(
 
 
 
-@app.get("/api/download/album/status/{album_id}")
+@app.get("/api/download/album/status/{album_id}", dependencies=[Depends(require_token)])
 async def get_album_download_status(album_id: str):
     album_job_id = f"album:{album_id}"
     meta_job = get_job(album_job_id)
@@ -2379,7 +2379,7 @@ async def download_artist(request: ArtistDownloadRequest, background_tasks: Back
     }
 
 
-@app.get("/api/download/artist/status/{artist_id}")
+@app.get("/api/download/artist/status/{artist_id}", dependencies=[Depends(require_token)])
 async def get_artist_download_status(artist_id: str):
     """Aggregate an artist download's progress by summing its albums' aggregates."""
     meta = get_job(f"artist:{artist_id}")
@@ -2423,7 +2423,7 @@ async def get_artist_download_status(artist_id: str):
 
 
 
-@app.get("/api/youtube/candidates/{track_id}")
+@app.get("/api/youtube/candidates/{track_id}", dependencies=[Depends(require_token)])
 async def get_youtube_candidates(track_id: str, provider: Optional[str] = Query(None)):
     """Get YouTube candidates for a track to let user choose if confidence is low"""
     p = resolve_metadata_provider(provider)
@@ -2454,7 +2454,7 @@ async def get_youtube_candidates(track_id: str, provider: Optional[str] = Query(
         raise HTTPException(status_code=500, detail=f"Error searching YouTube: {str(e)}")
 
 
-@app.get("/api/download/file/{track_id}")
+@app.get("/api/download/file/{track_id}", dependencies=[Depends(require_token)])
 async def download_file(track_id: str, filename: str = Query(...),
                         background_tasks: BackgroundTasks = BackgroundTasks()):
     """Download a file (for local browser downloads) and delete temp file afterward"""
@@ -2532,13 +2532,13 @@ def cleanup_temp_file(file_path: str, _job_id: str):
         print(f"Error cleaning up temp file {file_path}: {e}")
 
 
-@app.get("/api/navidrome/libraries")
+@app.get("/api/navidrome/libraries", dependencies=[Depends(require_token)])
 async def list_navidrome_libraries():
     """Configured Navidrome music folder roots (from NAVIDROME_MUSIC_PATHS / labels)."""
     return {"libraries": config.navidrome_libraries_public()}
 
 
-@app.get("/api/track/{track_id}/exists")
+@app.get("/api/track/{track_id}/exists", dependencies=[Depends(require_token)])
 async def check_track_exists(
     track_id: str,
     provider: Optional[str] = Query(None),
@@ -2596,7 +2596,7 @@ async def check_track_exists(
         raise HTTPException(status_code=500, detail=f"Error checking track: {str(e)}")
 
 
-@app.get("/api/formats")
+@app.get("/api/formats", dependencies=[Depends(require_token)])
 async def get_available_formats():
     """Get available audio formats and quality options"""
     return {
@@ -2640,7 +2640,7 @@ async def health_check(authed: bool = Depends(optional_token)):
         })
     return base
 
-@app.post("/api/recommendations")
+@app.post("/api/recommendations", dependencies=[Depends(require_token)])
 def get_recommendations(request: RecommendationRequest):
     """
     Deezer Artist Radio — ähnliche Tracks basierend auf einem Deezer track_id
@@ -3702,7 +3702,7 @@ async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTask
     return {"status": "queued", "job_id": job_id}
 
 
-@app.post("/api/url/search")
+@app.post("/api/url/search", dependencies=[Depends(require_token)])
 async def url_search(req: URLSearchRequest):
     """Phase 2: Multi-Source-Search via yt-dlp.
 
@@ -3785,7 +3785,7 @@ async def plugin_health():
     }
 
 
-@app.get("/api/plugin/sync-status")
+@app.get("/api/plugin/sync-status", dependencies=[Depends(require_token)])
 async def plugin_sync_status():
     """Kompaktes Status-Aggregat für den Read-Only-Block in der Plugin-
     Settings-Page (Navidrome-UI). Polling-freundlich: ein DB-Trip, kleine
@@ -4522,7 +4522,7 @@ async def plugin_lbfresh_discovery(
             "existing": existing}
 
 
-@app.get("/api/plugin/finished-tracks")
+@app.get("/api/plugin/finished-tracks", dependencies=[Depends(require_token)])
 async def plugin_finished_tracks(
     navidrome_user: str = Query(..., min_length=1),
     since_days: int = Query(60, ge=1, le=365),
