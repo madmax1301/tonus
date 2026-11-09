@@ -18,15 +18,15 @@
     "@sveltejs/adapter-static": "^3.0.6",
     "@sveltejs/kit": "^2.70.2",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@tailwindcss/vite": "^4.3.3",
+    "@tailwindcss/vite": "^4.3.4",
     "svelte": "^5.57.3",
-    "svelte-check": "^4.7.7",
+    "svelte-check": "^4.7.8",
     "tailwindcss": "^4.0.0",
     "typescript": "^6.0.3",
-    "vite": "^8.3.5"
+    "vite": "^8.3.6"
   },
   "dependencies": {
-    "bits-ui": "^2.20.2",
+    "bits-ui": "^2.20.6",
     "lucide-svelte": "^1.0.1"
   }
 }
