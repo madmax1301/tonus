@@ -22,7 +22,7 @@
  * oder /api/auth/me-Call. Layout-Guard nutzt das um login/logout-States zu
  * dirigieren.
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { writable, get, derived } from 'svelte/store';
 
 const ACCESS_KEY = 'tonus_jwt_access';

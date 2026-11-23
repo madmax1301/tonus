@@ -4871,7 +4871,7 @@ async def settings_cooldown_put(req: CooldownUpdateRequest,
 # SPA-Frontend (SvelteKit-Build) — MUSS als letzter Mount stehen, sonst
 # werden alle danach definierten Routes von der StaticFiles-Catch-All
 # verschluckt. html=True liefert index.html für unbekannte Pfade
-# (Client-Side-Routing-Fallback) — ergänzt durch fallback in svelte.config.js.
+# (Client-Side-Routing-Fallback) — ergänzt durch fallback im sveltekit()-Plugin (frontend/vite.config.ts).
 class SpaStaticFiles(StaticFiles):
     """SvelteKit-Build mit korrekten Cache-Headern + SPA-Routing-Fallback.
 

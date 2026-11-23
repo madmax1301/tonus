@@ -1,6 +1,6 @@
 <script lang="ts">
   import CoverArt from './CoverArt.svelte';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
 
   type Props = {
     src?: string | null;

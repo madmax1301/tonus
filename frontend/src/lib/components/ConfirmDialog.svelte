@@ -9,8 +9,8 @@
    * Keys: Esc → cancel, Enter → confirm (autofocus auf Confirm-Btn).
    */
   import { onMount } from 'svelte';
-  import { dialogState } from '$lib/confirm';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { dialogState } from '#lib/confirm.ts';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
 
   const accent = tint(DEFAULT_HUE);
 

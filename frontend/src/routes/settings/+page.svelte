@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
+  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '#lib/preferences.ts';
   import {
     providersApi,
     systemApi,
@@ -20,12 +20,12 @@
     type ManagedUser,
     type ProviderConfig,
     type CooldownValues
-  } from '$lib/api';
-  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
-  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
-  import { t, lang, type Lang } from '$lib/i18n';
-  import { showConfirm } from '$lib/confirm';
+  } from '#lib/api.ts';
+  import CinemaBackdrop from '#lib/components/CinemaBackdrop.svelte';
+  import VinylWithCover from '#lib/components/VinylWithCover.svelte';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
+  import { t, lang, type Lang } from '#lib/i18n.ts';
+  import { showConfirm } from '#lib/confirm.ts';
   import {
     Server,
     Library,

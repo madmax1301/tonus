@@ -1,4 +1,4 @@
-import { base } from '$app/paths';
+import { base } from '#lib/paths.ts';
 import { get } from 'svelte/store';
 import {
   getToken,

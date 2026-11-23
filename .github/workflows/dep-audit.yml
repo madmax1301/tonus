@@ -121,15 +121,11 @@ jobs:
         run: npm audit --audit-level=high --json > npm-audit.json || true
       # Strict mode (v0.4.4 onwards): high+critical sind PR-Blocker.
       - name: Fail on high/critical
-        # Ignore-Liste fuer SvelteKit-2-Advisories (seit 2026-11-23):
-        # tonus baut das Frontend per adapter-static als reine SPA; es laeuft
-        # kein SvelteKit-Server (kein SSR, keine Form-Actions, keine
-        # Remote-Functions), die betroffenen Codepfade werden also nie
-        # ausgefuehrt. Fuer Kit 2 gibt es keinen Fix, nur Kit 3.
-        # Wieder entfernen, sobald die Migration auf SvelteKit 3 gemergt ist.
+        # Ignore-Liste fuer bewusst akzeptierte Advisories (GHSA-IDs, durch
+        # Leerzeichen getrennt). Jeder Eintrag braucht hier eine Begruendung.
+        # Leer seit der Migration auf SvelteKit 3.
         env:
-          IGNORE_GHSA: >-
-            GHSA-3r8g-jcqq-3p5j
+          IGNORE_GHSA: ''
         run: |
           if [ ! -f npm-audit.json ]; then
             echo "OK: no npm-audit.json produced"

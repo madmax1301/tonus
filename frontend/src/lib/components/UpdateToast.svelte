@@ -7,7 +7,7 @@
    * sind — bei einer Homescreen-App passiert das praktisch nie.
    */
   import { onMount } from 'svelte';
-  import { t } from '$lib/i18n';
+  import { t } from '#lib/i18n.ts';
 
   let waiting = $state<ServiceWorker | null>(null);
 

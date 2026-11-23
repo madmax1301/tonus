@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tint, tintDeep, DEFAULT_HUE } from '$lib/accent';
+  import { tint, tintDeep, DEFAULT_HUE } from '#lib/accent.ts';
 
   type Props = {
     hue?: number | null;
