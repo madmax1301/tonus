@@ -35,5 +35,8 @@
   },
   "overrides": {
     "runed": "^0.38.0"
+  },
+  "engines": {
+    "node": ">=22.17"
   }
 }
