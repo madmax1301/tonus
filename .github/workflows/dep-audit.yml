@@ -120,6 +120,69 @@ jobs:
         run: npm audit --audit-level=high --json > npm-audit.json || true
       # Strict mode (v0.4.4 onwards): high+critical sind PR-Blocker.
       - name: Fail on high/critical
+        # Ignore-Liste fuer SvelteKit-2-Advisories (seit 2026-11-23):
+        # tonus baut das Frontend per adapter-static als reine SPA; es laeuft
+        # kein SvelteKit-Server (kein SSR, keine Form-Actions, keine
+        # Remote-Functions), die betroffenen Codepfade werden also nie
+        # ausgefuehrt. Fuer Kit 2 gibt es keinen Fix, nur Kit 3.
+        # Wieder entfernen, sobald die Migration auf SvelteKit 3 gemergt ist.
+        env:
+          IGNORE_GHSA: >-
+            GHSA-3r8g-jcqq-3p5j
+        run: |
+          if [ ! -f npm-audit.json ]; then
+            echo "OK: no npm-audit.json produced"
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json, os, sys
+          ignore = set(os.environ.get("IGNORE_GHSA", "").split())
+          d = json.load(open("npm-audit.json"))
+          blocking, ignored = set(), set()
+          for name, v in d.get("vulnerabilities", {}).items():
+              for via in v.get("via", []):
+                  if not isinstance(via, dict) or via.get("severity") not in ("high", "critical"):
+                      continue
+                  ghsa = via.get("url", "").rstrip("/").rsplit("/", 1)[-1]
+                  entry = f"{name}: {ghsa} ({via['severity']}) {via.get('title', '')}"
+                  (ignored if ghsa in ignore else blocking).add(entry)
+          for e in sorted(ignored):
+              print(f"ignored: {e}")
+          if blocking:
+              for e in sorted(blocking):
+                  print(f"::error::{e}")
+              sys.exit(1)
+          print("OK: no high/critical vulns in npm audit (outside ignore list)")
+          PY
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pip-audit-report
+          path: pip-audit.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  npm-audit:
+    name: Frontend deps (npm audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Node 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm ci (no scripts)
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: npm audit (high+critical only)
+        run: npm audit --audit-level=high --json > npm-audit.json || true
+      # Strict mode (v0.4.4 onwards): high+critical sind PR-Blocker.
+      - name: Fail on high/critical
         run: |
           if [ ! -f npm-audit.json ]; then
             echo "OK: no npm-audit.json produced"
