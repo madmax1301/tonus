@@ -35,6 +35,7 @@ on:
       - 'backend/requirements.txt'
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
+      - '.github/workflows/dep-audit.yml'
   schedule:
     # Woechentlich Montag 06:00 UTC.
     - cron: '0 6 * * 1'
