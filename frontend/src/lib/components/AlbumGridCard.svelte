@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { base } from '$app/paths';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { base } from '#lib/paths.ts';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
   import CoverArt from './CoverArt.svelte';
   import { Download, LoaderCircle } from 'lucide-svelte';
-  import type { Album } from '$lib/api';
+  import type { Album } from '#lib/api.ts';
 
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
 

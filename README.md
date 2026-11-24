@@ -38,7 +38,7 @@ It's a single-tenant tool you self-host on a NAS (or any Docker host). All crede
 - Auth: multi-user with TOTP-2FA, Personal Access Tokens, brute-force lifetime ban
 - Encrypted-at-rest provider credentials and TOTP secrets (Fernet)
 - Persistent app data on a separate volume (auth + queue + settings survive image swaps)
-- Multi-arch image (amd64 + arm64), pin to `:0.3` for production
+- Multi-arch image (amd64 + arm64), pin to `:0.10` for production
 
 **Working but rough edges:**
 
@@ -86,8 +86,10 @@ If your acquisition needs are already handled by a Lidarr-based stack and Soulse
 ## Features
 
 - **Multi-provider search** — Deezer (free, no key) or Spotify (catalog) for metadata; audio falls back across YouTube ↔ SoundCloud automatically based on score and availability
+- **Parallel downloads with a live queue** — 1–4 downloads per lane (default 1, see `DOWNLOAD_CONCURRENCY`); the queue page and the counter update live via Server-Sent Events and load jobs page by page
+- **Installable web app** — add Tonus to the iPhone home screen; runs edge-to-edge, caches the app shell, and offers a reload when a new version is out
 - **Artist download** — search an artist and queue their whole discography with one click; albums + EPs by default, singles / compilations opt-in. Fans out in the background and dedups against your library first (Deezer)
-- **Bulk import (v0.3.0)** — three import paths share one pipeline:
+- **Bulk import** — three import paths share one pipeline:
   - **CSV-Bulk** — drag a TuneMyMusic / Soundiiz / hand-rolled CSV; Tonus parses Artist + Track Name (and an optional Playlist column) and matches against your Navidrome library before touching any provider
   - **Spotify Extended Streaming History** — drop the JSON files from your Spotify data export; tracks are aggregated and auto-grouped into per-year + per-month Subsonic playlists
   - **Playlist-Sync** — match-only mode for tracks already in your library; existing files are added to Subsonic playlists, missing tracks get tagged so they land in the right playlist after download
@@ -99,7 +101,7 @@ If your acquisition needs are already handled by a Lidarr-based stack and Soulse
 - **Hot-reloadable defaults** — change worker cooldowns, default provider, audio codec from the UI without a container restart
 - **Dual-VPN source-IP splitting** (optional, NAS-mode) — bind alternating download threads to two network interfaces for higher throughput on rate-limited APIs
 - **Persistent state on a separate volume** — auth DB and queue jobs live in `/app/data/`; clearing the audio download cache cannot wipe your users
-- **Navidrome plugin** — companion [tonus-navidrome-plugin](https://github.com/madmax1301/tonus-navidrome-plugin) (Extism/WASM) mirrors each user's ListenBrainz *Weekly Exploration/Jams* into Navidrome as personal playlists and queues the missing tracks through Tonus via PAT auth. Grab the `.ndp` from its [releases](https://github.com/madmax1301/tonus-navidrome-plugin/releases).
+- **Navidrome plugin** — companion [tonus-navidrome-plugin](https://github.com/madmax1301/tonus-navidrome-plugin) (Extism/WASM) mirrors each user's ListenBrainz *Weekly Exploration/Jams* and *Fresh Releases* into Navidrome as personal playlists and queues the missing tracks through Tonus via PAT auth. Grab the `.ndp` from its [releases](https://github.com/madmax1301/tonus-navidrome-plugin/releases).
 
 ## Quick Start
 
@@ -237,6 +239,9 @@ This means once you've configured a provider in the UI, the `.env` value for it 
 | `NAVIDROME_SYNC_API_DELAY_SEC` | `0.12` | no | Throttle between Navidrome API calls during sync. |
 | **Storage paths** | | | |
 | `JOBS_DB_PATH` | `/app/data/jobs.db` | no | Auth DB, job queue, app settings, banned IPs. Override only for non-Docker setups. |
+| `BACKUP_DIR` | `/app/data/backups` | no | Where database snapshots go (see [Backup & restore](#backup--restore)). Defaults to a `backups` folder next to `JOBS_DB_PATH`. |
+| `BACKUP_INTERVAL_H` | `24` | no | Hours between automatic snapshots. `0` turns the daily snapshot off; the snapshot on every start stays. |
+| `BACKUP_KEEP` | `7` | no | Snapshots kept per kind (start, daily, manual). |
 | `DOWNLOAD_DIR` | `./downloads` (`/app/downloads` in container) | no | In-flight working area for audio files. **Separate from `JOBS_DB_PATH`** — clearing this folder must not wipe auth state. |
 | **Audio output** | | | |
 | `OUTPUT_FORMAT` | `mp3` | no | Container/codec for the final file. |
@@ -273,6 +278,7 @@ This means once you've configured a provider in the UI, the `.env` value for it 
 | `VPN_SOURCE_B` | `192.168.1.201` | yes if `VPN_SPLIT_ENABLED=true` | Source-IP for download lane B. |
 | **Downloads** | | | |
 | `DOWNLOAD_CONCURRENCY` | `1` | no | Parallel downloads per lane (1–4). Only the starting value: *Settings → Standard-Verhalten* overrides it at runtime. More parallel yt-dlp processes from one IP raise the bot-check risk. |
+| `BOT_CHECK_THROTTLE_S` | `3600` | no | After a YouTube bot-check, all slots of that lane pause for the bot-check cooldown and the lane then runs only one download at a time for this many seconds. Each further bot-check restarts the window. No effect at concurrency 1. |
 
 ### Sensitive values — encryption at rest
 
@@ -334,6 +340,28 @@ docker compose up -d            # restart with the new image
 
 `/app/data/jobs.db` lives on a host bind-mount (the `./tonus-data` folder by default) and survives image swaps. **Do not skip the `mkdir tonus-data downloads` step on first install** — without those bind-mount targets, the DB dies on every container recreation.
 
+## Backup & restore
+
+Everything Tonus cannot rebuild lives in `jobs.db`: users, 2FA, API tokens, the JWT secret (which also encrypts the provider credentials you saved in the UI), settings and the queue. Tonus snapshots it to `tonus-data/backups/`:
+
+- on **every start**, before any schema migration runs, so each `docker compose pull` leaves you the state from before the update
+- every **24 h** (`BACKUP_INTERVAL_H`)
+- on demand under *Settings → Backend → Back up now*, where admins can also download any snapshot
+
+Each kind keeps its last 7 files (`BACKUP_KEEP`). The snapshots sit on the same disk as the database, so they protect you from a bad update or a broken DB, not from a dead disk. Include `tonus-data/` in your NAS backup for that. A snapshot contains password hashes, 2FA secrets and the JWT secret, so treat it like a password file.
+
+**Restore:**
+
+```bash
+docker compose stop tonus
+cp tonus-data/jobs.db tonus-data/jobs.db.before-restore   # keep the current state, just in case
+cp tonus-data/backups/jobs-20261030-221500-startup.db tonus-data/jobs.db
+rm -f tonus-data/jobs.db-wal tonus-data/jobs.db-shm         # stale WAL from the old DB must not be replayed
+docker compose start tonus
+```
+
+If you set `JWT_SECRET` in `.env`, keep it the same as when the snapshot was taken. Otherwise logins and stored credentials from the snapshot can't be decrypted. Restoring an older snapshot into a newer image is fine: migrations only add columns and run again on start. YouTube cookie files are separate files in `tonus-data/` and are not part of the snapshot.
+
 ## Container images
 
 Images are built and published to GHCR by [`.github/workflows/build.yml`](.github/workflows/build.yml) on every push to `main` and on every `vX.Y.Z` git tag. Multi-arch: `linux/amd64` + `linux/arm64`.
@@ -344,8 +372,8 @@ Tonus uses two release channels — bleeding-edge `:dev` for testing, and immuta
 |---|---|---|---|
 | `:dev` | dev (bleeding-edge) | Every push to `dev` | Latest commit on `dev` |
 | `:sha-abc1234` | dev (pinned) | Never (immutable) | A specific commit |
-| `:0.3.0` | stable (pinned) | Never (immutable) | A specific tagged release |
-| `:0.3` | stable (rolling within minor) | New patch tags `v0.3.x` | Latest patch in `0.3.x` |
+| `:0.10.0` | stable (pinned) | Never (immutable) | A specific tagged release |
+| `:0.10` | stable (rolling within minor) | New patch tags `v0.10.x` | Latest patch in `0.10.x` |
 | `:latest` | stable (rolling) | New semver tag `vX.Y.Z` | Most recent tagged release |
 
 For production, pin to a fixed minor:
@@ -353,10 +381,10 @@ For production, pin to a fixed minor:
 ```yaml
 services:
   tonus:
-    image: ghcr.io/madmax1301/tonus:0.3
+    image: ghcr.io/madmax1301/tonus:0.10
 ```
 
-You'll get every patch release automatically but stay locked out of `0.4.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
+You'll get every patch release automatically but stay locked out of `0.11.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
 
 ## FAQ
 
@@ -364,7 +392,7 @@ You'll get every patch release automatically but stay locked out of `0.4.x` unti
 For households that don't depend on Soulseek/slskd, yes. The acquisition flow (search a catalog → download from YouTube → tag → land in Navidrome) covers what most people use Lidarr+Deemix for, with one container instead of two and built-in multi-user auth. If Soulseek is your primary source, Tonus is not there yet — see [Discussions → Ideas](https://github.com/madmax1301/tonus/discussions) for the open thread.
 
 **Does Tonus need Navidrome to work?**
-The acquisition pipeline (search, download, tag) runs without Navidrome — files just land in whatever folder you configure. The optional bits — library-scan trigger, "already downloaded" deduplication, the upcoming Subsonic playlist generation — need a Navidrome instance Tonus can reach via API. Subsonic-direct (without Navidrome) is not on the roadmap.
+The acquisition pipeline (search, download, tag) runs without Navidrome — files just land in whatever folder you configure. The optional bits — library-scan trigger, "already downloaded" deduplication, Subsonic playlist generation (imports, playlist sync, plugin mirrors) — need a Navidrome instance Tonus can reach via API. Subsonic-direct (without Navidrome) is not on the roadmap.
 
 **Can I use Tonus without Spotify credentials?**
 Yes. Deezer is the default catalog, has no API key, and covers most western music. Spotify is opt-in for a richer catalog and album art. YouTube is the audio source either way.

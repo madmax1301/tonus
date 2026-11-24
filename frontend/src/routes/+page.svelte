@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { replaceState } from '$app/navigation';
   import {
     searchApi,
@@ -17,19 +17,19 @@
     type MetadataProvidersResponse,
     type ReverseLookupResult,
     type HealthResponse
-  } from '$lib/api';
-  import { base } from '$app/paths';
-  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
+  } from '#lib/api.ts';
+  import { base } from '#lib/paths.ts';
+  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '#lib/preferences.ts';
   import { get } from 'svelte/store';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
-  import { t } from '$lib/i18n';
-  import { flyToQueue } from '$lib/fly-to-queue';
-  import EmptyState from '$lib/components/EmptyState.svelte';
-  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
-  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
-  import GlassCard from '$lib/components/GlassCard.svelte';
-  import AlbumArt from '$lib/components/AlbumArt.svelte';
-  import AlbumGridCard from '$lib/components/AlbumGridCard.svelte';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
+  import { t } from '#lib/i18n.ts';
+  import { flyToQueue } from '#lib/fly-to-queue.ts';
+  import EmptyState from '#lib/components/EmptyState.svelte';
+  import VinylWithCover from '#lib/components/VinylWithCover.svelte';
+  import CinemaBackdrop from '#lib/components/CinemaBackdrop.svelte';
+  import GlassCard from '#lib/components/GlassCard.svelte';
+  import AlbumArt from '#lib/components/AlbumArt.svelte';
+  import AlbumGridCard from '#lib/components/AlbumGridCard.svelte';
   import { Download, LoaderCircle, Link2, Play, ListMusic } from 'lucide-svelte';
 
   type Mode = 'tracks' | 'albums' | 'url' | 'reverse' | 'playlist';
@@ -338,7 +338,7 @@
     // Restore search state. URL ist primary (deep-link-friendly), sessionStorage
     // ist Fallback wenn URL nichts hergibt (Browser-back-Edge-Cases, syncUrl
     // wurde vor Album-Klick nicht durchgelaufen, etc.).
-    const sp = $page.url.searchParams;
+    const sp = page.url.searchParams;
     const qFromUrl = sp.get('q') ?? '';
     const modeFromUrl = sp.get('mode') as Mode | null;
 
@@ -404,7 +404,7 @@
     } else {
       url.searchParams.delete('mode');
     }
-    replaceState(url, $page.state ?? {});
+    replaceState(url, page.state ?? {});
     writePersistedState();
   }
 

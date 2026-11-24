@@ -1,27 +1,27 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from 'svelte';
-  import { base } from '$app/paths';
+  import { base } from '#lib/paths.ts';
   import {
     queueApi,
     ApiError,
     type QueueJob,
     type QueueResponse,
     type LaneStatusResponse
-  } from '$lib/api';
-  import { tint, extractHue, DEFAULT_HUE } from '$lib/accent';
-  import { t } from '$lib/i18n';
-  import { showConfirm } from '$lib/confirm';
+  } from '#lib/api.ts';
+  import { tint, extractHue, DEFAULT_HUE } from '#lib/accent.ts';
+  import { lang, t } from '#lib/i18n.ts';
+  import { showConfirm } from '#lib/confirm.ts';
   import {
     queueStreamConnected,
     subscribeQueueEvents,
     type QueueEvent
-  } from '$lib/queue-events';
+  } from '#lib/queue-events.ts';
   import { get } from 'svelte/store';
-  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
-  import CoverArt from '$lib/components/CoverArt.svelte';
-  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
-  import ProgressLine from '$lib/components/ProgressLine.svelte';
+  import CinemaBackdrop from '#lib/components/CinemaBackdrop.svelte';
+  import CoverArt from '#lib/components/CoverArt.svelte';
+  import VinylWithCover from '#lib/components/VinylWithCover.svelte';
+  import EmptyState from '#lib/components/EmptyState.svelte';
+  import ProgressLine from '#lib/components/ProgressLine.svelte';
   import {
     RotateCw,
     Trash2,
@@ -607,6 +607,31 @@
     liveLanes.length === 0 ? 0 : Math.min(...liveLanes.map((l) => l.remaining_ms))
   );
 
+  /** Bot-Check-Quote der letzten 24 h und laufende Drossel (worker.py
+   *  _throttle_after_bot_check). Fehlt bei älteren Backends. */
+  const botCheck = $derived(lanes?.bot_check ?? null);
+  const botThrottled = $derived(!!botCheck && botCheck.throttled_until_ms > nowMs);
+
+  /** Zeitpunkt, an dem ein Job fertig wurde (completed/error) — als
+   *  Datum + Uhrzeit für die Karte. Ältere Backends liefern kein
+   *  finished_at_ms, dann ist updated_at_ms die beste Näherung. */
+  const finishedFmt = $derived(
+    new Intl.DateTimeFormat($lang === 'en' ? 'en-GB' : 'de-DE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  );
+  // Im {#each} ist `t` vom Track überdeckt — Label deshalb hier auflösen.
+  const finishedLabel = $derived($t('queue.finished_at'));
+  function finishedAt(job: QueueJob): string | null {
+    if (job.status !== 'completed' && job.status !== 'error') return null;
+    const ms = job.finished_at_ms ?? job.updated_at_ms;
+    return ms ? finishedFmt.format(new Date(ms)) : null;
+  }
+
   function fmtMs(ms: number): string {
     const totalSec = Math.max(0, Math.round(ms / 1000));
     const m = Math.floor(totalSec / 60);
@@ -698,6 +723,24 @@
           {$t('queue.total_jobs', { count: totalAll.toLocaleString('de-DE') })}
           {#if shown < total}
             · {$t('queue.shown', { count: shown.toLocaleString('de-DE') })}
+          {/if}
+        </div>
+      {/if}
+      {#if botCheck && (botThrottled || botCheck.count > 0)}
+        <div
+          class="mt-1 tabular-nums inline-flex items-center gap-1.5"
+          style="font-size: 12px; font-family: var(--font-mono); letter-spacing: 0.02em; color: {botThrottled ? 'var(--color-status-error)' : 'var(--color-fg-secondary)'};"
+        >
+          {#if botThrottled}
+            {$t('queue.bot_check.throttled', {
+              time: new Date(botCheck.throttled_until_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            })}
+          {:else}
+            {$t('queue.bot_check.rate', {
+              count: botCheck.count,
+              finished: botCheck.finished,
+              hours: botCheck.window_hours
+            })}
           {/if}
         </div>
       {/if}
@@ -1311,6 +1354,15 @@
               </span>
               {#if job.stage}
                 <span style="color: var(--color-fg-tertiary);">· {job.stage}</span>
+              {/if}
+              {#if finishedAt(job)}
+                <span
+                  class="tabular-nums"
+                  style="color: var(--color-fg-tertiary); font-family: var(--font-mono);"
+                  title={finishedLabel}
+                >
+                  · {finishedAt(job)}
+                </span>
               {/if}
             </div>
 

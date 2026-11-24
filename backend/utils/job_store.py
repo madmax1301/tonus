@@ -58,6 +58,14 @@ def init_jobs_db() -> None:
         _ensure_column(conn, "download_jobs", "album_id", "TEXT")
         # v0.4.5: retry_count für transient-error re-queue (bot-check, timeout).
         _ensure_column(conn, "download_jobs", "retry_count", "INTEGER NOT NULL DEFAULT 0")
+        # Wann ein Job fertig wurde (completed/error). updated_at_ms taugt dafür
+        # nicht, weil Playlist-Tagging auch fertige Jobs anfasst. Ältere Zeilen
+        # bekommen updated_at_ms als beste Schätzung.
+        _ensure_column(conn, "download_jobs", "finished_at_ms", "INTEGER")
+        conn.execute(
+            "UPDATE download_jobs SET finished_at_ms = updated_at_ms "
+            "WHERE finished_at_ms IS NULL AND status IN ('completed', 'error')"
+        )
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_download_jobs_status ON download_jobs(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_download_jobs_updated ON download_jobs(updated_at_ms)")
@@ -388,8 +396,8 @@ def upsert_job(
         conn.execute("""
         INSERT INTO download_jobs (
             job_id, status, stage, progress, message, file_path, download_url, error,
-            album_id, payload_json, created_at_ms, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            album_id, payload_json, created_at_ms, updated_at_ms, finished_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(job_id) DO UPDATE SET
             status=excluded.status,
             stage=COALESCE(excluded.stage, download_jobs.stage),
@@ -400,12 +408,19 @@ def upsert_job(
             error=COALESCE(excluded.error, download_jobs.error),
             album_id=COALESCE(excluded.album_id, download_jobs.album_id),
             payload_json=COALESCE(excluded.payload_json, download_jobs.payload_json),
-            updated_at_ms=excluded.updated_at_ms
+            updated_at_ms=excluded.updated_at_ms,
+            -- Wiederholtes Schreiben desselben Endstatus behält den ersten Zeitpunkt.
+            finished_at_ms=CASE
+                WHEN excluded.finished_at_ms IS NULL THEN NULL
+                WHEN download_jobs.status = excluded.status THEN COALESCE(download_jobs.finished_at_ms, excluded.finished_at_ms)
+                ELSE excluded.finished_at_ms
+            END
         """, (
             job_id, status, stage, progress, message, file_path, download_url, error,
             album_id,
             json.dumps(payload) if payload is not None else None,
-            now, now
+            now, now,
+            now if status in ("completed", "error") else None,
         ))
         conn.commit()
     finally:
@@ -430,6 +445,7 @@ def requeue_for_retry(job_id: str, retry_count: int, message: str) -> None:
         conn.execute(
             """UPDATE download_jobs
                SET status='queued',
+                   finished_at_ms=NULL,
                    retry_count=?,
                    message=?,
                    error=NULL,

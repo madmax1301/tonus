@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 import time
 import random
+import asyncio
 import threading
 _csv_lock = threading.Lock()
 _worker: "Optional[JobWorker]" = None  # forward ref — JobWorker imported below
@@ -240,6 +241,15 @@ def _migrate_legacy_jobs_db() -> None:
 
 
 _migrate_legacy_jobs_db()
+# Snapshot VOR init_jobs_db(): hält den Stand vor einer Schema-Migration fest
+# (wichtig für :dev-Pulls). Fehler loggen, aber den Start nicht blockieren.
+from utils import backup as _backup
+try:
+    _startup_backup = _backup.snapshot("startup")
+    if _startup_backup:
+        print(f"[backup] {_startup_backup}", flush=True)
+except Exception as _e:
+    print(f"[backup] startup snapshot failed: {type(_e).__name__}: {_e}", flush=True)
 init_jobs_db()
 _stale = reset_stale_inflight_jobs()
 if _stale:
@@ -392,11 +402,14 @@ _download_worker = JobWorker(job_type="download")
 _csv_worker = JobWorker(job_type="import", import_lane="csv")
 _spotify_history_worker = JobWorker(job_type="import", import_lane="spotify_history")
 _playlist_sync_worker = JobWorker(job_type="import", import_lane="playlist_sync")
-_download_worker.start()
-_csv_worker.start()
-_spotify_history_worker.start()
-_playlist_sync_worker.start()
-print("Worker threads started (download + import:csv + import:spotify_history + import:playlist_sync)")
+# TONUS_START_WORKERS=0 lässt die Worker aus — für Tests, die Jobs in die DB
+# legen und nicht wollen, dass ein echter Worker sie nebenher abholt.
+if os.getenv("TONUS_START_WORKERS", "1") != "0":
+    _download_worker.start()
+    _csv_worker.start()
+    _spotify_history_worker.start()
+    _playlist_sync_worker.start()
+    print("Worker threads started (download + import:csv + import:spotify_history + import:playlist_sync)")
 
 # Phase 0 Pre-Warm: Library-Signature-Cache beim Container-Boot asynchron
 # aufbauen, damit der ERSTE CSV-Import nach Restart nicht 30-60s in Phase 0
@@ -425,8 +438,12 @@ _prewarm_thread = threading.Thread(
 )
 _prewarm_thread.start()
 
+_backup_stop = threading.Event()
+_backup.start_scheduler(_backup_stop)
+
 @app.on_event("shutdown")
 def _shutdown_workers():
+    _backup_stop.set()
     print("Shutting down workers...")
     _download_worker.shutdown(timeout=60)
     _csv_worker.shutdown(timeout=300)
@@ -1037,7 +1054,7 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-@app.get("/api/metadata/providers")
+@app.get("/api/metadata/providers", dependencies=[Depends(require_token)])
 async def metadata_providers():
     """Available metadata sources and server default."""
     return {
@@ -1053,7 +1070,7 @@ async def metadata_providers():
     }
 
 
-@app.post("/api/search", response_model=List[TrackResponse])
+@app.post("/api/search", dependencies=[Depends(require_token)], response_model=List[TrackResponse])
 async def search_tracks(request: SearchRequest):
     """Search for tracks using the selected catalog provider."""
     provider = resolve_metadata_provider(request.provider)
@@ -1064,7 +1081,7 @@ async def search_tracks(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-@app.post("/api/reverse/youtube")
+@app.post("/api/reverse/youtube", dependencies=[Depends(require_token)])
 async def reverse_lookup_youtube(request: ReverseLookupRequest):
     """Given a YouTube URL, extract title and search the selected catalog."""
     provider = resolve_metadata_provider(request.provider)
@@ -1093,7 +1110,7 @@ async def reverse_lookup_youtube(request: ReverseLookupRequest):
         raise HTTPException(status_code=500, detail=f"Reverse lookup failed: {str(e)}")
 
 
-@app.post("/api/search/tracks/top")
+@app.post("/api/search/tracks/top", dependencies=[Depends(require_token)])
 async def search_tracks_top(request: SearchRequest):
     """Search tracks with a small default limit (pick-lists)."""
     provider = resolve_metadata_provider(request.provider)
@@ -1106,7 +1123,7 @@ async def search_tracks_top(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-@app.post("/api/search/albums")
+@app.post("/api/search/albums", dependencies=[Depends(require_token)])
 async def search_albums(request: SearchRequest):
     """Search for albums."""
     provider = resolve_metadata_provider(request.provider)
@@ -1117,7 +1134,7 @@ async def search_albums(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Album search failed: {str(e)}")
 
 
-@app.post("/api/search/artists")
+@app.post("/api/search/artists", dependencies=[Depends(require_token)])
 async def search_artists(request: SearchRequest):
     """Search for artists (for the artist card / "download all" flow)."""
     provider = resolve_metadata_provider(request.provider)
@@ -1133,7 +1150,7 @@ async def search_artists(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Artist search failed: {str(e)}")
 
 
-@app.get("/api/album/{album_id}")
+@app.get("/api/album/{album_id}", dependencies=[Depends(require_token)])
 async def get_album(album_id: str, provider: Optional[str] = Query(None)):
     """Get album details including all tracks"""
     p = resolve_metadata_provider(provider)
@@ -1149,7 +1166,7 @@ async def get_album(album_id: str, provider: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail=f"Error fetching album: {str(e)}")
 
 
-@app.get("/api/track/{track_id}", response_model=TrackResponse)
+@app.get("/api/track/{track_id}", dependencies=[Depends(require_token)], response_model=TrackResponse)
 async def get_track(track_id: str, provider: Optional[str] = Query(None)):
     """Get details for a specific track"""
     p = resolve_metadata_provider(provider)
@@ -1228,7 +1245,7 @@ async def list_queue(
         rows = conn.execute(
             f"""
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json, rowid AS _rowid
+                   created_at_ms, updated_at_ms, finished_at_ms, payload_json, rowid AS _rowid
             FROM download_jobs
             WHERE status IN ({placeholders})
             ORDER BY
@@ -1267,6 +1284,7 @@ async def list_queue(
                     "download_url": row["download_url"],
                     "created_at_ms": row["created_at_ms"],
                     "updated_at_ms": row["updated_at_ms"],
+                    "finished_at_ms": row["finished_at_ms"],
                     "payload": payload,
                 }
             )
@@ -1300,13 +1318,14 @@ async def list_queue(
                 "download_url": r["download_url"],
                 "created_at_ms": r["created_at_ms"],
                 "updated_at_ms": r["updated_at_ms"],
+                "finished_at_ms": r["finished_at_ms"],
                 "payload": payload,
             }
 
         proc_rows = conn.execute(
             """
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json
+                   created_at_ms, updated_at_ms, finished_at_ms, payload_json
             FROM download_jobs
             WHERE status = 'processing'
             ORDER BY created_at_ms ASC, rowid ASC
@@ -1315,7 +1334,7 @@ async def list_queue(
         head_rows = conn.execute(
             """
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json
+                   created_at_ms, updated_at_ms, finished_at_ms, payload_json
             FROM download_jobs
             WHERE status = 'queued'
             ORDER BY created_at_ms ASC, rowid ASC
@@ -1423,7 +1442,7 @@ def _queue_snapshot_since(since_ms: int, seen: set) -> Dict[str, Any]:
         rows = conn.execute(
             """
             SELECT job_id, status, stage, progress, message, download_url,
-                   created_at_ms, updated_at_ms, payload_json
+                   created_at_ms, updated_at_ms, finished_at_ms, payload_json
             FROM download_jobs
             WHERE updated_at_ms >= ?
             ORDER BY updated_at_ms ASC
@@ -1457,6 +1476,7 @@ def _queue_snapshot_since(since_ms: int, seen: set) -> Dict[str, Any]:
                 "download_url": r["download_url"],
                 "created_at_ms": r["created_at_ms"],
                 "updated_at_ms": r["updated_at_ms"],
+                "finished_at_ms": r["finished_at_ms"],
                 "payload": payload,
             })
 
@@ -1487,6 +1507,7 @@ def _lanes_fingerprint(lanes: Dict[str, Any]) -> Any:
         lanes.get("concurrency"),
         tuple(lanes.get("cooldown", {}).get("normal_seconds", [])),
         tuple(lanes.get("cooldown", {}).get("rate_limited_seconds", [])),
+        tuple(sorted(lanes.get("bot_check", {}).items())),
     )
 
 
@@ -1928,7 +1949,7 @@ async def reverse_download(request: ReverseDownloadRequest, background_tasks: Ba
     }
 
 
-@app.get("/api/download/status/{track_id}")
+@app.get("/api/download/status/{track_id}", dependencies=[Depends(require_token)])
 async def get_download_status(track_id: str):
     job = get_job(track_id)
     if not job:
@@ -1969,7 +1990,7 @@ async def start_queued_job(job_id: str, _: None = Depends(require_token)):
     conn = _db()
     try:
         conn.execute(
-            "UPDATE download_jobs SET status='queued', updated_at_ms = ? WHERE job_id = ? AND status = 'error'",
+            "UPDATE download_jobs SET status='queued', finished_at_ms = NULL, updated_at_ms = ? WHERE job_id = ? AND status = 'error'",
             (_now_ms(), job_id),
         )
         conn.commit()
@@ -1988,7 +2009,7 @@ async def retry_all_errors(_: None = Depends(require_token)):
     conn = _db()
     try:
         cur = conn.execute(
-            "UPDATE download_jobs SET status='queued', updated_at_ms = ? WHERE status = 'error'",
+            "UPDATE download_jobs SET status='queued', finished_at_ms = NULL, updated_at_ms = ? WHERE status = 'error'",
             (_now_ms(),),
         )
         conn.commit()
@@ -2198,7 +2219,7 @@ def download_album_track(
 
 
 
-@app.get("/api/download/album/status/{album_id}")
+@app.get("/api/download/album/status/{album_id}", dependencies=[Depends(require_token)])
 async def get_album_download_status(album_id: str):
     album_job_id = f"album:{album_id}"
     meta_job = get_job(album_job_id)
@@ -2358,7 +2379,7 @@ async def download_artist(request: ArtistDownloadRequest, background_tasks: Back
     }
 
 
-@app.get("/api/download/artist/status/{artist_id}")
+@app.get("/api/download/artist/status/{artist_id}", dependencies=[Depends(require_token)])
 async def get_artist_download_status(artist_id: str):
     """Aggregate an artist download's progress by summing its albums' aggregates."""
     meta = get_job(f"artist:{artist_id}")
@@ -2402,7 +2423,7 @@ async def get_artist_download_status(artist_id: str):
 
 
 
-@app.get("/api/youtube/candidates/{track_id}")
+@app.get("/api/youtube/candidates/{track_id}", dependencies=[Depends(require_token)])
 async def get_youtube_candidates(track_id: str, provider: Optional[str] = Query(None)):
     """Get YouTube candidates for a track to let user choose if confidence is low"""
     p = resolve_metadata_provider(provider)
@@ -2433,7 +2454,7 @@ async def get_youtube_candidates(track_id: str, provider: Optional[str] = Query(
         raise HTTPException(status_code=500, detail=f"Error searching YouTube: {str(e)}")
 
 
-@app.get("/api/download/file/{track_id}")
+@app.get("/api/download/file/{track_id}", dependencies=[Depends(require_token)])
 async def download_file(track_id: str, filename: str = Query(...),
                         background_tasks: BackgroundTasks = BackgroundTasks()):
     """Download a file (for local browser downloads) and delete temp file afterward"""
@@ -2511,13 +2532,13 @@ def cleanup_temp_file(file_path: str, _job_id: str):
         print(f"Error cleaning up temp file {file_path}: {e}")
 
 
-@app.get("/api/navidrome/libraries")
+@app.get("/api/navidrome/libraries", dependencies=[Depends(require_token)])
 async def list_navidrome_libraries():
     """Configured Navidrome music folder roots (from NAVIDROME_MUSIC_PATHS / labels)."""
     return {"libraries": config.navidrome_libraries_public()}
 
 
-@app.get("/api/track/{track_id}/exists")
+@app.get("/api/track/{track_id}/exists", dependencies=[Depends(require_token)])
 async def check_track_exists(
     track_id: str,
     provider: Optional[str] = Query(None),
@@ -2575,7 +2596,7 @@ async def check_track_exists(
         raise HTTPException(status_code=500, detail=f"Error checking track: {str(e)}")
 
 
-@app.get("/api/formats")
+@app.get("/api/formats", dependencies=[Depends(require_token)])
 async def get_available_formats():
     """Get available audio formats and quality options"""
     return {
@@ -2619,7 +2640,7 @@ async def health_check(authed: bool = Depends(optional_token)):
         })
     return base
 
-@app.post("/api/recommendations")
+@app.post("/api/recommendations", dependencies=[Depends(require_token)])
 def get_recommendations(request: RecommendationRequest):
     """
     Deezer Artist Radio — ähnliche Tracks basierend auf einem Deezer track_id
@@ -2952,7 +2973,7 @@ async def import_spotify_history(req: SpotifyHistoryImportRequest, _: None = Dep
 
 
 @app.get("/api/import/jobs/{job_id}/status")
-async def import_job_status(job_id: str):
+async def import_job_status(job_id: str, _: None = Depends(require_token)):
     """Poll CSV/JSON import progress (aus SQLite). Liefert:
     - library_match_count (Phase H) damit Frontend den "in library"-Counter live zeigen kann
     - recovery_total + recovery_recovered (Phase 2.5) damit Frontend rechecked-Stats anzeigt
@@ -3014,6 +3035,7 @@ async def import_job_result(
     job_id: str,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
+    _: None = Depends(require_token),
 ):
     """CSV-Import-Ergebnisse paginiert aus SQLite."""
     job = get_import_job(job_id)
@@ -3680,7 +3702,7 @@ async def url_download(req: URLDownloadRequest, background_tasks: BackgroundTask
     return {"status": "queued", "job_id": job_id}
 
 
-@app.post("/api/url/search")
+@app.post("/api/url/search", dependencies=[Depends(require_token)])
 async def url_search(req: URLSearchRequest):
     """Phase 2: Multi-Source-Search via yt-dlp.
 
@@ -3763,7 +3785,7 @@ async def plugin_health():
     }
 
 
-@app.get("/api/plugin/sync-status")
+@app.get("/api/plugin/sync-status", dependencies=[Depends(require_token)])
 async def plugin_sync_status():
     """Kompaktes Status-Aggregat für den Read-Only-Block in der Plugin-
     Settings-Page (Navidrome-UI). Polling-freundlich: ein DB-Trip, kleine
@@ -4460,12 +4482,19 @@ async def plugin_lbweekly_discovery(
 ):
     """Plugin-Trigger für eine LB-'createdfor'-Playlist. Queued fehlende
     Tracks im Hintergrund (mit sync-Markern) und liefert synchron die
-    bereits-in-Library-Liste für die Plugin-Build-Phase."""
+    bereits-in-Library-Liste für die Plugin-Build-Phase.
+
+    ``rotated_at_ms`` ist der Zeitpunkt der letzten LB-Wochen-Rotation (0 =
+    unbekannt). Das Plugin fragt finished-tracks damit ab und ersetzt die
+    Playlist, statt Tracks älterer LB-Versionen weiter anzuhängen."""
+    from services.discovery import lb_playlist_rotated_at_ms
     background_tasks.add_task(_run_plugin_lbweekly_discovery, req)
     existing = _check_lbweekly_tracks_in_library(req)
+    rotated_at_ms = lb_playlist_rotated_at_ms(req.listenbrainz_user, req.source_patch)
     return {"started": True,
             "message": "lbweekly discovery + queueing missing tracks in background",
-            "existing": existing}
+            "existing": existing,
+            "rotated_at_ms": rotated_at_ms}
 
 
 @app.post("/api/plugin/lbfresh/discovery")
@@ -4493,12 +4522,13 @@ async def plugin_lbfresh_discovery(
             "existing": existing}
 
 
-@app.get("/api/plugin/finished-tracks")
+@app.get("/api/plugin/finished-tracks", dependencies=[Depends(require_token)])
 async def plugin_finished_tracks(
     navidrome_user: str = Query(..., min_length=1),
     since_days: int = Query(60, ge=1, le=365),
     playlist_name: Optional[str] = Query(None),
     limit: int = Query(25, ge=1, le=200),
+    since_ms: Optional[int] = Query(None, ge=0),
 ):
     """Liefert die heruntergeladenen Tracks eines Plugin-Sync-Runs für einen
     bestimmten Navidrome-User — wird vom Plugin im Reconcile-Task abgefragt
@@ -4508,7 +4538,9 @@ async def plugin_finished_tracks(
       - status='completed' (Worker hat den Track erfolgreich runtergeladen)
       - payload.plugin_sync_navidrome_user == ``navidrome_user``
       - optional: payload.plugin_sync_playlist_name == ``playlist_name``
-      - created_at_ms innerhalb der letzten ``since_days``
+      - created_at_ms innerhalb der letzten ``since_days`` und, falls
+        gesetzt, >= ``since_ms`` (LB-Weekly: nur Tracks, die seit der letzten
+        LB-Rotation für diese Playlist gequeued wurden)
       - max ``limit`` Tracks pro Call (Default 25), damit der Plugin-
         Reconcile-Task nicht im 30 s-Hostlimit hängt. Reconcile holt sich
         beim nächsten Cron-Trigger den Rest.
@@ -4523,6 +4555,8 @@ async def plugin_finished_tracks(
     import json as _json
 
     cutoff_ms = _now_ms() - since_days * 24 * 3600 * 1000
+    if since_ms:
+        cutoff_ms = max(cutoff_ms, since_ms)
     conn = _db()
     try:
         rows = conn.execute(
@@ -4607,392 +4641,55 @@ async def plugin_finished_tracks(
     }
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Phase F.2 — Auth-Endpoints
-#
-# /api/auth/setup-status  — public, sagt ob noch ein Initial-Setup nötig ist
-# /api/auth/setup         — public, legt den ersten Admin an (nur einmal)
-# /api/auth/login         — public, Username + Password (+ optional TOTP) → JWT pair
-# /api/auth/refresh       — public, Refresh-Token → neues Access-Token
-# /api/auth/logout        — auth, revoke aktuelles Refresh-Token
-# /api/auth/me            — auth, gibt den aktuell auth'd User zurück
-# ──────────────────────────────────────────────────────────────────────
+from routers import auth as _auth_router
 
-class AuthSetupRequest(BaseModel):
-    username: str
-    password: str
-    enable_totp: bool = False
+app.include_router(_auth_router.router)
 
 
-class AuthLoginRequest(BaseModel):
-    username: str
-    password: str
-    totp_code: Optional[str] = None
+def _require_real_admin(request: Request) -> None:
+    """Wie require_admin, aber ohne den Setup-Modus: solange noch kein User
+    existiert, gilt jeder Request als Admin. Backups enthalten das JWT-Secret
+    und sollen auch dann nicht anonym abrufbar sein."""
+    user = getattr(request.state, "user", None) or {}
+    if user.get("auth_method") == "setup":
+        raise HTTPException(status_code=403, detail="Erst einen Admin-Account anlegen.")
 
 
-class AuthRefreshRequest(BaseModel):
-    refresh_token: str
-
-
-class AuthLogoutRequest(BaseModel):
-    refresh_token: Optional[str] = None
-
-
-def _client_ip(request: Request) -> Optional[str]:
-    """Extract client IP from request, falls hinter Reverse-Proxy via
-    X-Forwarded-For / X-Real-IP. Best-effort — null wenn keiner gesetzt."""
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        # X-Forwarded-For: client, proxy1, proxy2 — wir wollen client
-        return fwd.split(",")[0].strip()
-    real = request.headers.get("x-real-ip")
-    if real:
-        return real.strip()
-    return request.client.host if request.client else None
-
-
-@app.get("/api/auth/setup-status")
-async def auth_setup_status():
-    """Public — Frontend nutzt das beim ersten Page-Load um zu erkennen,
-    ob ein Setup-Wizard gezeigt werden muss. Auth-aktiv wenn entweder
-    ein User registriert ist oder Legacy-Token konfiguriert."""
-    from utils import auth_users as au
+@app.get("/api/admin/backups")
+async def admin_backups_list(_: None = Depends(require_token),
+                             __: None = Depends(require_admin),
+                             ___: None = Depends(_require_real_admin)):
+    """Vorhandene Snapshots von jobs.db, neueste zuerst."""
     return {
-        "setup_required": au.setup_required(),
-        "auth_active": auth_required(),
-        "legacy_token_active": bool(config.TONUS_API_TOKEN),
+        "backups": _backup.list_backups(),
+        "keep": _backup.BACKUP_KEEP,
+        "interval_hours": _backup.BACKUP_INTERVAL_H,
     }
 
 
-@app.post("/api/auth/setup")
-async def auth_setup(req: AuthSetupRequest):
-    """Bootstrap: legt den ersten Admin-User an. Nur einmal aufrufbar —
-    sobald ein User existiert, gibt's 409."""
-    from utils import auth_users as au
-    if not au.setup_required():
-        raise HTTPException(status_code=409, detail="Setup bereits abgeschlossen")
-    try:
-        user = au.create_user(req.username, req.password, is_admin=True)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # Optional: TOTP-Setup vorbereiten — aber NICHT direkt scharf machen!
-    # Frontend zeigt QR + Code-Input → POST /api/auth/totp-confirm verifies
-    # den ersten Code BEVOR das Secret in die DB landet. Sonst kann ein
-    # User mit kaputtem QR-Scan sich selbst aussperren (TOTP aktiv, aber
-    # er hat keinen funktionierenden Authenticator).
-    totp_uri: Optional[str] = None
-    totp_secret: Optional[str] = None
-    totp_qr_data_url: Optional[str] = None
-    if req.enable_totp:
-        import qrcode as _qrcode
-        import qrcode.image.svg as _qrcode_svg
-        import base64 as _b64
-        from io import BytesIO as _BytesIO
-
-        totp_secret = au.generate_totp_secret()
-        # NICHT au.set_totp_secret hier — erst nach Verify-Step.
-        totp_uri = au.totp_provisioning_uri(totp_secret, req.username)
-
-        # QR server-side rendern (SVG, nicht PNG) — vermeidet Pillow-
-        # Dependency, ist scharfer als PNG und kleiner. Der otpauth-URI
-        # enthält das Klartext-Secret, also nicht an externe QR-Services.
-        _img = _qrcode.make(totp_uri, image_factory=_qrcode_svg.SvgImage)
-        _buf = _BytesIO()
-        _img.save(_buf)
-        totp_qr_data_url = "data:image/svg+xml;base64," + _b64.b64encode(_buf.getvalue()).decode("ascii")
-
-    # Direkt-Login nach Setup — User soll nicht extra einloggen müssen.
-    pair = au.issue_jwt_pair(user["id"], req.username, is_admin=True)
-    au.touch_last_login(user["id"])
-
-    return {
-        "user": {"id": user["id"], "username": req.username, "is_admin": True},
-        "tokens": pair,
-        "totp_secret": totp_secret,  # nur einmal sichtbar
-        "totp_uri": totp_uri,
-        "totp_qr_data_url": totp_qr_data_url,
-    }
+@app.post("/api/admin/backups")
+async def admin_backups_create(_: None = Depends(require_token),
+                               __: None = Depends(require_admin),
+                               ___: None = Depends(_require_real_admin)):
+    """Sofortiger Snapshot. Läuft im Threadpool — die Backup-API kopiert
+    seitenweise und soll den Event-Loop nicht blockieren."""
+    name = await asyncio.to_thread(_backup.snapshot, "manual")
+    if not name:
+        raise HTTPException(status_code=404, detail="Keine Datenbank gefunden.")
+    return {"name": name}
 
 
-@app.post("/api/auth/login")
-async def auth_login(req: AuthLoginRequest, request: Request):
-    """Username + Password (+ TOTP wenn aktiv) → JWT pair. Wirft 401 bei
-    falschen Creds. 429 bei Rate-Limit nach 5 Failed-Attempts/15min.
-    403 wenn die IP bereits gebannt ist (Lifetime-Ban nach 5+ Fails/24h)."""
-    from utils import auth_users as au
-    from utils.auth import assert_ip_not_banned
-
-    # Pre-Auth IP-Ban-Check — gebannte IPs erst gar nicht in den Username/
-    # Password-Pfad lassen. Verhindert auch dass record_login_attempt sie
-    # weiter mitzählt und u.U. ein Recovery via "alter ttl" möglich wäre.
-    assert_ip_not_banned(request)
-
-    username = req.username.strip()
-    if not username or not req.password:
-        raise HTTPException(status_code=400, detail="Username und Passwort erforderlich")
-
-    if au.is_rate_limited(username):
-        raise HTTPException(
-            status_code=429,
-            detail="Zu viele Fehlversuche. Bitte 15 Minuten warten.",
-        )
-
-    user = au.get_user_by_username(username)
-    ip = _client_ip(request)
-
-    if not user or not au.verify_password(req.password, user["password_hash"]):
-        au.record_login_attempt(username, ip, success=False)
-        raise HTTPException(
-            status_code=401,
-            detail="Falsche Anmeldedaten",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # TOTP-Check wenn aktiviert
-    if user["totp_secret"]:
-        secret = au.get_user_totp_secret(user["id"])
-        if not secret or not au.verify_totp_code(secret, req.totp_code or ""):
-            au.record_login_attempt(username, ip, success=False)
-            raise HTTPException(
-                status_code=401,
-                detail="2FA-Code fehlt oder falsch",
-                headers={"X-Auth-Required-2FA": "true"},
-            )
-
-    pair = au.issue_jwt_pair(user["id"], user["username"], bool(user["is_admin"]))
-    au.touch_last_login(user["id"])
-    au.record_login_attempt(username, ip, success=True)
-
-    return {
-        "user": {
-            "id": user["id"],
-            "username": user["username"],
-            "is_admin": bool(user["is_admin"]),
-            "totp_enabled": bool(user["totp_secret"]),
-        },
-        "tokens": pair,
-    }
-
-
-@app.post("/api/auth/refresh")
-async def auth_refresh(req: AuthRefreshRequest):
-    """Tausche Refresh-Token gegen neues Access-Token (+ rotiertem Refresh).
-    Old refresh wird invalidiert (token-rotation pattern)."""
-    from utils import auth_users as au
-    claims = au.decode_jwt(req.refresh_token, expected_type="refresh")
-    if not claims:
-        raise HTTPException(status_code=401, detail="Refresh-Token ungültig oder abgelaufen")
-
-    user_id = int(claims.get("sub", 0))
-    user = au.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=401, detail="User nicht gefunden")
-
-    # Rotation: altes refresh-jti revoken, neues pair ausstellen.
-    au.revoke_refresh_token(claims["jti"])
-    pair = au.issue_jwt_pair(user["id"], user["username"], bool(user["is_admin"]))
-    return {"tokens": pair}
-
-
-@app.post("/api/auth/logout")
-async def auth_logout(req: AuthLogoutRequest, request: Request,
-                      _: None = Depends(require_token)):
-    """Invalidiert das übergebene Refresh-Token. Access-Token läuft sowieso
-    nach JWT_ACCESS_TTL_MIN ab — Logout-Sicherheit kommt vom Refresh-Revoke.
-    Wenn refresh_token nicht im Body: revoke ALLE refresh-tokens des Users
-    (Logout-everywhere)."""
-    from utils import auth_users as au
-    user = request.state.user
-    user_id = int(user.get("id", 0))
-    if user_id <= 0:
-        # Legacy/Setup-Auth → nichts zu logouten
-        return {"ok": True, "revoked": 0}
-
-    if req.refresh_token:
-        claims = au.decode_jwt(req.refresh_token, expected_type="refresh")
-        if claims and claims.get("jti"):
-            au.revoke_refresh_token(claims["jti"])
-            return {"ok": True, "revoked": 1}
-        return {"ok": True, "revoked": 0}
-
-    n = au.revoke_all_user_refresh_tokens(user_id)
-    return {"ok": True, "revoked": n}
-
-
-class TotpConfirmRequest(BaseModel):
-    secret: str
-    code: str
-
-
-class TotpDisableRequest(BaseModel):
-    password: str
-    totp_code: Optional[str] = None
-
-
-@app.post("/api/auth/totp-init")
-async def auth_totp_init(request: Request, _: None = Depends(require_token)):
-    """Generiert ein frisches TOTP-Secret + Provisioning-URI + QR-PNG (data-URL)
-    für nachträgliches 2FA-Setup aus den Settings. Wird NICHT in der DB
-    persistiert — der Aufrufer muss den ersten Code via /api/auth/totp-confirm
-    verifizieren, das aktiviert das Secret dann scharf.
-    Verify-First-Activate-Second.
-
-    QR wird hier serverseitig als SVG gerendert + base64-data-URL, damit
-    das Secret nicht an einen externen QR-Service raussickert — der otpauth-URI
-    enthält das Secret im Klartext. SVG vermeidet Pillow-Dependency.
-
-    409 wenn TOTP für den User schon aktiv ist — erst /totp-disable nötig."""
-    from utils import auth_users as au
-    import qrcode
-    import qrcode.image.svg as qrcode_svg
-    import base64
-    from io import BytesIO
-
-    user = request.state.user
-    user_id = int(user.get("id", 0))
-    if user_id <= 0:
-        raise HTTPException(status_code=403, detail="TOTP-Init nur für eingeloggte User")
-    db_user = au.get_user_by_id(user_id)
-    if not db_user:
-        raise HTTPException(status_code=401, detail="User nicht mehr gefunden")
-    if db_user["totp_secret"]:
-        raise HTTPException(
-            status_code=409,
-            detail="TOTP ist bereits aktiv — erst deaktivieren, dann neu einrichten.",
-        )
-    secret = au.generate_totp_secret()
-    uri = au.totp_provisioning_uri(secret, db_user["username"])
-
-    img = qrcode.make(uri, image_factory=qrcode_svg.SvgImage)
-    buf = BytesIO()
-    img.save(buf)
-    qr_data_url = "data:image/svg+xml;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
-
-    return {"secret": secret, "uri": uri, "qr_data_url": qr_data_url}
-
-
-@app.post("/api/auth/totp-confirm")
-async def auth_totp_confirm(req: TotpConfirmRequest, request: Request,
-                             _: None = Depends(require_token)):
-    """Verifiziert den ersten TOTP-Code BEVOR das Secret scharf in der DB
-    landet. So kann sich ein User mit kaputtem Authenticator-Setup nicht
-    aussperren — TOTP wird nur aktiviert wenn er nachweisen kann dass
-    seine App den Code korrekt generiert."""
-    from utils import auth_users as au
-    user = request.state.user
-    user_id = int(user.get("id", 0))
-    if user_id <= 0:
-        raise HTTPException(status_code=403, detail="TOTP-Confirm nur für eingeloggte User")
-
-    if not au.verify_totp_code(req.secret, req.code):
-        raise HTTPException(status_code=401, detail="TOTP-Code falsch oder abgelaufen")
-
-    au.set_totp_secret(user_id, req.secret)
-    return {"ok": True}
-
-
-@app.post("/api/auth/totp-disable")
-async def auth_totp_disable(req: TotpDisableRequest, request: Request,
-                             _: None = Depends(require_token)):
-    """Deaktiviert TOTP für den eingeloggten User. Verlangt Password-Re-Verify
-    plus aktuellen TOTP-Code (wenn 2FA gerade aktiv ist) — sonst könnte ein
-    geklauter Access-Token allein genügen, um 2FA auszuhebeln. Defense gegen
-    Session-Hijack."""
-    from utils import auth_users as au
-    user = request.state.user
-    user_id = int(user.get("id", 0))
-    if user_id <= 0:
-        raise HTTPException(status_code=403, detail="TOTP-Disable nur für eingeloggte User")
-    db_user = au.get_user_by_id(user_id)
-    if not db_user:
-        raise HTTPException(status_code=401, detail="User nicht mehr gefunden")
-
-    if not au.verify_password(req.password, db_user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Passwort falsch")
-
-    if db_user["totp_secret"]:
-        secret = au.get_user_totp_secret(user_id)
-        if not secret or not au.verify_totp_code(secret, req.totp_code or ""):
-            raise HTTPException(
-                status_code=401,
-                detail="TOTP-Code fehlt oder ist falsch",
-            )
-
-    au.disable_totp(user_id)
-    return {"ok": True}
-
-
-class PatCreateRequest(BaseModel):
-    name: str
-    expires_in_days: Optional[int] = None  # None ⇒ unbegrenzt
-
-
-def _user_id_from_request(request: Request) -> int:
-    """Extrahiert die User-ID aus dem authentifizierten Request. Wirft 403
-    für legacy/setup-Auth (kein User-Datensatz dahinter — PATs gehören zu
-    einem konkreten User)."""
-    user = request.state.user
-    user_id = int(user.get("id", 0))
-    if user_id <= 0:
-        raise HTTPException(
-            status_code=403,
-            detail="API-Tokens sind nur für eingeloggte User mit Account verfügbar.",
-        )
-    return user_id
-
-
-@app.post("/api/auth/pats")
-async def auth_pats_create(req: PatCreateRequest, request: Request,
-                            _: None = Depends(require_token),
-                            __: None = Depends(require_admin)):
-    """Erstellt einen neuen Personal Access Token. Plain-Token wird NUR
-    in dieser Antwort zurückgegeben — Backend speichert nur den sha256-Hash.
-    Caller (Frontend) muss den Plain-Token einmalig anzeigen + verwerfen.
-
-    Admin-only: PATs sind System-zu-System-Credentials (Plugin-Auth) und
-    sollten nur vom Admin angelegt werden. Reguläre User haben keinen
-    Use-Case für eigene Long-Lived-Tokens."""
-    from utils import auth_users as au
-    user_id = _user_id_from_request(request)
-    name = (req.name or "").strip()
-    if not name or len(name) > 64:
-        raise HTTPException(status_code=400, detail="Name muss 1–64 Zeichen lang sein.")
-
-    expires_at_ms: Optional[int] = None
-    if req.expires_in_days and req.expires_in_days > 0:
-        expires_at_ms = int(time.time() * 1000) + req.expires_in_days * 24 * 60 * 60 * 1000
-
-    try:
-        pat = au.issue_pat(user_id, name, expires_at_ms=expires_at_ms)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return pat
-
-
-@app.get("/api/auth/pats")
-async def auth_pats_list(request: Request,
-                          _: None = Depends(require_token),
-                          __: None = Depends(require_admin)):
-    """Liste aller PATs des eingeloggten Admins — ohne Plain-Token (gibt's nicht
-    mehr, nur prefix für Identifikation)."""
-    from utils import auth_users as au
-    user_id = _user_id_from_request(request)
-    return {"pats": au.list_pats(user_id)}
-
-
-@app.delete("/api/auth/pats/{pat_id}")
-async def auth_pats_revoke(pat_id: int, request: Request,
-                            _: None = Depends(require_token),
-                            __: None = Depends(require_admin)):
-    """Hard-Delete eines PATs. Owner-Check ist im SQL — der Admin kann nur
-    seine eigenen Tokens widerrufen, fremde IDs returnieren 404."""
-    from utils import auth_users as au
-    user_id = _user_id_from_request(request)
-    ok = au.revoke_pat(pat_id, user_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Token nicht gefunden.")
-    return {"ok": True}
+@app.get("/api/admin/backups/{name}")
+async def admin_backups_download(name: str,
+                                 _: None = Depends(require_token),
+                                 __: None = Depends(require_admin),
+                                 ___: None = Depends(_require_real_admin)):
+    """Download eines Snapshots. Enthält Passwort-Hashes, 2FA-Secrets und
+    das JWT-Secret — deshalb admin-only und Dateiname strikt validiert."""
+    path = _backup.path_for(name)
+    if not path:
+        raise HTTPException(status_code=404, detail="Backup nicht gefunden.")
+    return FileResponse(path, media_type="application/vnd.sqlite3", filename=name)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -5171,188 +4868,10 @@ async def settings_cooldown_put(req: CooldownUpdateRequest,
     return {'ok': True}
 
 
-# ─────────────────────────────────────────────────────────────────────
-# User-Management (Admin-only)
-# ─────────────────────────────────────────────────────────────────────
-
-class UserCreateRequest(BaseModel):
-    username: str
-    password: str
-    is_admin: bool = False
-
-
-class UserPatchRequest(BaseModel):
-    is_admin: Optional[bool] = None
-    password: Optional[str] = None
-    # Pflichtfeld bei Self-Password-Change. Bei Admin-Reset auf einen
-    # anderen User wird es ignoriert (Admin-Privileg). Backend entscheidet
-    # anhand user_id == me.id ob es required ist.
-    current_password: Optional[str] = None
-
-
-def _public_user_record(u: Dict[str, Any]) -> Dict[str, Any]:
-    """Filter sensitive Felder (password_hash, totp_secret) bevor wir Records
-    ans Frontend geben. totp_enabled wird als bool surfacet (statt das
-    Secret selbst zu enthüllen)."""
-    return {
-        "id": u.get("id"),
-        "username": u.get("username"),
-        "is_admin": bool(u.get("is_admin")),
-        "totp_enabled": bool(u.get("totp_enabled")) if "totp_enabled" in u else bool(u.get("totp_secret")),
-        "created_at_ms": u.get("created_at_ms"),
-        "last_login_at_ms": u.get("last_login_at_ms"),
-    }
-
-
-@app.get("/api/auth/users")
-async def auth_users_list(_: None = Depends(require_token),
-                           __: None = Depends(require_admin)):
-    """Liste aller User. Admin-only."""
-    from utils import auth_users as au
-    return {"users": [_public_user_record(u) for u in au.list_users()]}
-
-
-@app.post("/api/auth/users")
-async def auth_users_create(req: UserCreateRequest,
-                              _: None = Depends(require_token),
-                              __: None = Depends(require_admin)):
-    """Legt neuen User an. Admin-only.
-    400 wenn Username schon existiert oder Validation fehlschlägt."""
-    from utils import auth_users as au
-    try:
-        user = au.create_user(req.username, req.password, is_admin=req.is_admin)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"user": _public_user_record(user)}
-
-
-@app.delete("/api/auth/users/{user_id}")
-async def auth_users_delete(user_id: int, request: Request,
-                              _: None = Depends(require_token),
-                              __: None = Depends(require_admin)):
-    """Hard-Delete. Schutz:
-    - Self-Delete: nicht erlaubt (Self-Lockout-Risiko)
-    - Last-Admin-Delete: nicht erlaubt (System wäre unverwaltbar)
-    Cascade: User's PATs + refresh_tokens werden mit gelöscht."""
-    from utils import auth_users as au
-    me = request.state.user
-    if int(me.get("id", 0)) == user_id:
-        raise HTTPException(status_code=400, detail="Du kannst dich nicht selbst löschen.")
-    target = au.get_user_by_id(user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User nicht gefunden.")
-    if bool(target.get("is_admin")) and au.admin_count() <= 1:
-        raise HTTPException(
-            status_code=400,
-            detail="Letzter Admin — kann nicht gelöscht werden.",
-        )
-    au.delete_user(user_id)
-    return {"ok": True}
-
-
-@app.patch("/api/auth/users/{user_id}")
-async def auth_users_patch(user_id: int, req: UserPatchRequest, request: Request,
-                             _: None = Depends(require_token),
-                             __: None = Depends(require_admin)):
-    """Toggle Admin-Flag oder reset Password. Admin-only.
-    Schutz: Last-Admin-Demotion (eigener oder fremder Account) wird verhindert."""
-    from utils import auth_users as au
-    target = au.get_user_by_id(user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User nicht gefunden.")
-
-    if req.is_admin is not None:
-        # Demotion eines Admins blockieren wenn er der letzte ist (egal ob
-        # Self oder von anderem Admin getriggert).
-        if not req.is_admin and bool(target.get("is_admin")) and au.admin_count() <= 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Letzter Admin — kann nicht demoted werden.",
-            )
-        au.set_user_admin(user_id, req.is_admin)
-
-    if req.password is not None:
-        # Self-Password-Change verlangt Re-Verify mit current_password —
-        # Defense gegen Session-Hijack, ein gestohlener Access-Token soll
-        # nicht direkt das Master-Credential ändern können. Admin-Reset
-        # auf einen anderen User braucht das nicht (Admin-Privileg).
-        me = request.state.user
-        is_self = int(me.get("id", 0)) == user_id
-        if is_self:
-            if not req.current_password:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Aktuelles Passwort ist erforderlich für eigene Passwort-Änderung.",
-                )
-            if not au.verify_password(req.current_password, target["password_hash"]):
-                raise HTTPException(status_code=401, detail="Aktuelles Passwort ist falsch.")
-        try:
-            au.update_user_password(user_id, req.password)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    return {"ok": True}
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Banned-IPs (Admin-only)
-# ─────────────────────────────────────────────────────────────────────
-
-@app.get("/api/auth/banned-ips")
-async def auth_banned_ips_list(request: Request,
-                                _: None = Depends(require_token),
-                                __: None = Depends(require_admin)):
-    """Liste aller lifetime-gebannten IPs (5+ Failed-Logins/24h). Admin-only."""
-    from utils import auth_users as au
-    return {"banned": au.list_banned_ips()}
-
-
-@app.delete("/api/auth/banned-ips/{ip:path}")
-async def auth_banned_ips_unban(ip: str, request: Request,
-                                  _: None = Depends(require_token),
-                                  __: None = Depends(require_admin)):
-    """Entbannt eine IP. Path-Parameter mit `:path`-Converter, weil IPv6-Adressen
-    Doppelpunkte enthalten und sonst von FastAPI's Default-Path-Matcher
-    falsch geparst würden. 404 wenn IP nicht gebannt war."""
-    from utils import auth_users as au
-    ok = au.unban_ip(ip)
-    if not ok:
-        raise HTTPException(status_code=404, detail="IP war nicht gebannt.")
-    return {"ok": True}
-
-
-@app.get("/api/auth/me")
-async def auth_me(request: Request, _: None = Depends(require_token)):
-    """Currently authenticated user — Frontend nutzt das beim Mount um zu
-    erkennen ob die Session noch valid ist und welche Berechtigungen
-    der User hat."""
-    user = request.state.user
-    if user.get("auth_method") in ("legacy", "setup"):
-        return {
-            "id": user["id"],
-            "username": user["username"],
-            "is_admin": user["is_admin"],
-            "auth_method": user["auth_method"],
-            "totp_enabled": False,
-        }
-    from utils import auth_users as au
-    db_user = au.get_user_by_id(user["id"])
-    if not db_user:
-        raise HTTPException(status_code=401, detail="User nicht mehr gefunden")
-    return {
-        "id": db_user["id"],
-        "username": db_user["username"],
-        "is_admin": bool(db_user["is_admin"]),
-        "auth_method": user["auth_method"],
-        "totp_enabled": bool(db_user["totp_secret"]),
-        "last_login_at_ms": db_user["last_login_at_ms"],
-    }
-
-
 # SPA-Frontend (SvelteKit-Build) — MUSS als letzter Mount stehen, sonst
 # werden alle danach definierten Routes von der StaticFiles-Catch-All
 # verschluckt. html=True liefert index.html für unbekannte Pfade
-# (Client-Side-Routing-Fallback) — ergänzt durch fallback in svelte.config.js.
+# (Client-Side-Routing-Fallback) — ergänzt durch fallback im sveltekit()-Plugin (frontend/vite.config.ts).
 class SpaStaticFiles(StaticFiles):
     """SvelteKit-Build mit korrekten Cache-Headern + SPA-Routing-Fallback.
 

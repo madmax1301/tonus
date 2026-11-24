@@ -52,6 +52,12 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # svelte-check (4.7.x) erlaubt als Peer nur typescript ^5 || ^6, ein
+      # TS-Major scheitert schon bei npm ci mit ERESOLVE (#81). Wieder
+      # freigeben, sobald svelte-check TypeScript 7 unterstützt.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /

@@ -35,6 +35,7 @@ on:
       - 'backend/requirements.txt'
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
+      - '.github/workflows/dep-audit.yml'
   schedule:
     # Woechentlich Montag 06:00 UTC.
     - cron: '0 6 * * 1'
@@ -108,10 +109,10 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - name: Setup Node 20
+      - name: Setup Node 22
         uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: npm ci (no scripts)
@@ -120,18 +121,36 @@ jobs:
         run: npm audit --audit-level=high --json > npm-audit.json || true
       # Strict mode (v0.4.4 onwards): high+critical sind PR-Blocker.
       - name: Fail on high/critical
+        # Ignore-Liste fuer bewusst akzeptierte Advisories (GHSA-IDs, durch
+        # Leerzeichen getrennt). Jeder Eintrag braucht hier eine Begruendung.
+        # Leer seit der Migration auf SvelteKit 3.
+        env:
+          IGNORE_GHSA: ''
         run: |
           if [ ! -f npm-audit.json ]; then
             echo "OK: no npm-audit.json produced"
             exit 0
           fi
-          HIGH=$(python3 -c "import json; d=json.load(open('npm-audit.json')); v=d.get('metadata',{}).get('vulnerabilities',{}); print(v.get('high',0)+v.get('critical',0))")
-          if [ "$HIGH" -gt 0 ]; then
-            echo "::error::npm audit found $HIGH high/critical vuln(s)"
-            python3 -c "import json; d=json.load(open('npm-audit.json')); print(json.dumps(d.get('metadata',{}).get('vulnerabilities',{}), indent=2))"
-            exit 1
-          fi
-          echo "OK: no high/critical vulns in npm audit"
+          python3 - <<'PY'
+          import json, os, sys
+          ignore = set(os.environ.get("IGNORE_GHSA", "").split())
+          d = json.load(open("npm-audit.json"))
+          blocking, ignored = set(), set()
+          for name, v in d.get("vulnerabilities", {}).items():
+              for via in v.get("via", []):
+                  if not isinstance(via, dict) or via.get("severity") not in ("high", "critical"):
+                      continue
+                  ghsa = via.get("url", "").rstrip("/").rsplit("/", 1)[-1]
+                  entry = f"{name}: {ghsa} ({via['severity']}) {via.get('title', '')}"
+                  (ignored if ghsa in ignore else blocking).add(entry)
+          for e in sorted(ignored):
+              print(f"ignored: {e}")
+          if blocking:
+              for e in sorted(blocking):
+                  print(f"::error::{e}")
+              sys.exit(1)
+          print("OK: no high/critical vulns in npm audit (outside ignore list)")
+          PY
       - name: Upload audit report
         if: always()
         uses: actions/upload-artifact@v7

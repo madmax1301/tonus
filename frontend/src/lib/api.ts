@@ -1,4 +1,4 @@
-import { base } from '$app/paths';
+import { base } from '#lib/paths.ts';
 import { get } from 'svelte/store';
 import {
   getToken,
@@ -121,6 +121,25 @@ export async function openStream(
     throw new ApiError(resp.status, `${resp.status} ${resp.statusText}`);
   }
   return resp;
+}
+
+/** GET mit denselben Auth-Regeln wie `request`, Antwort als Blob — für
+ *  Downloads, die einen Authorization-Header brauchen (ein <a href> kann
+ *  keinen setzen). */
+async function requestBlob(path: string, _retry = false): Promise<Blob> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  const resp = await fetch(url, { headers, cache: 'no-store' });
+  if (!resp.ok) {
+    if (resp.status === 401 && !_retry && get(accessToken) && get(refreshToken)) {
+      const ok = await tryRefresh();
+      if (ok) return requestBlob(path, true);
+    }
+    throw new ApiError(resp.status, `${resp.status} ${resp.statusText}`);
+  }
+  return resp.blob();
 }
 
 export const api = {
@@ -328,6 +347,8 @@ export interface QueueJob {
   download_url?: string;
   created_at_ms?: number;
   updated_at_ms?: number;
+  /** Wann der Job completed/error wurde. Fehlt bei älteren Backends. */
+  finished_at_ms?: number | null;
   payload?: QueueJobPayload;
 }
 
@@ -412,6 +433,16 @@ export interface LaneStatusResponse {
   cooldown: {
     normal_seconds: [number, number];
     rate_limited_seconds: [number, number];
+  };
+  /** Bot-Check-Quote und -Drossel. Fehlt bei älteren Backends. */
+  bot_check?: {
+    window_hours: number;
+    /** Bot-Checks im Fenster. */
+    count: number;
+    /** Abgeschlossene Downloads im Fenster (ok, Fehler, Bot-Check). */
+    finished: number;
+    /** Solange > jetzt, läuft mindestens eine Lane nur mit einem Slot. 0 = keine Drossel. */
+    throttled_until_ms: number;
   };
 }
 
@@ -612,6 +643,26 @@ export interface CooldownConfigResponse {
   defaults: CooldownValues;
   max_download_concurrency?: number;
 }
+
+// ── Backups von jobs.db (Admin) ────────────────────────────────────
+export interface BackupInfo {
+  name: string;
+  kind: 'startup' | 'daily' | 'manual';
+  size_bytes: number;
+  created_at_ms: number;
+}
+export interface BackupListResponse {
+  backups: BackupInfo[];
+  keep: number;
+  /** 0 = täglicher Snapshot aus. */
+  interval_hours: number;
+}
+
+export const backupApi = {
+  list: () => request<BackupListResponse>('/api/admin/backups'),
+  create: () => request<{ name: string }>('/api/admin/backups', { method: 'POST' }),
+  download: (name: string) => requestBlob(`/api/admin/backups/${encodeURIComponent(name)}`)
+};
 
 export const cooldownApi = {
   get: () => api.get<CooldownConfigResponse>('/api/settings/cooldown'),

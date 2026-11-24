@@ -8,7 +8,8 @@
 # KRITISCH seit vite 8 (v0.4.10): vite nutzt rolldown (Rust-Bundler), dessen
 # natives Binary unter QEMU-arm64-Emulation hängt → multi-arch-Build lief
 # >25min ohne Ende. Mit BUILDPLATFORM läuft der FE-Build nie mehr emuliert.
-FROM --platform=$BUILDPLATFORM node:20-alpine AS fe
+# Node 22: SvelteKit 3 verlangt Node >= 22.17.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS fe
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --no-audit --no-fund

@@ -3,13 +3,13 @@
  *
  * Verwendung in Komponenten:
  *
- *   import { t } from '$lib/i18n';
+ *   import { t } from '#lib/i18n.ts';
  *   <h1>{$t('library.eyebrow')}</h1>
  *   <p>{$t('import.dropzone.lines_ready', { count: 42 })}</p>
  *
  * Sprache umschalten:
  *
- *   import { lang } from '$lib/i18n';
+ *   import { lang } from '#lib/i18n.ts';
  *   lang.set('en');
  *
  * Persistenz: lang wird in localStorage als `tonus_lang` gespeichert
@@ -18,7 +18,7 @@
  * Wert existiert, wird EN als initialer Wert genommen.
  */
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { writable, derived } from 'svelte/store';
 import { strings, type Lang, type StringKey } from './i18n/strings';
 

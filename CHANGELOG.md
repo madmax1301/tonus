@@ -5,12 +5,82 @@ All notable changes to Tonus are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Until the first tagged release, everything below lives under `[Unreleased]`.
-On a `git tag -a vX.Y.Z`, move the relevant entries into a new dated section.
+New entries go under `[Unreleased]`. On a `git tag -a vX.Y.Z`, move them
+into a new dated section.
 
 ---
 
 ## [Unreleased]
+
+---
+
+## [0.10.0] — 2026-11-24
+
+### Security
+
+- **Login nimmt X-Forwarded-For nur noch von vertrauten Proxys an.** Der
+  Login-Endpoint hatte eine eigene IP-Ermittlung, die den Header von jedem
+  Client übernahm. Wer fünf Fehlversuche mit gefälschtem Header schickte,
+  konnte so eine fremde IP dauerhaft sperren lassen oder den eigenen Ban
+  umgehen. Jetzt gilt wie überall `TRUSTED_PROXIES` (Audit H-7).
+- **Import-Status und -Ergebnis brauchen ein Token.** `GET
+  /api/import/jobs/{id}/status` und `/result` waren ohne Anmeldung abrufbar
+  und zeigten Tracks und Playlist-Namen eines Imports. Das Frontend schickt
+  das Token ohnehin mit, für die UI ändert sich nichts.
+- **Alle übrigen Endpoints brauchen ein Token, bis auf die Health-Checks.**
+  20 Endpoints waren ohne Anmeldung erreichbar, darunter der Datei-Download
+  `GET /api/download/file/{id}`, Suche, Album/Track, Download-Status,
+  Empfehlungen und `/api/plugin/finished-tracks` (zeigte Navidrome-User und
+  ihre Tracks). Offen bleiben nur `/api/health`, `/api/plugin/health` und der
+  Login-Flow. Frontend und Navidrome-Plugin schicken das Token schon mit.
+  Ein Test prüft jetzt jede `/api`-Route, damit kein neuer Endpoint ohne
+  Token durchrutscht.
+
+### Changed
+
+- **Frontend läuft auf SvelteKit 3** (#129). Kit 2 hatte eine Lücke ohne
+  Fix (GHSA-3r8g-jcqq-3p5j), `npm audit` ist mit Kit 3 wieder leer. Für
+  Nutzer ändert sich nichts. Der Frontend-Build braucht jetzt Node 22
+  (CI und Docker-Image sind umgestellt).
+- **Auth-Endpoints liegen in `backend/routers/auth.py`** statt in `app.py`.
+  Erster Schritt, die 5.400 Zeilen aufzuteilen. Pfade und Antworten bleiben
+  gleich, abgesichert durch neue HTTP-Tests für alle `/api/auth/*`-Routen.
+- **HTTP-Tests für `/api/import/*`** (CSV-Parsing, Spotify-History, Status,
+  Abbruch, Löschen, queue-all). Neue Env-Variable `TONUS_START_WORKERS=0`
+  lässt die Worker beim Start aus; die Tests nutzen das, damit kein echter
+  Worker ihre Jobs abholt.
+- **LB-Weekly-Playlists wachsen nicht mehr** — `POST /api/plugin/lbweekly/discovery`
+  liefert zusätzlich `rotated_at_ms` (Datum der neuesten LB-Version des
+  `source_patch`), und `/api/plugin/finished-tracks` kennt den neuen Filter
+  `since_ms`. Damit kann das Navidrome-Plugin (ab v0.7.0) Weekly Jams,
+  Weekly Exploration und die beiden „Last Week's“-Playlists auf den aktuellen
+  LB-Stand ersetzen, statt Tracks älterer Wochen weiter anzuhängen.
+- **Bot-Check drosselt die ganze Lane** — YouTube markiert die IP, nicht den
+  Slot. Bisher ging nach einem Bot-Check nur der betroffene Slot in den
+  Cooldown, die übrigen Slots derselben IP luden weiter. Jetzt pausieren alle
+  Slots der Lane für den Bot-Check-Cooldown, danach läuft die Lane
+  `BOT_CHECK_THROTTLE_S` lang (Default 3600) nur mit einem Download, egal
+  welche Parallelität eingestellt ist. Jeder weitere Bot-Check startet das
+  Fenster neu. Bei Concurrency 1 ändert sich nichts.
+
+### Added
+
+- **Bot-Check-Quote in der Queue** — unter dem Titel steht, wie viele
+  Bot-Checks es in den letzten 24 h bei wie vielen Downloads gab, und
+  während einer Drossel, bis wann sie gilt. Gezählt wird im Speicher, nach
+  einem Neustart beginnt die Zählung neu. `/api/queue/lanes` und der
+  SSE-Stream liefern dafür das neue Feld `bot_check`.
+- **Datum und Uhrzeit in jeder Queue-Karte** — fertige und fehlgeschlagene
+  Jobs zeigen, wann sie abgeschlossen wurden. Dafür gibt es die neue Spalte
+  `download_jobs.finished_at_ms`, weil `updated_at_ms` auch durch
+  Playlist-Tagging an fertigen Jobs wandert. Bestehende Jobs bekommen beim
+  Start `updated_at_ms` als Näherung, ein Retry setzt den Wert zurück.
+- **Backups der Datenbank** — Tonus sichert `jobs.db` bei jedem Start (vor
+  Migrationen, also vor jedem `:dev`-Update), alle 24 h und auf Knopfdruck
+  nach `tonus-data/backups/`, je Art die letzten 7. Unter Einstellungen →
+  Backend lassen sich Backups anlegen und herunterladen (nur Admins, im
+  Setup-Modus gesperrt). Restore-Anleitung im README. Neue Env-Variablen:
+  `BACKUP_DIR`, `BACKUP_INTERVAL_H`, `BACKUP_KEEP`.
 
 ## [0.9.0] — 2026-10-29
 
@@ -875,7 +945,9 @@ hardening release.
 
 ---
 
-## [Unreleased]
+## [0.1.0 – 0.3.3] — 2026-05-04 bis 2026-05-12
+
+Sammelabschnitt: diese Releases wurden nicht einzeln dokumentiert.
 
 ### Added
 

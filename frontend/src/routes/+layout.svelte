@@ -1,8 +1,8 @@
 <script lang="ts">
   import '../app.css';
   import { onMount, onDestroy } from 'svelte';
-  import { page } from '$app/stores';
-  import { base } from '$app/paths';
+  import { page } from '$app/state';
+  import { base } from '#lib/paths.ts';
   import { goto } from '$app/navigation';
   import {
     apiToken,
@@ -11,17 +11,17 @@
     currentUser,
     challengeAuth,
     logoutLocal
-  } from '$lib/auth';
-  import TokenSheet from '$lib/components/TokenSheet.svelte';
-  import VinylPuck from '$lib/components/VinylPuck.svelte';
-  import FlyingCover from '$lib/components/FlyingCover.svelte';
-  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-  import UpdateToast from '$lib/components/UpdateToast.svelte';
-  import { flyingCovers, setQueueCount } from '$lib/fly-to-queue';
-  import { queueApi, authApi, ApiError } from '$lib/api';
-  import { queueStreamConnected, subscribeQueueEvents } from '$lib/queue-events';
-  import { t } from '$lib/i18n';
-  import type { StringKey } from '$lib/i18n/strings';
+  } from '#lib/auth.ts';
+  import TokenSheet from '#lib/components/TokenSheet.svelte';
+  import VinylPuck from '#lib/components/VinylPuck.svelte';
+  import FlyingCover from '#lib/components/FlyingCover.svelte';
+  import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+  import UpdateToast from '#lib/components/UpdateToast.svelte';
+  import { flyingCovers, setQueueCount } from '#lib/fly-to-queue.ts';
+  import { queueApi, authApi, ApiError } from '#lib/api.ts';
+  import { queueStreamConnected, subscribeQueueEvents } from '#lib/queue-events.ts';
+  import { t } from '#lib/i18n.ts';
+  import type { StringKey } from '#lib/i18n/strings.ts';
   import { KeyRound, LogOut } from 'lucide-svelte';
 
   type Tab = { href: string; labelKey: StringKey };
@@ -42,7 +42,7 @@
 
   const hasToken = $derived(!!$apiToken || !!$accessToken);
   const onLoginRoute = $derived(
-    ($page.url.pathname.replace(base, '') || '/') === '/login'
+    (page.url.pathname.replace(base, '') || '/') === '/login'
   );
 
   // Routing-Guard: nach Mount prüfen ob die Session valid ist. Bei 401
@@ -51,7 +51,7 @@
   // wir den /api/auth/me-Call — der würde nur 401en und unnötig zur
   // Login-Seite redirecten.
   async function guardSession() {
-    const path = $page.url.pathname.replace(base, '') || '/';
+    const path = page.url.pathname.replace(base, '') || '/';
     if (path === '/login') return;
     // Nur wenn es eigentlich eine Session sein sollte
     if (!$accessToken && $apiToken) return; // Legacy/PAT-Pfad — keine /me-Probe
@@ -212,7 +212,7 @@
       <!-- Underline tabs -->
       <nav class="tonus-top-nav flex items-center text-[12.5px]">
         {#each tabs as tab}
-          {@const active = isActive(tab.href, $page.url.pathname)}
+          {@const active = isActive(tab.href, page.url.pathname)}
           <a
             href="{base}{tab.href}"
             class="relative transition-colors"

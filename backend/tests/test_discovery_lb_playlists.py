@@ -51,3 +51,18 @@ def test_default_occurrence_is_zero(monkeypatch):
         _pl("weekly-jams", "2026-06-14T22:05:00+00:00", [("J", "jam")]),
     ])
     assert disc.lb_playlist_tracks("u", "weekly-jams") == [{"artist": "J", "title": "jam"}]
+
+
+def test_rotated_at_is_date_of_newest_match(monkeypatch):
+    _fake_createdfor(monkeypatch, [
+        _pl("weekly-jams", "2026-06-07T10:35:00+00:00", [("J", "old")]),
+        _pl("weekly-jams", "2026-06-14T22:05:00.123456+00:00", [("J", "new")]),
+        _pl("weekly-exploration", "2026-06-15T09:00:00+00:00", [("A", "x")]),
+    ])
+    # 2026-06-14T22:05:00.123Z
+    assert disc.lb_playlist_rotated_at_ms("u", "weekly-jams") == 1781474700123
+
+
+def test_rotated_at_unknown_is_zero(monkeypatch):
+    _fake_createdfor(monkeypatch, [])
+    assert disc.lb_playlist_rotated_at_ms("u", "weekly-jams") == 0
