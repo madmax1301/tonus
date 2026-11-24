@@ -38,7 +38,7 @@ It's a single-tenant tool you self-host on a NAS (or any Docker host). All crede
 - Auth: multi-user with TOTP-2FA, Personal Access Tokens, brute-force lifetime ban
 - Encrypted-at-rest provider credentials and TOTP secrets (Fernet)
 - Persistent app data on a separate volume (auth + queue + settings survive image swaps)
-- Multi-arch image (amd64 + arm64), pin to `:0.9` for production
+- Multi-arch image (amd64 + arm64), pin to `:0.10` for production
 
 **Working but rough edges:**
 
@@ -372,8 +372,8 @@ Tonus uses two release channels — bleeding-edge `:dev` for testing, and immuta
 |---|---|---|---|
 | `:dev` | dev (bleeding-edge) | Every push to `dev` | Latest commit on `dev` |
 | `:sha-abc1234` | dev (pinned) | Never (immutable) | A specific commit |
-| `:0.9.0` | stable (pinned) | Never (immutable) | A specific tagged release |
-| `:0.9` | stable (rolling within minor) | New patch tags `v0.9.x` | Latest patch in `0.9.x` |
+| `:0.10.0` | stable (pinned) | Never (immutable) | A specific tagged release |
+| `:0.10` | stable (rolling within minor) | New patch tags `v0.10.x` | Latest patch in `0.10.x` |
 | `:latest` | stable (rolling) | New semver tag `vX.Y.Z` | Most recent tagged release |
 
 For production, pin to a fixed minor:
@@ -381,10 +381,10 @@ For production, pin to a fixed minor:
 ```yaml
 services:
   tonus:
-    image: ghcr.io/madmax1301/tonus:0.9
+    image: ghcr.io/madmax1301/tonus:0.10
 ```
 
-You'll get every patch release automatically but stay locked out of `0.10.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
+You'll get every patch release automatically but stay locked out of `0.11.x` until you opt in. The `:dev` tag exists for testing parallel dev/staging deployments — it tracks `dev` continuously, no tag cut needed.
 
 ## FAQ
 

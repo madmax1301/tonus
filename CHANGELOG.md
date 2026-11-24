@@ -12,6 +12,10 @@ into a new dated section.
 
 ## [Unreleased]
 
+---
+
+## [0.10.0] — 2026-11-24
+
 ### Security
 
 - **Login nimmt X-Forwarded-For nur noch von vertrauten Proxys an.** Der
@@ -34,6 +38,10 @@ into a new dated section.
 
 ### Changed
 
+- **Frontend läuft auf SvelteKit 3** (#129). Kit 2 hatte eine Lücke ohne
+  Fix (GHSA-3r8g-jcqq-3p5j), `npm audit` ist mit Kit 3 wieder leer. Für
+  Nutzer ändert sich nichts. Der Frontend-Build braucht jetzt Node 22
+  (CI und Docker-Image sind umgestellt).
 - **Auth-Endpoints liegen in `backend/routers/auth.py`** statt in `app.py`.
   Erster Schritt, die 5.400 Zeilen aufzuteilen. Pfade und Antworten bleiben
   gleich, abgesichert durch neue HTTP-Tests für alle `/api/auth/*`-Routen.
@@ -41,7 +49,6 @@ into a new dated section.
   Abbruch, Löschen, queue-all). Neue Env-Variable `TONUS_START_WORKERS=0`
   lässt die Worker beim Start aus; die Tests nutzen das, damit kein echter
   Worker ihre Jobs abholt.
-
 - **LB-Weekly-Playlists wachsen nicht mehr** — `POST /api/plugin/lbweekly/discovery`
   liefert zusätzlich `rotated_at_ms` (Datum der neuesten LB-Version des
   `source_patch`), und `/api/plugin/finished-tracks` kennt den neuen Filter
