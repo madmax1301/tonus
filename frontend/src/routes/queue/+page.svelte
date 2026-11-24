@@ -1,27 +1,27 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from 'svelte';
-  import { base } from '$app/paths';
+  import { base } from '#lib/paths.ts';
   import {
     queueApi,
     ApiError,
     type QueueJob,
     type QueueResponse,
     type LaneStatusResponse
-  } from '$lib/api';
-  import { tint, extractHue, DEFAULT_HUE } from '$lib/accent';
-  import { lang, t } from '$lib/i18n';
-  import { showConfirm } from '$lib/confirm';
+  } from '#lib/api.ts';
+  import { tint, extractHue, DEFAULT_HUE } from '#lib/accent.ts';
+  import { lang, t } from '#lib/i18n.ts';
+  import { showConfirm } from '#lib/confirm.ts';
   import {
     queueStreamConnected,
     subscribeQueueEvents,
     type QueueEvent
-  } from '$lib/queue-events';
+  } from '#lib/queue-events.ts';
   import { get } from 'svelte/store';
-  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
-  import CoverArt from '$lib/components/CoverArt.svelte';
-  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
-  import ProgressLine from '$lib/components/ProgressLine.svelte';
+  import CinemaBackdrop from '#lib/components/CinemaBackdrop.svelte';
+  import CoverArt from '#lib/components/CoverArt.svelte';
+  import VinylWithCover from '#lib/components/VinylWithCover.svelte';
+  import EmptyState from '#lib/components/EmptyState.svelte';
+  import ProgressLine from '#lib/components/ProgressLine.svelte';
   import {
     RotateCw,
     Trash2,

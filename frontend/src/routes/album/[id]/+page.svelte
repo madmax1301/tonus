@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { page } from '$app/stores';
-  import { base } from '$app/paths';
+  import { page } from '$app/state';
+  import { base } from '#lib/paths.ts';
   import { goto } from '$app/navigation';
   import {
     albumApi,
@@ -8,20 +8,20 @@
     ApiError,
     type AlbumDetail,
     type Track
-  } from '$lib/api';
-  import { defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
-  import { t } from '$lib/i18n';
-  import { flyToQueue } from '$lib/fly-to-queue';
+  } from '#lib/api.ts';
+  import { defaultLocation, defaultFormat, defaultQuality } from '#lib/preferences.ts';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
+  import { t } from '#lib/i18n.ts';
+  import { flyToQueue } from '#lib/fly-to-queue.ts';
   import { get } from 'svelte/store';
-  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
-  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
+  import CinemaBackdrop from '#lib/components/CinemaBackdrop.svelte';
+  import VinylWithCover from '#lib/components/VinylWithCover.svelte';
   import { ArrowLeft, Download, LoaderCircle, Check } from 'lucide-svelte';
 
   type DownloadState = { kind: 'queued' | 'done' | 'exists' | 'error'; message?: string };
 
-  const albumId = $derived($page.params.id);
-  const provider = $derived($page.url.searchParams.get('provider') ?? '');
+  const albumId = $derived(page.params.id);
+  const provider = $derived(page.url.searchParams.get('provider') ?? '');
 
   let album = $state<AlbumDetail | null>(null);
   let loading = $state(true);

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { tweened } from 'svelte/motion';
   import { cubicOut } from 'svelte/easing';
   import {
@@ -13,16 +13,16 @@
     type ImportResult,
     type MetadataProvidersResponse,
     type Track
-  } from '$lib/api';
-  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '$lib/preferences';
+  } from '#lib/api.ts';
+  import { defaultProvider, defaultLocation, defaultFormat, defaultQuality } from '#lib/preferences.ts';
   import { get } from 'svelte/store';
-  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
-  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
-  import ProgressLine from '$lib/components/ProgressLine.svelte';
-  import AlbumArt from '$lib/components/AlbumArt.svelte';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
-  import { t } from '$lib/i18n';
-  import { flyToQueue } from '$lib/fly-to-queue';
+  import CinemaBackdrop from '#lib/components/CinemaBackdrop.svelte';
+  import VinylWithCover from '#lib/components/VinylWithCover.svelte';
+  import ProgressLine from '#lib/components/ProgressLine.svelte';
+  import AlbumArt from '#lib/components/AlbumArt.svelte';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
+  import { t } from '#lib/i18n.ts';
+  import { flyToQueue } from '#lib/fly-to-queue.ts';
   import { Upload, LoaderCircle, Download, FileText, X, Search } from 'lucide-svelte';
 
   // localStorage-Key für die Job-Resume-Logik. Wenn der User reloadet,

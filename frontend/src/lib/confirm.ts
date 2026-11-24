@@ -3,7 +3,7 @@
  *
  * Verwendung:
  *
- *   import { showConfirm } from '$lib/confirm';
+ *   import { showConfirm } from '#lib/confirm.ts';
  *   const ok = await showConfirm({
  *     title: 'Queue leeren',
  *     message: 'Wirklich die komplette Queue leeren? Laufende Downloads bleiben erhalten.',

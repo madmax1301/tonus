@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { extractHue, DEFAULT_HUE } from '$lib/accent';
+  import { extractHue, DEFAULT_HUE } from '#lib/accent.ts';
 
   type Props = {
     src?: string | null;

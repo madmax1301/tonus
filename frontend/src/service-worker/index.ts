@@ -1,11 +1,12 @@
-/// <reference types="@sveltejs/kit" />
-/// <reference lib="webworker" />
-import { build, files, version } from '$service-worker';
-
-const sw = self as unknown as ServiceWorkerGlobalScope;
+import { immutable, assets } from '$app/manifest';
+import { version } from '$app/env';
+import { self as sw } from '$app/service-worker';
 
 const CACHE = `tonus-${version}`;
-const PRECACHE = [...build, ...files];
+// Die Manifest-Pfade sind relativ zum Base-Pfad; der Service Worker liegt
+// direkt unter dem Base-Pfad, also ergibt das Auflösen gegen seine eigene
+// URL die absoluten Pfade (wie früher `build`/`files` aus $service-worker).
+const PRECACHE = [...immutable, ...assets].map(({ path }) => new URL(path, sw.location.href).pathname);
 
 sw.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)));

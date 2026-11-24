@@ -9,8 +9,8 @@
    * matcht ConfirmDialog/Settings/Library pixelgenau.
    */
   import { Dialog } from 'bits-ui';
-  import { apiToken, authChallengeOpen, dismissChallenge } from '$lib/auth';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { apiToken, authChallengeOpen, dismissChallenge } from '#lib/auth.ts';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
   import { Check, X, KeyRound } from 'lucide-svelte';
 
   const accent = tint(DEFAULT_HUE);

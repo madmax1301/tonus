@@ -17,9 +17,9 @@
    * findet, um die Ziel-Position zu bestimmen.
    */
   import { goto } from '$app/navigation';
-  import { base } from '$app/paths';
-  import { queueCount, flashAccent } from '$lib/fly-to-queue';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { base } from '#lib/paths.ts';
+  import { queueCount, flashAccent } from '#lib/fly-to-queue.ts';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
 
   const goldAccent = tint(DEFAULT_HUE);
   const goldDeep = tint(DEFAULT_HUE, 0.7);

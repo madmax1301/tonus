@@ -21,7 +21,7 @@
    *   </EmptyState>
    */
   import type { Snippet } from 'svelte';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
 
   type Glyph = 'library' | 'queue' | 'none';
 

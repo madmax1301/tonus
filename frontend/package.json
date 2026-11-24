@@ -15,10 +15,11 @@
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@fontsource/ibm-plex-sans": "^5.3.0",
     "@fontsource/space-grotesk": "^5.3.0",
-    "@sveltejs/adapter-static": "^3.0.6",
-    "@sveltejs/kit": "^2.70.2",
+    "@sveltejs/adapter-static": "^4.0.1",
+    "@sveltejs/kit": "^3.4.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^22.20.5",
     "svelte": "^5.58.0",
     "svelte-check": "^4.7.8",
     "tailwindcss": "^4.0.0",
@@ -28,5 +29,14 @@
   "dependencies": {
     "bits-ui": "^2.21.0",
     "lucide-svelte": "^1.0.1"
+  },
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  },
+  "overrides": {
+    "runed": "^0.38.0"
+  },
+  "engines": {
+    "node": ">=22.17"
   }
 }

@@ -18,13 +18,13 @@
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { base } from '$app/paths';
-  import { authApi, providersConfigApi, ApiError, type ProviderConfig } from '$lib/api';
-  import { setJwtPair, currentUser } from '$lib/auth';
-  import { tint, DEFAULT_HUE } from '$lib/accent';
-  import CinemaBackdrop from '$lib/components/CinemaBackdrop.svelte';
-  import VinylWithCover from '$lib/components/VinylWithCover.svelte';
-  import { t } from '$lib/i18n';
+  import { base } from '#lib/paths.ts';
+  import { authApi, providersConfigApi, ApiError, type ProviderConfig } from '#lib/api.ts';
+  import { setJwtPair, currentUser } from '#lib/auth.ts';
+  import { tint, DEFAULT_HUE } from '#lib/accent.ts';
+  import CinemaBackdrop from '#lib/components/CinemaBackdrop.svelte';
+  import VinylWithCover from '#lib/components/VinylWithCover.svelte';
+  import { t } from '#lib/i18n.ts';
   import { LoaderCircle, KeyRound, ShieldCheck, User, Plug, TriangleAlert, Check } from 'lucide-svelte';
 
   // Modi:
