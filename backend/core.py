@@ -26,6 +26,7 @@ from services.youtube import YouTubeService
 from utils.file_handler import get_download_path
 from utils.job_store import get_job
 from utils.rate_limit import make_rate_limiter
+from utils.worker import JobWorker
 
 # ── Services ────────────────────────────────────────────────────────────
 deezer_service = DeezerService()
@@ -38,6 +39,15 @@ except Exception as e:
 youtube_service = YouTubeService()
 metadata_service = MetadataService()
 navidrome_service = NavidromeService()
+
+
+# ── Worker ──────────────────────────────────────────────────────────────
+# Nur angelegt, nicht gestartet: app.py startet sie (außer bei
+# TONUS_START_WORKERS=0). Lanes siehe Kommentar dort.
+_download_worker = JobWorker(job_type="download")
+_csv_worker = JobWorker(job_type="import", import_lane="csv")
+_spotify_history_worker = JobWorker(job_type="import", import_lane="spotify_history")
+_playlist_sync_worker = JobWorker(job_type="import", import_lane="playlist_sync")
 
 
 # ── Provider, Limits, Queue-Helfer ──────────────────────────────────────
