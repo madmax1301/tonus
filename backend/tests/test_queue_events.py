@@ -36,7 +36,7 @@ def _set_updated(job_id: str, ts: int) -> None:
 
 
 def test_snapshot_reports_only_changes():
-    from app import _queue_snapshot_since
+    from routers.queue import _queue_snapshot_since
 
     upsert_job("ev-old", status="completed", message="done")
     _set_updated("ev-old", 1_000)
@@ -55,7 +55,7 @@ def test_snapshot_reports_only_changes():
 
 
 def test_snapshot_keeps_updates_in_the_same_millisecond():
-    from app import _queue_snapshot_since
+    from routers.queue import _queue_snapshot_since
 
     upsert_job("ev-a", status="processing", message="a")
     _set_updated("ev-a", 5_000)
@@ -70,18 +70,18 @@ def test_snapshot_keeps_updates_in_the_same_millisecond():
 
 
 def test_snapshot_signals_resync_for_bulk_changes(monkeypatch):
-    import app as app_mod
+    import routers.queue as queue_mod
 
-    monkeypatch.setattr(app_mod, "_QUEUE_EVENTS_MAX_ROWS", 2)
+    monkeypatch.setattr(queue_mod, "_QUEUE_EVENTS_MAX_ROWS", 2)
     for i in range(3):
         upsert_job(f"ev-bulk-{i}", status="queued", message="q")
-    snap = app_mod._queue_snapshot_since(0, set())
+    snap = queue_mod._queue_snapshot_since(0, set())
     assert snap["resync"] is True
     assert snap["jobs"] == []
 
 
 def test_lane_fingerprint_ignores_countdown():
-    from app import _lanes_fingerprint
+    from routers.queue import _lanes_fingerprint
 
     base = {
         "lanes": [{"name": "default", "ready_at_ms": 10, "remaining_ms": 900, "current_job_id": None}],
@@ -105,7 +105,7 @@ def test_stream_sends_counts_and_lanes_first():
     ersten Tick die Verbindung als getrennt meldet."""
     import asyncio
 
-    from app import queue_events
+    from routers.queue import queue_events
 
     upsert_job("ev-stream", status="queued", message="q")
 
